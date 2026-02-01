@@ -1,0 +1,174 @@
+html, body, div, span, applet, object, iframe,
+h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+a, abbr, acronym, address, big, cite, code,
+del, dfn, em, img, ins, kbd, q, s, samp,
+small, strike, strong, sub, sup, tt, var,
+b, u, i, center,
+dl, dt, dd, ol, ul, li,
+fieldset, form, label, legend,
+table, caption, tbody, tfoot, thead, tr, th, td,
+article, aside, canvas, details, embed,
+figure, figcaption, footer, header, hgroup,
+menu, nav, output, ruby, section, summary,
+time, mark, audio, video {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+  font: inherit;
+  vertical-align: baseline;
+}
+/* HTML5 display-role reset for older browsers */
+article, aside, details, figcaption, figure,
+footer, header, hgroup, menu, nav, section {
+  display: block;
+}
+body {
+  line-height: 1;
+}
+ol, ul {
+  list-style: none;
+}
+blockquote, q {
+  quotes: none;
+}
+blockquote:before, blockquote:after,
+q:before, q:after {
+  content: '';
+  content: none;
+}
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+/* -----------------------CSS REST ENDS HERE ------------------ */
+
+/* Base styles */
+body {
+  background-color: #2a2a2a;
+  font-family: Verdana, Geneva, sans-serif;
+  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+/* Main container - fixed dimensions and centered */
+main {
+  width: 1720px;
+  height: 1080px;
+  background-color: #1a1a1a;
+}
+
+/* Typography - Golden ratio (1.618) scale */
+h1 {
+  font-size: 32px;
+}
+
+p {
+  font-size: 19.77px; /* 32 / 1.618 ≈ 19.77 */
+}
+
+.preview {
+  padding: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preview h1 {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.site-name-header {
+  width: 100%;
+  margin-bottom: 10px;
+  text-align: center;
+  font-size: 52px; /* Larger for site title */
+  font-weight: bold;
+}
+
+/* Layout sections */
+.preview,
+.debug {
+  padding: 24px;
+}
+
+.preview h1,
+.debug h1 {
+  margin-bottom: 10px;
+}
+
+/* Scene view placeholder */
+.scene-view {
+  display: flex;
+  flex-direction: column;
+  flex: 2;
+  background-color: #333;
+  padding: 20px;
+  border-radius: 4px;
+}
+
+.scene-view-placeholder {
+
+  flex: 2;
+  background-color: black;
+  padding: 40px;
+  border: 1px solid;
+  border-radius: 4px;
+  margin: 0px;
+}
+
+/* Scene settings list */
+.scene-settings ul {
+  flex: 1;
+  list-style: disc;
+  margin-left: 2.5px;
+}
+
+.scene-settings {
+  flex: 1;
+  background-color: #333;
+  padding: 20px;
+  border-radius: 4px;
+}
+
+/* Debug section */
+.debug {
+  border-top: 1px solid #444;
+  background-color: #333;
+  border-radius: 14px;
+}
+
+.scene-settings li {
+  margin-bottom: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scene-settings label {
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.scene-settings select {
+  padding: 5px;
+  background-color: #222;
+  color: white;
+  border: 1px solid #555;
+  border-radius: 3px;
+  font-family: Verdana, Geneva, sans-serif;
+}
+
+.scene-settings input[type="range"] {
+  width: 100%;
+}
+
+.slider-value {
+  font-size: 14px;
+  color: #aaa;
+}
