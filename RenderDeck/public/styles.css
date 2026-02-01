@@ -46,7 +46,7 @@ table {
 
 /* Base styles */
 body {
-  background-color: #2a2a2a;
+  background-color: #1a1a1a;
   font-family: Verdana, Geneva, sans-serif;
   color: white;
   display: flex;
@@ -57,9 +57,8 @@ body {
 
 /* Main container - fixed dimensions and centered */
 main {
-  width: 1720px;
+  width: 1400px;
   height: 1080px;
-  background-color: #1a1a1a;
 }
 
 /* Typography - Golden ratio (1.618) scale */
