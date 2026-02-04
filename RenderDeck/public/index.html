@@ -15,9 +15,7 @@
       <h1 class="site-name-header">RenderDeck</h1>
       <div class="scene-view">
         <h1>Scene Controls</h1>
-        <div class="scene-view-placeholder">
-          <p>three.js scene preview will be here</p>
-        </div>
+        <div class="scene-view-placeholder"></div>
       </div>
 
 
@@ -58,9 +56,30 @@
       <p>Debugging grounds</p>
     </div>
 
+    <!-- MODEL SELECT -->
+    <div class="model-select-panel">
+      <h1>Select Model</h1>
+      <select id="model-select"></select>
+    </div>
+
+    <!-- SCENE SELECT -->
+    <div class="model-select-panel">
+      <h1>Select Scene</h1>
+      <select id="scene-select"></select>
+    </div>
+
 
 
   </main>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.175.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.175.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="main.js"></script>
 </body>
 
 </html>
