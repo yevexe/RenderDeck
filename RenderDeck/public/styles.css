@@ -18,31 +18,37 @@ time, mark, audio, video {
   font: inherit;
   vertical-align: baseline;
 }
+
 /* HTML5 display-role reset for older browsers */
 article, aside, details, figcaption, figure,
 footer, header, hgroup, menu, nav, section {
   display: block;
 }
+
 body {
   line-height: 1;
 }
+
 ol, ul {
   list-style: none;
 }
+
 blockquote, q {
   quotes: none;
 }
+
 blockquote:before, blockquote:after,
 q:before, q:after {
   content: '';
   content: none;
 }
+
 table {
   border-collapse: collapse;
   border-spacing: 0;
 }
 
-/* -----------------------CSS REST ENDS HERE ------------------ */
+/* -----------------------CSS RESET ENDS HERE ------------------ */
 
 /* Base styles */
 body {
@@ -112,13 +118,48 @@ p {
 }
 
 .scene-view-placeholder {
-
+  position: relative;
   flex: 2;
   background-color: black;
   padding: 40px;
-  border: 1px solid;
+  border: 1px solid #555;
   border-radius: 4px;
   margin: 0px;
+  transition: border 0.3s ease;
+}
+
+/* Drag & Drop hint */
+.drop-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #666;
+  pointer-events: none;
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+}
+
+.drop-hint p {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+.drop-hint-small {
+  font-size: 14px !important;
+  color: #555;
+}
+
+/* Hide drop hint when canvas is present */
+.scene-view-placeholder:has(canvas) .drop-hint {
+  opacity: 0;
+}
+
+/* Drag over state */
+.scene-view-placeholder.drag-over {
+  border: 3px dashed #4CAF50 !important;
+  background-color: rgba(76, 175, 80, 0.1);
 }
 
 /* Scene settings list */
@@ -140,6 +181,27 @@ p {
   border-top: 1px solid #444;
   background-color: #333;
   border-radius: 14px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+/* Scrollbar styling for debug panel */
+.debug::-webkit-scrollbar {
+  width: 8px;
+}
+
+.debug::-webkit-scrollbar-track {
+  background: #222;
+  border-radius: 4px;
+}
+
+.debug::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.debug::-webkit-scrollbar-thumb:hover {
+  background: #666;
 }
 
 .scene-settings li {
@@ -194,4 +256,453 @@ p {
   font-size: 16px;
   width: 100%;
   cursor: pointer;
+}
+
+/* Upload controls */
+.upload-controls {
+  margin-top: 15px;
+  text-align: center;
+}
+
+.upload-button {
+  display: inline-block;
+  padding: 12px 24px;
+  background: #FF8533;
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.upload-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+  background: #FF9C52;
+}
+
+.upload-button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.upload-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #888;
+}
+
+/* Model info badge (optional enhancement) */
+.model-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  background-color: #444;
+  border-radius: 3px;
+  font-size: 11px;
+  margin-left: 8px;
+  color: #aaa;
+}
+
+.model-badge.user-upload {
+  background-color: #4CAF50;
+  color: white;
+}
+
+/* ==================== UV EDITOR STYLES ==================== */
+
+/* Edit Texture Button */
+.edit-texture-section {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #444;
+}
+
+.edit-texture-button {
+  width: 100%;
+  padding: 12px 20px;
+  background: #FF8533;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.edit-texture-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+  background: #FF9C52;
+}
+
+.edit-texture-button:active {
+  transform: translateY(0);
+}
+
+/* UV Editor Container */
+.uv-editor-container {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 1200px;
+  height: 700px;
+  max-width: 95vw;
+  max-height: 95vh;
+  background-color: #2a2a2a;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  resize: both;
+}
+
+.uv-editor-container.hidden {
+  display: none;
+}
+
+/* UV Editor Header */
+.uv-editor-header {
+  background: #FF8533;
+  padding: 20px 30px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: move;
+  user-select: none;
+}
+
+.uv-editor-header h2 {
+  color: white;
+  font-size: 24px;
+  font-weight: bold;
+  margin: 0;
+}
+
+.model-name-display {
+  font-size: 18px;
+  opacity: 0.9;
+  font-weight: normal;
+}
+
+.close-editor-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.close-editor-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: rotate(90deg);
+}
+
+/* Resize Handle */
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 0%, transparent 50%, #FF8533 50%, #FF8533 100%);
+  border-bottom-right-radius: 12px;
+}
+
+.resize-handle:hover {
+  background: linear-gradient(135deg, transparent 0%, transparent 50%, #FF9C52 50%, #FF9C52 100%);
+}
+
+/* UV Editor Content */
+.uv-editor-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* UV Canvas Container */
+.uv-canvas-container {
+  flex: 2;
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #1a1a1a;
+  min-width: 0;
+}
+
+#uv-preview-canvas {
+  border: 2px solid #444;
+  border-radius: 8px;
+  cursor: crosshair;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.uv-controls {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.uv-hint {
+  color: #888;
+  font-size: 14px;
+}
+
+/* UV Sidebar */
+.uv-sidebar {
+  flex: 1;
+  min-width: 300px;
+  max-width: 400px;
+  background-color: #333;
+  padding: 30px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.uv-sidebar h3 {
+  font-size: 18px;
+  margin-bottom: 15px;
+  color: #fff;
+  border-bottom: 2px solid #555;
+  padding-bottom: 8px;
+}
+
+/* Upload Section */
+.upload-section {
+  background-color: #3a3a3a;
+  padding: 20px;
+  border-radius: 8px;
+}
+
+.texture-upload-button {
+  display: block;
+  width: 100%;
+  padding: 12px 20px;
+  background: #FF8533;
+  color: white;
+  text-align: center;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+}
+
+.texture-upload-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+  background: #FF9C52;
+}
+
+/* Images List */
+.images-list {
+  background-color: #3a3a3a;
+  padding: 20px;
+  border-radius: 8px;
+}
+
+#image-layers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.image-layer-item {
+  background-color: #444;
+  padding: 12px 15px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.2s ease;
+  border: 2px solid transparent;
+}
+
+.image-layer-item:hover {
+  background-color: #4a4a4a;
+}
+
+.image-layer-item.selected {
+  border-color: #4CAF50;
+  background-color: #3a5a3c;
+}
+
+.layer-number {
+  background-color: #555;
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.layer-name {
+  flex: 1;
+  color: #ddd;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-message {
+  color: #666;
+  text-align: center;
+  font-style: italic;
+  padding: 20px;
+}
+
+/* Selected Image Controls */
+.selected-image-controls {
+  background-color: #3a3a3a;
+  padding: 20px;
+  border-radius: 8px;
+}
+
+.selected-image-controls.hidden {
+  display: none;
+}
+
+.control-group {
+  margin-bottom: 18px;
+}
+
+.control-group label {
+  display: block;
+  color: #ccc;
+  font-size: 14px;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.control-group input[type="range"] {
+  width: 100%;
+  margin-bottom: 5px;
+}
+
+.control-value {
+  display: inline-block;
+  color: #4CAF50;
+  font-weight: bold;
+  font-size: 13px;
+  min-width: 50px;
+}
+
+.delete-image-btn {
+  width: 100%;
+  padding: 10px;
+  background-color: #d32f2f;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  margin-top: 10px;
+}
+
+.delete-image-btn:hover {
+  background-color: #c62828;
+  transform: translateY(-1px);
+}
+
+/* Editor Actions */
+.editor-actions {
+  background-color: #3a3a3a;
+  padding: 20px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.save-custom-model-btn,
+.apply-texture-btn,
+.reset-texture-btn {
+  width: 100%;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+}
+
+.save-custom-model-btn {
+  background: #FF8533;
+  color: white;
+}
+
+.save-custom-model-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(255, 133, 51, 0.4);
+  background: #FF9C52;
+}
+
+.apply-texture-btn {
+  background: #4CAF50;
+  color: white;
+}
+
+.apply-texture-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(76, 175, 80, 0.4);
+  background: #5BC05F;
+}
+
+.reset-texture-btn {
+  background-color: #555;
+  color: white;
+}
+
+.reset-texture-btn:hover {
+  background-color: #666;
+}
+
+/* Scrollbar for UV Sidebar */
+.uv-sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.uv-sidebar::-webkit-scrollbar-track {
+  background: #222;
+  border-radius: 4px;
+}
+
+.uv-sidebar::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.uv-sidebar::-webkit-scrollbar-thumb:hover {
+  background: #666;
 }

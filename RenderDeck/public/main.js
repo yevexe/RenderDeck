@@ -1,7 +1,10 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { initScenes } from './scenes.js';
+import { ModelManager } from './modelManager.js';
+import { UVEditor } from './uvEditor.js';
 
 // ─────────────────────────────────────────────
 // DEBUG LOG HELPER
@@ -15,11 +18,37 @@ function log(msg, isError = false) {
     : 'color:#aaa; margin-bottom:4px; font-size:14px;';
   p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
   debug.appendChild(p);
+  
+  // Auto-scroll debug panel
+  debug.scrollTop = debug.scrollHeight;
 }
 
-
+// Catch any uncaught errors and show them in the debug panel
 window.addEventListener('error', (e) => { log(`ERROR: ${e.message} (${e.filename}:${e.lineno})`, true); });
 window.addEventListener('unhandledrejection', (e) => { log(`UNHANDLED: ${e.reason}`, true); });
+
+// ─────────────────────────────────────────────
+// MODEL MANAGER INITIALIZATION
+// ─────────────────────────────────────────────
+const modelManager = new ModelManager();
+
+// Register built-in models
+const BUILT_IN_MODELS = {
+  'Plain Mug': {
+    folder: 'plain_mug',
+    obj: 'mug.obj',
+    mtl: null
+  },
+  'Simple Pen': {
+    folder: 'simple_pen',
+    obj: 'pen.obj',
+    mtl: 'pen.mtl'
+  },
+};
+
+Object.entries(BUILT_IN_MODELS).forEach(([name, config]) => {
+  modelManager.registerModel(name, config);
+});
 
 // ─────────────────────────────────────────────
 // SCENE SETUP
@@ -44,6 +73,11 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 container.innerHTML = '';
 container.appendChild(renderer.domElement);
+
+// ─────────────────────────────────────────────
+// UV EDITOR INITIALIZATION
+// ─────────────────────────────────────────────
+const uvEditor = new UVEditor(renderer, log, modelManager);
 
 // ─────────────────────────────────────────────
 // LIGHTING
@@ -217,45 +251,103 @@ const materialPresets = {
 };
 
 // ─────────────────────────────────────────────
-// MODEL REGISTRY
-// To add a new model: just add an entry here.
-//   key   — the label shown in the dropdown
-//   file  — filename inside ../models/
-// ─────────────────────────────────────────────
-const MODELS = {
-  'Plain Mug': 'plain_mug.glb',
-  'Simple Pen': 'simple_pen.glb',
-};
-
-// ─────────────────────────────────────────────
-// POPULATE MODEL SELECT FROM REGISTRY
+// POPULATE MODEL SELECT
 // ─────────────────────────────────────────────
 const modelSelect = document.getElementById('model-select');
-Object.keys(MODELS).forEach((name, i) => {
-  const opt = document.createElement('option');
-  opt.value = name;
-  opt.textContent = name;
-  if (i === 0) opt.selected = true;
-  modelSelect.appendChild(opt);
-});
+
+function updateModelSelect() {
+  modelSelect.innerHTML = '';
+  const categories = modelManager.getModelNamesByCategory();
+  
+  // Built-in models
+  if (categories.builtin.length > 0) {
+    const builtinGroup = document.createElement('optgroup');
+    builtinGroup.label = 'Built-in Models';
+    categories.builtin.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      builtinGroup.appendChild(opt);
+    });
+    modelSelect.appendChild(builtinGroup);
+  }
+  
+  // User uploaded models
+  if (categories.uploaded.length > 0) {
+    const uploadedGroup = document.createElement('optgroup');
+    uploadedGroup.label = 'Uploaded Models';
+    categories.uploaded.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      uploadedGroup.appendChild(opt);
+    });
+    modelSelect.appendChild(uploadedGroup);
+  }
+  
+  // Custom models
+  if (categories.custom.length > 0) {
+    const customGroup = document.createElement('optgroup');
+    customGroup.label = 'Custom Models';
+    categories.custom.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      customGroup.appendChild(opt);
+    });
+    modelSelect.appendChild(customGroup);
+  }
+  
+  // Select first option
+  if (modelSelect.options.length > 0) {
+    modelSelect.options[0].selected = true;
+  }
+}
+
+// Make updateModelSelect globally accessible for uvEditor
+window.updateModelSelect = updateModelSelect;
+
+// Make switchToModel globally accessible for uvEditor
+window.switchToModel = function(modelName) {
+  modelSelect.value = modelName;
+  loadModel(modelName);
+};
+
+// Initial population
+updateModelSelect();
 
 // ─────────────────────────────────────────────
-// LOAD GLB MODEL
+// LOAD OBJ MODEL (with optional MTL materials)
 // ─────────────────────────────────────────────
 let activeMesh = null;
 let activeModel = null;
 let originalMaterials = [];
 
-const gltfLoader = new GLTFLoader();
+const objLoader = new OBJLoader();
+const mtlLoader = new MTLLoader();
 
 function loadModel(name) {
-  const file = MODELS[name];
-  if (!file) { log(`Unknown model: ${name}`, true); return; }
+  const loadingPaths = modelManager.getLoadingPaths(name);
+  if (!loadingPaths) { log(`Model not found: ${name}`, true); return; }
 
+  // Clean up previous model
   if (activeModel) {
     scene.remove(activeModel);
     activeModel.traverse((child) => {
-      if (child.isMesh && child.geometry) child.geometry.dispose();
+      if (child.isMesh) {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(mat => {
+              if (mat.map) mat.map.dispose();
+              mat.dispose();
+            });
+          } else {
+            if (child.material.map) child.material.map.dispose();
+            child.material.dispose();
+          }
+        }
+      }
     });
     activeModel = null;
     activeMesh = null;
@@ -264,65 +356,139 @@ function loadModel(name) {
 
   log(`Loading ${name}…`);
 
-  gltfLoader.load(
-    `../models/${file}`,
-    (gltf) => {
-      const model = gltf.scene;
-
-      model.traverse((child) => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-          activeMesh = child;
-          originalMaterials.push({ mesh: child, material: child.material.clone() });
-        }
-      });
-
-      scene.add(model);
-      activeModel = model;
-
-      // Center model at origin
-      const box = new THREE.Box3().setFromObject(model);
-      const center = box.getCenter(new THREE.Vector3());
-      model.position.sub(center);
-
-      // Recompute after centering
-      box.setFromObject(model);
-      const newCenter = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-
-      controls.target.copy(newCenter);
-
-      const maxDim = Math.max(size.x, size.y, size.z);
-      camera.position.set(0, newCenter.y - maxDim * 0.05, maxDim * 2.2);
-      camera.lookAt(newCenter);
-      controls.update();
-
-      applyPreset(document.getElementById('texture-select').value);
-
-      log(`${name} loaded.`);
-    },
-    (xhr) => {
-      if (xhr.total > 0) log(`Loading… ${((xhr.loaded / xhr.total) * 100).toFixed(0)}%`);
-    },
-    (err) => {
-      log(`Failed to load ${name}: ${err.message}`, true);
+  // Function to load the OBJ (with or without materials)
+  function loadOBJ(materials = null) {
+    if (materials) {
+      objLoader.setMaterials(materials);
     }
-  );
+
+    const objPath = loadingPaths.type === 'path' 
+      ? loadingPaths.basePath + loadingPaths.obj
+      : loadingPaths.obj;
+
+    objLoader.load(
+      objPath,
+      (object) => {
+        object.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            
+            if (!activeMesh) {
+              activeMesh = child;
+            }
+            
+            if (child.material) {
+              const matClone = Array.isArray(child.material)
+                ? child.material.map(m => m.clone())
+                : child.material.clone();
+              originalMaterials.push({ mesh: child, material: matClone });
+            }
+          }
+        });
+
+        scene.add(object);
+        activeModel = object;
+
+        // Center model at origin
+        const box = new THREE.Box3().setFromObject(object);
+        const center = box.getCenter(new THREE.Vector3());
+        object.position.sub(center);
+
+        box.setFromObject(object);
+        const newCenter = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+
+        controls.target.copy(newCenter);
+
+        const maxDim = Math.max(size.x, size.y, size.z);
+        camera.position.set(0, newCenter.y + maxDim * 0.05, maxDim * 2.5);
+        camera.lookAt(newCenter);
+        controls.update();
+
+        applyPreset(document.getElementById('texture-select').value);
+
+        log(`${name} loaded successfully.`);
+      },
+      (xhr) => {
+        if (xhr.lengthComputable && xhr.total > 0) {
+          const percent = ((xhr.loaded / xhr.total) * 100).toFixed(0);
+          log(`Loading OBJ… ${percent}%`);
+        }
+      },
+      (err) => {
+        log(`Failed to load OBJ ${name}: ${err}`, true);
+      }
+    );
+  }
+
+  // Load MTL first if it exists, then load OBJ
+  if (loadingPaths.mtl) {
+    if (loadingPaths.type === 'path') {
+      mtlLoader.setPath(loadingPaths.basePath);
+      mtlLoader.load(
+        loadingPaths.mtl,
+        (materials) => {
+          materials.preload();
+          log(`Materials loaded for ${name}.`);
+          loadOBJ(materials);
+        },
+        undefined,
+        (err) => {
+          log(`MTL load failed, loading OBJ without materials: ${err}`, true);
+          loadOBJ();
+        }
+      );
+    } else {
+      // For blob URLs, load the MTL directly
+      fetch(loadingPaths.mtl)
+        .then(response => response.text())
+        .then(mtlText => {
+          const materials = mtlLoader.parse(mtlText, '');
+          materials.preload();
+          log(`Materials loaded for ${name}.`);
+          loadOBJ(materials);
+        })
+        .catch(err => {
+          log(`MTL load failed: ${err}`, true);
+          loadOBJ();
+        });
+    }
+  } else {
+    loadOBJ();
+  }
 }
 
 // ─────────────────────────────────────────────
 // APPLY TEXTURE PRESET
 // ─────────────────────────────────────────────
 function applyPreset(name) {
-  if (!activeMesh) return;
-  const mat = materialPresets[name]();
-  // Carry over current environment map so reflections persist
-  if (scene.environment) mat.envMap = scene.environment;
-  if (activeMesh.material && activeMesh.material.dispose) activeMesh.material.dispose();
-  activeMesh.material = mat;
+  if (!activeModel) return;
+  
+  activeModel.traverse((child) => {
+    if (child.isMesh) {
+      const mat = materialPresets[name]();
+      
+      if (scene.environment) {
+        mat.envMap = scene.environment;
+        mat.envMapIntensity = 1.0;
+      }
+      
+      if (child.material) {
+        if (Array.isArray(child.material)) {
+          child.material.forEach(m => m.dispose && m.dispose());
+        } else {
+          child.material.dispose && child.material.dispose();
+        }
+      }
+      
+      child.material = mat;
+      child.material.needsUpdate = true;
+    }
+  });
+  
   syncSliders();
-  log(`Texture set to: ${name}`);
+  log(`Texture preset applied: ${name}`);
 }
 
 // ─────────────────────────────────────────────
@@ -340,17 +506,22 @@ function updateSliderDisplay(slider) {
 }
 
 function syncSliders() {
-  if (!activeMesh) return;
+  if (!activeModel) return;
 
   const opacity         = parseFloat(transparencySlider.value);
   const shadowIntensity = parseFloat(shadowsSlider.value);
   const reflexivity     = parseFloat(reflexivitySlider.value);
 
-  activeMesh.material.opacity = 1.0 - opacity;
-  activeMesh.material.transparent = activeMesh.material.opacity < 1.0;
+  activeModel.traverse((child) => {
+    if (child.isMesh && child.material) {
+      child.material.opacity = 1.0 - opacity;
+      child.material.transparent = child.material.opacity < 1.0;
+      child.material.metalness = reflexivity;
+      child.material.needsUpdate = true;
+    }
+  });
+
   dirLight.intensity = shadowIntensity * 2.0;
-  activeMesh.material.metalness = reflexivity;
-  activeMesh.material.needsUpdate = true;
 }
 
 transparencySlider.addEventListener('input', () => { updateSliderDisplay(transparencySlider); syncSliders(); });
@@ -359,6 +530,99 @@ reflexivitySlider.addEventListener('input', () => { updateSliderDisplay(reflexiv
 
 document.getElementById('texture-select').addEventListener('change', (e) => { applyPreset(e.target.value); });
 modelSelect.addEventListener('change', (e) => { loadModel(e.target.value); });
+
+// ─────────────────────────────────────────────
+// DRAG AND DROP / FILE UPLOAD
+// ─────────────────────────────────────────────
+const dropZone = document.querySelector('.scene-view-placeholder');
+const fileInput = document.getElementById('file-upload');
+
+// Prevent default drag behaviors
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+  dropZone.addEventListener(eventName, preventDefaults, false);
+  document.body.addEventListener(eventName, preventDefaults, false);
+});
+
+function preventDefaults(e) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+// Highlight drop zone when item is dragged over it
+['dragenter', 'dragover'].forEach(eventName => {
+  dropZone.addEventListener(eventName, () => {
+    dropZone.style.border = '3px dashed #4CAF50';
+  }, false);
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+  dropZone.addEventListener(eventName, () => {
+    dropZone.style.border = '1px solid';
+  }, false);
+});
+
+// Handle dropped files
+dropZone.addEventListener('drop', handleDrop, false);
+
+async function handleDrop(e) {
+  const dt = e.dataTransfer;
+  const files = dt.files;
+  await handleFiles(files);
+}
+
+// Handle file input
+if (fileInput) {
+  fileInput.addEventListener('change', async (e) => {
+    await handleFiles(e.target.files);
+  });
+}
+
+async function handleFiles(files) {
+  if (files.length === 0) return;
+
+  log(`Processing ${files.length} file(s)...`);
+
+  const result = await modelManager.addModelFromFiles(files);
+
+  // Log the verification report
+  const reportLines = result.report.split('\n');
+  reportLines.forEach(line => {
+    if (line.includes('❌') || line.includes('ERROR')) {
+      log(line, true);
+    } else if (line.includes('⚠️') || line.includes('WARNING')) {
+      log(line, false);
+    } else if (line.trim()) {
+      log(line, false);
+    }
+  });
+
+  if (result.success) {
+    log(`✅ Model "${result.name}" added successfully!`);
+    updateModelSelect();
+    
+    // Automatically load the new model
+    modelSelect.value = result.name;
+    loadModel(result.name);
+  } else {
+    log(`❌ Failed to add model. Check errors above.`, true);
+  }
+}
+
+// ─────────────────────────────────────────────
+// EDIT TEXTURE BUTTON
+// ─────────────────────────────────────────────
+const editTextureBtn = document.getElementById('edit-texture-btn');
+if (editTextureBtn) {
+  editTextureBtn.addEventListener('click', () => {
+    if (activeMesh) {
+      const currentModelName = modelSelect.value;
+      uvEditor.show(activeMesh, currentModelName);
+    } else {
+      log('No model loaded to edit', true);
+      alert('Please load a model first before editing textures.');
+    }
+  });
+}
 
 // ─────────────────────────────────────────────
 // RESIZE HANDLER
@@ -382,11 +646,17 @@ function animate() {
 animate();
 
 // ─────────────────────────────────────────────
-// KICK OFF — everything defined above, safe to run
+// KICK OFF
 // ─────────────────────────────────────────────
 try {
   initScenes(scene, renderer, () => activeMesh, log);
 } catch (e) {
   log(`initScenes crashed: ${e.message}`, true);
 }
-loadModel(modelSelect.value);
+
+// Load first model
+if (modelSelect.value) {
+  loadModel(modelSelect.value);
+}
+
+log('RenderDeck initialized. Drag & drop OBJ files to add models!');

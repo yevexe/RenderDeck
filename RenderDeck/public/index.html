@@ -5,7 +5,6 @@
   <meta charset="UTF-8" />
   <title>RenderDeck</title>
   <link rel="stylesheet" href="styles.css" />
-
 </head>
 
 <body>
@@ -13,11 +12,16 @@
     <!-- PREVIEW -->
     <div class="preview">
       <h1 class="site-name-header">RenderDeck</h1>
+      
       <div class="scene-view">
         <h1>Scene Controls</h1>
-        <div class="scene-view-placeholder"></div>
+        <div class="scene-view-placeholder">
+          <div class="drop-hint">
+            <p>Drag & Drop OBJ files here</p>
+            <p class="drop-hint-small">or use the "Add Model" button below</p>
+          </div>
+        </div>
       </div>
-
 
       <div class="scene-settings">
         <h1>Scene Settings</h1>
@@ -46,6 +50,11 @@
             <input type="range" id="reflexivity-slider" min="0" max="1" step="0.01" value="0.3">
             <span class="slider-value">0.3</span>
           </li>
+          <li class="edit-texture-section">
+            <button id="edit-texture-btn" class="edit-texture-button">
+              ✏️ Edit Texture
+            </button>
+          </li>
         </ul>
       </div>
     </div>
@@ -53,13 +62,22 @@
     <!-- DEBUG -->
     <div class="debug">
       <h1>Debugging</h1>
-      <p>Debugging grounds</p>
+      <p>Ready. Drag and drop OBJ files to add models.</p>
     </div>
 
     <!-- MODEL SELECT -->
     <div class="model-select-panel">
       <h1>Select Model</h1>
       <select id="model-select"></select>
+      
+      <!-- File Upload Button -->
+      <div class="upload-controls">
+        <label for="file-upload" class="upload-button">
+          📁 Add Model Files
+        </label>
+        <input type="file" id="file-upload" multiple accept=".obj,.mtl,.png,.jpg,.jpeg,.svg,.webp" style="display: none;">
+        <p class="upload-hint">Select .obj file + optional .mtl and textures</p>
+      </div>
     </div>
 
     <!-- SCENE SELECT -->
@@ -68,9 +86,8 @@
       <select id="scene-select"></select>
     </div>
 
-
-
   </main>
+
   <script type="importmap">
   {
     "imports": {
