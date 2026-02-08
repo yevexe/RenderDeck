@@ -1,23 +1,32 @@
 // ═══════════════════════════════════════════════════════════════
-// VERIFIER.JS - File Validation System for RenderDeck
-// Validates OBJ files, MTL files, and texture images
+// VERIFIER.JS - Universal File Validation System
+// Standalone module for validating 3D model files (OBJ/MTL/textures)
+// Can be used in any project - fully configurable
 // ═══════════════════════════════════════════════════════════════
 
 export class ModelVerifier {
-  constructor() {
-    // Allowed file extensions
-    this.ALLOWED_EXTENSIONS = {
-      model: ['.obj'],
-      material: ['.mtl'],
-      texture: ['.png', '.jpg', '.jpeg', '.svg', '.webp', '.bmp', '.gif']
+  constructor(config = {}) {
+    // Merge user config with defaults
+    const defaults = {
+      allowedExtensions: {
+        model: ['.obj'],
+        material: ['.mtl'],
+        texture: ['.png', '.jpg', '.jpeg', '.svg', '.webp', '.bmp', '.gif']
+      },
+      maxFileSize: {
+        model: 50 * 1024 * 1024,      // 50MB for OBJ files
+        material: 1 * 1024 * 1024,     // 1MB for MTL files
+        texture: 20 * 1024 * 1024      // 20MB for textures (increased!)
+      },
+      maxImageDimension: 8192,  // Warn if image is larger than this
+      allowAbsolutePaths: false // In MTL files
     };
-
-    // File size limits (in bytes)
-    this.MAX_FILE_SIZE = {
-      model: 50 * 1024 * 1024,      // 50MB for OBJ files
-      material: 1 * 1024 * 1024,     // 1MB for MTL files
-      texture: 10 * 1024 * 1024      // 10MB for textures
-    };
+    
+    this.config = { ...defaults, ...config };
+    
+    // For backward compatibility
+    this.ALLOWED_EXTENSIONS = this.config.allowedExtensions;
+    this.MAX_FILE_SIZE = this.config.maxFileSize;
   }
 
   // ─────────────────────────────────────────────
@@ -49,34 +58,26 @@ export class ModelVerifier {
     const objFiles = [];
     const mtlFiles = [];
     const textureFiles = [];
-    const unknownFiles = [];
 
     fileArray.forEach(file => {
       const ext = this.getFileExtension(file.name);
       
-      if (this.ALLOWED_EXTENSIONS.model.includes(ext)) {
+      if (this.config.allowedExtensions.model.includes(ext)) {
         objFiles.push(file);
-      } else if (this.ALLOWED_EXTENSIONS.material.includes(ext)) {
+      } else if (this.config.allowedExtensions.material.includes(ext)) {
         mtlFiles.push(file);
-      } else if (this.ALLOWED_EXTENSIONS.texture.includes(ext)) {
+      } else if (this.config.allowedExtensions.texture.includes(ext)) {
         textureFiles.push(file);
-      } else {
-        unknownFiles.push(file);
       }
     });
 
-    // Warning for unknown files
-    if (unknownFiles.length > 0) {
-      results.warnings.push(`Ignoring ${unknownFiles.length} unknown file(s): ${unknownFiles.map(f => f.name).join(', ')}`);
-    }
-
-    // Validate OBJ file (required)
+    // Validate OBJ (required)
     if (objFiles.length === 0) {
       results.valid = false;
-      results.errors.push('No .obj file found. An OBJ file is required.');
+      results.errors.push('No OBJ file found');
     } else if (objFiles.length > 1) {
       results.valid = false;
-      results.errors.push(`Multiple .obj files found: ${objFiles.map(f => f.name).join(', ')}. Only one is allowed.`);
+      results.errors.push(`Multiple OBJ files found (${objFiles.length}). Please provide only one.`);
     } else {
       const objValidation = await this.validateOBJFile(objFiles[0]);
       if (objValidation.valid) {
@@ -86,26 +87,23 @@ export class ModelVerifier {
         results.valid = false;
         results.errors.push(...objValidation.errors);
       }
+      results.warnings.push(...objValidation.warnings);
     }
 
-    // Validate MTL file (optional)
+    // Validate MTL (optional)
     if (mtlFiles.length > 1) {
-      results.warnings.push(`Multiple .mtl files found: ${mtlFiles.map(f => f.name).join(', ')}. Using first one.`);
+      results.warnings.push(`Multiple MTL files found (${mtlFiles.length}). Using: ${mtlFiles[0].name}`);
+    }
+    
+    if (mtlFiles.length > 0) {
       const mtlValidation = await this.validateMTLFile(mtlFiles[0]);
       if (mtlValidation.valid) {
         results.files.mtl = mtlFiles[0];
         results.metadata.mtlInfo = mtlValidation.metadata;
       } else {
-        results.warnings.push(...mtlValidation.errors);
+        results.warnings.push(...mtlValidation.errors); // MTL errors are warnings
       }
-    } else if (mtlFiles.length === 1) {
-      const mtlValidation = await this.validateMTLFile(mtlFiles[0]);
-      if (mtlValidation.valid) {
-        results.files.mtl = mtlFiles[0];
-        results.metadata.mtlInfo = mtlValidation.metadata;
-      } else {
-        results.warnings.push(...mtlValidation.errors);
-      }
+      results.warnings.push(...mtlValidation.warnings);
     }
 
     // Validate textures (optional)
@@ -114,98 +112,82 @@ export class ModelVerifier {
       if (textureValidation.valid) {
         results.files.textures.push(textureFile);
       } else {
-        results.warnings.push(`Texture ${textureFile.name}: ${textureValidation.errors.join(', ')}`);
+        results.warnings.push(...textureValidation.errors.map(e => `Texture ${textureFile.name}: ${e}`));
       }
+      results.warnings.push(...textureValidation.warnings.map(w => `Texture ${textureFile.name}: ${w}`));
     }
 
-    // Cross-reference: Check if MTL references textures that are present
+    // Cross-validation: Check if MTL references match provided textures
     if (results.files.mtl && results.metadata.mtlInfo?.referencedTextures) {
-      const mtlTextures = results.metadata.mtlInfo.referencedTextures;
       const providedTextureNames = results.files.textures.map(f => f.name);
+      const referencedTextures = results.metadata.mtlInfo.referencedTextures;
       
-      const missingTextures = mtlTextures.filter(texName => 
-        !providedTextureNames.includes(texName)
-      );
-
-      if (missingTextures.length > 0) {
-        results.warnings.push(`MTL references missing textures: ${missingTextures.join(', ')}`);
-      }
-    }
-
-    // Success summary
-    if (results.valid) {
-      results.metadata.summary = {
-        objFile: results.files.obj.name,
-        mtlFile: results.files.mtl?.name || 'none',
-        textureCount: results.files.textures.length,
-        totalSize: this.calculateTotalSize(fileArray)
-      };
+      referencedTextures.forEach(refTexture => {
+        if (!providedTextureNames.includes(refTexture)) {
+          results.warnings.push(`MTL references texture "${refTexture}" which was not provided`);
+        }
+      });
     }
 
     return results;
   }
 
   // ─────────────────────────────────────────────
-  // Validate OBJ file
+  // Validate a single OBJ file
   // ─────────────────────────────────────────────
   async validateOBJFile(file) {
     const result = {
       valid: true,
       errors: [],
+      warnings: [],
       metadata: {}
     };
 
-    // Check file extension
-    if (!this.ALLOWED_EXTENSIONS.model.includes(this.getFileExtension(file.name))) {
+    // Check extension
+    const ext = this.getFileExtension(file.name);
+    if (!this.config.allowedExtensions.model.includes(ext)) {
       result.valid = false;
-      result.errors.push(`Invalid file extension. Expected .obj, got ${this.getFileExtension(file.name)}`);
+      result.errors.push(`Invalid file extension: ${ext}. Expected: ${this.config.allowedExtensions.model.join(', ')}`);
       return result;
     }
 
     // Check file size
-    if (file.size > this.MAX_FILE_SIZE.model) {
+    if (file.size > this.config.maxFileSize.model) {
       result.valid = false;
-      result.errors.push(`File too large: ${this.formatBytes(file.size)}. Maximum allowed: ${this.formatBytes(this.MAX_FILE_SIZE.model)}`);
-      return result;
-    }
-
-    if (file.size === 0) {
-      result.valid = false;
-      result.errors.push('File is empty');
+      result.errors.push(`File too large: ${this.formatBytes(file.size)}. Max: ${this.formatBytes(this.config.maxFileSize.model)}`);
       return result;
     }
 
     // Read and validate content
     try {
       const content = await this.readFileAsText(file);
-      const lines = content.split('\n');
-
-      // Check for basic OBJ structure
-      const hasVertices = lines.some(line => line.trim().startsWith('v '));
-      const hasFaces = lines.some(line => line.trim().startsWith('f '));
-
-      if (!hasVertices) {
-        result.valid = false;
-        result.errors.push('No vertex data found in OBJ file');
-      }
-
-      if (!hasFaces) {
-        result.valid = false;
-        result.errors.push('No face data found in OBJ file');
-      }
-
-      // Extract metadata
-      const vertexCount = lines.filter(line => line.trim().startsWith('v ')).length;
-      const faceCount = lines.filter(line => line.trim().startsWith('f ')).length;
-      const mtlLibLine = lines.find(line => line.trim().startsWith('mtllib '));
-      const referencedMTL = mtlLibLine ? mtlLibLine.split(/\s+/)[1] : null;
+      
+      // Count vertices and faces
+      const vertexCount = (content.match(/^v\s/gm) || []).length;
+      const faceCount = (content.match(/^f\s/gm) || []).length;
+      const mtlReference = content.match(/^mtllib\s+(.+)$/m);
 
       result.metadata = {
         vertexCount,
         faceCount,
-        referencedMTL,
-        fileSize: file.size
+        mtlFile: mtlReference ? mtlReference[1].trim() : null
       };
+
+      // Validate has geometry
+      if (vertexCount === 0) {
+        result.valid = false;
+        result.errors.push('OBJ file contains no vertices');
+      }
+      
+      if (faceCount === 0) {
+        result.valid = false;
+        result.errors.push('OBJ file contains no faces');
+      }
+
+      // Warnings
+      if (vertexCount > 1000000) {
+        result.warnings.push(`High vertex count (${vertexCount.toLocaleString()}). May impact performance.`);
+      }
 
     } catch (error) {
       result.valid = false;
@@ -216,80 +198,72 @@ export class ModelVerifier {
   }
 
   // ─────────────────────────────────────────────
-  // Validate MTL file
+  // Validate a single MTL file
   // ─────────────────────────────────────────────
   async validateMTLFile(file) {
     const result = {
       valid: true,
       errors: [],
+      warnings: [],
       metadata: {}
     };
 
-    // Check file extension
-    if (!this.ALLOWED_EXTENSIONS.material.includes(this.getFileExtension(file.name))) {
+    // Check extension
+    const ext = this.getFileExtension(file.name);
+    if (!this.config.allowedExtensions.material.includes(ext)) {
       result.valid = false;
-      result.errors.push(`Invalid file extension. Expected .mtl, got ${this.getFileExtension(file.name)}`);
+      result.errors.push(`Invalid file extension: ${ext}. Expected: ${this.config.allowedExtensions.material.join(', ')}`);
       return result;
     }
 
     // Check file size
-    if (file.size > this.MAX_FILE_SIZE.material) {
+    if (file.size > this.config.maxFileSize.material) {
       result.valid = false;
-      result.errors.push(`File too large: ${this.formatBytes(file.size)}. Maximum: ${this.formatBytes(this.MAX_FILE_SIZE.material)}`);
-      return result;
-    }
-
-    if (file.size === 0) {
-      result.valid = false;
-      result.errors.push('File is empty');
+      result.errors.push(`File too large: ${this.formatBytes(file.size)}. Max: ${this.formatBytes(this.config.maxFileSize.material)}`);
       return result;
     }
 
     // Read and validate content
     try {
       const content = await this.readFileAsText(file);
-      const lines = content.split('\n');
-
+      
       // Check for material definitions
-      const hasMaterial = lines.some(line => line.trim().startsWith('newmtl '));
-      if (!hasMaterial) {
+      const materialCount = (content.match(/^newmtl\s/gm) || []).length;
+      
+      if (materialCount === 0) {
         result.valid = false;
-        result.errors.push('No material definitions found in MTL file');
+        result.errors.push('MTL file contains no material definitions (newmtl)');
       }
 
       // Extract referenced textures
-      const textureLines = lines.filter(line => {
-        const trimmed = line.trim();
-        return trimmed.startsWith('map_Kd ') || 
-               trimmed.startsWith('map_Ka ') || 
-               trimmed.startsWith('map_Ks ') ||
-               trimmed.startsWith('map_Bump ') ||
-               trimmed.startsWith('map_d ');
+      const textureReferences = [];
+      const textureMapTypes = ['map_Kd', 'map_Ka', 'map_Ks', 'map_Bump', 'map_d', 'map_Ns', 'bump'];
+      
+      textureMapTypes.forEach(mapType => {
+        const regex = new RegExp(`^${mapType}\\s+(.+)$`, 'gm');
+        let match;
+        while ((match = regex.exec(content)) !== null) {
+          const texturePath = match[1].trim();
+          const filename = texturePath.split(/[/\\]/).pop();
+          if (!textureReferences.includes(filename)) {
+            textureReferences.push(filename);
+          }
+        }
       });
-
-      const referencedTextures = textureLines.map(line => {
-        const parts = line.trim().split(/\s+/);
-        // Get the last part (the filename), handle paths
-        const texPath = parts[parts.length - 1];
-        // Extract just the filename (remove any path separators)
-        return texPath.split(/[/\\]/).pop();
-      });
-
-      // Check for absolute paths (warning)
-      const hasAbsolutePaths = textureLines.some(line => {
-        return line.includes(':\\') || line.includes('C:') || line.startsWith('/');
-      });
-
-      if (hasAbsolutePaths) {
-        result.errors.push('MTL file contains absolute texture paths. These should be relative filenames only.');
-        result.valid = false;
-      }
 
       result.metadata = {
-        materialCount: lines.filter(line => line.trim().startsWith('newmtl ')).length,
-        referencedTextures: [...new Set(referencedTextures)], // Remove duplicates
-        fileSize: file.size
+        materialCount,
+        referencedTextures: textureReferences
       };
+
+      // Check for absolute paths (usually problematic)
+      if (!this.config.allowAbsolutePaths) {
+        const hasAbsolutePaths = /^(map_\w+|bump)\s+[A-Za-z]:|^(map_\w+|bump)\s+\//m.test(content);
+        if (hasAbsolutePaths) {
+          result.valid = false;
+          result.errors.push('MTL contains absolute file paths. Use relative paths only.');
+        }
+      }
 
     } catch (error) {
       result.valid = false;
@@ -300,66 +274,124 @@ export class ModelVerifier {
   }
 
   // ─────────────────────────────────────────────
-  // Validate texture/image file
+  // Validate a single texture file
   // ─────────────────────────────────────────────
   async validateTextureFile(file) {
     const result = {
       valid: true,
       errors: [],
+      warnings: [],
       metadata: {}
     };
 
-    // Check file extension
+    // Check extension
     const ext = this.getFileExtension(file.name);
-    if (!this.ALLOWED_EXTENSIONS.texture.includes(ext)) {
+    if (!this.config.allowedExtensions.texture.includes(ext)) {
       result.valid = false;
-      result.errors.push(`Invalid image extension: ${ext}. Allowed: ${this.ALLOWED_EXTENSIONS.texture.join(', ')}`);
+      result.errors.push(`Invalid file extension: ${ext}. Expected: ${this.config.allowedExtensions.texture.join(', ')}`);
       return result;
     }
 
     // Check file size
-    if (file.size > this.MAX_FILE_SIZE.texture) {
+    if (file.size > this.config.maxFileSize.texture) {
       result.valid = false;
-      result.errors.push(`Texture too large: ${this.formatBytes(file.size)}. Maximum: ${this.formatBytes(this.MAX_FILE_SIZE.texture)}`);
+      result.errors.push(`File too large: ${this.formatBytes(file.size)}. Max: ${this.formatBytes(this.config.maxFileSize.texture)}`);
       return result;
     }
 
-    if (file.size === 0) {
-      result.valid = false;
-      result.errors.push('File is empty');
-      return result;
-    }
-
-    // Validate image by trying to load it
+    // Try to load as image to verify it's valid
     try {
-      const dimensions = await this.getImageDimensions(file);
+      const imageData = await this.loadImageFromFile(file);
+      
       result.metadata = {
-        width: dimensions.width,
-        height: dimensions.height,
-        fileSize: file.size,
-        format: ext.substring(1).toUpperCase()
+        width: imageData.width,
+        height: imageData.height,
+        size: file.size
       };
 
-      // Warn about very large textures
-      if (dimensions.width > 4096 || dimensions.height > 4096) {
-        result.errors.push(`Large texture (${dimensions.width}x${dimensions.height}). May impact performance.`);
-        // Don't set valid to false, just a warning
+      // Warnings for large dimensions
+      if (imageData.width > this.config.maxImageDimension || imageData.height > this.config.maxImageDimension) {
+        result.warnings.push(`Large image dimensions (${imageData.width}×${imageData.height}). May cause performance issues.`);
       }
 
     } catch (error) {
       result.valid = false;
-      result.errors.push(`Failed to load image: ${error.message}`);
+      result.errors.push(`Not a valid image file: ${error.message}`);
     }
 
     return result;
   }
 
   // ─────────────────────────────────────────────
+  // Generate a human-readable report
+  // ─────────────────────────────────────────────
+  generateReport(verification) {
+    let report = '=== File Verification Report ===\n\n';
+
+    if (verification.valid) {
+      report += '✅ Status: VALID\n\n';
+    } else {
+      report += '❌ Status: INVALID\n\n';
+    }
+
+    // Files found
+    report += 'Files:\n';
+    if (verification.files.obj) {
+      report += `  ✅ OBJ: ${verification.files.obj.name}\n`;
+      if (verification.metadata.objInfo) {
+        report += `     - Vertices: ${verification.metadata.objInfo.vertexCount.toLocaleString()}\n`;
+        report += `     - Faces: ${verification.metadata.objInfo.faceCount.toLocaleString()}\n`;
+      }
+    } else {
+      report += '  ❌ OBJ: Not found\n';
+    }
+
+    if (verification.files.mtl) {
+      report += `  ✅ MTL: ${verification.files.mtl.name}\n`;
+      if (verification.metadata.mtlInfo) {
+        report += `     - Materials: ${verification.metadata.mtlInfo.materialCount}\n`;
+        if (verification.metadata.mtlInfo.referencedTextures.length > 0) {
+          report += `     - References: ${verification.metadata.mtlInfo.referencedTextures.join(', ')}\n`;
+        }
+      }
+    } else {
+      report += '  ⚠️  MTL: Not provided\n';
+    }
+
+    if (verification.files.textures.length > 0) {
+      report += `  ✅ Textures: ${verification.files.textures.length} file(s)\n`;
+      verification.files.textures.forEach(tex => {
+        report += `     - ${tex.name}\n`;
+      });
+    } else {
+      report += '  ⚠️  Textures: None provided\n';
+    }
+
+    // Errors
+    if (verification.errors.length > 0) {
+      report += '\nErrors:\n';
+      verification.errors.forEach(err => {
+        report += `  ❌ ${err}\n`;
+      });
+    }
+
+    // Warnings
+    if (verification.warnings.length > 0) {
+      report += '\nWarnings:\n';
+      verification.warnings.forEach(warn => {
+        report += `  ⚠️  ${warn}\n`;
+      });
+    }
+
+    return report;
+  }
+
+  // ─────────────────────────────────────────────
   // Helper: Get file extension
   // ─────────────────────────────────────────────
   getFileExtension(filename) {
-    const lastDot = filename.lastIndexOf('.');
-    return lastDot === -1 ? '' : filename.substring(lastDot).toLowerCase();
+    const match = filename.match(/\.[^.]+$/);
+    return match ? match[0].toLowerCase() : '';
   }
 
   // ─────────────────────────────────────────────
@@ -369,28 +401,24 @@ export class ModelVerifier {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = (e) => reject(new Error('Failed to read file'));
+      reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsText(file);
     });
   }
 
   // ─────────────────────────────────────────────
-  // Helper: Get image dimensions
+  // Helper: Load image from file
   // ─────────────────────────────────────────────
-  getImageDimensions(file) {
+  loadImageFromFile(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
-        img.onload = () => {
-          resolve({ width: img.width, height: img.height });
-        };
-        img.onerror = () => {
-          reject(new Error('Invalid image file'));
-        };
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Invalid image data'));
         img.src = e.target.result;
       };
-      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsDataURL(file);
     });
   }
@@ -405,51 +433,24 @@ export class ModelVerifier {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   }
-
-  // ─────────────────────────────────────────────
-  // Helper: Calculate total size of files
-  // ─────────────────────────────────────────────
-  calculateTotalSize(files) {
-    return files.reduce((sum, file) => sum + file.size, 0);
-  }
-
-  // ─────────────────────────────────────────────
-  // Generate verification report (for display)
-  // ─────────────────────────────────────────────
-  generateReport(verificationResult) {
-    let report = '';
-
-    if (verificationResult.valid) {
-      report += '✅ VERIFICATION PASSED\n\n';
-      
-      const meta = verificationResult.metadata.summary;
-      report += `📦 OBJ File: ${meta.objFile}\n`;
-      report += `📄 MTL File: ${meta.mtlFile}\n`;
-      report += `🖼️  Textures: ${meta.textureCount} file(s)\n`;
-      report += `💾 Total Size: ${this.formatBytes(meta.totalSize)}\n`;
-
-      if (verificationResult.metadata.objInfo) {
-        report += `\n📊 Model Stats:\n`;
-        report += `   Vertices: ${verificationResult.metadata.objInfo.vertexCount.toLocaleString()}\n`;
-        report += `   Faces: ${verificationResult.metadata.objInfo.faceCount.toLocaleString()}\n`;
-      }
-
-      if (verificationResult.warnings.length > 0) {
-        report += `\n⚠️  WARNINGS:\n`;
-        verificationResult.warnings.forEach(w => report += `   - ${w}\n`);
-      }
-
-    } else {
-      report += '❌ VERIFICATION FAILED\n\n';
-      report += `ERRORS:\n`;
-      verificationResult.errors.forEach(e => report += `   ❌ ${e}\n`);
-
-      if (verificationResult.warnings.length > 0) {
-        report += `\nWARNINGS:\n`;
-        verificationResult.warnings.forEach(w => report += `   ⚠️  ${w}\n`);
-      }
-    }
-
-    return report;
-  }
 }
+
+// ─────────────────────────────────────────────
+// Example usage for standalone projects:
+// ─────────────────────────────────────────────
+// import { ModelVerifier } from './verifier.js';
+//
+// // Use with default settings
+// const verifier = new ModelVerifier();
+//
+// // Or customize:
+// const verifier = new ModelVerifier({
+//   maxFileSize: {
+//     texture: 50 * 1024 * 1024  // Allow 50MB textures
+//   },
+//   maxImageDimension: 16384  // Allow up to 16K textures
+// });
+//
+// // Verify files
+// const result = await verifier.verifyModelFolder(fileList);
+// console.log(verifier.generateReport(result));

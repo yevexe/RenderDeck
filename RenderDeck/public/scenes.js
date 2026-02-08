@@ -65,9 +65,23 @@ export function initScenes(scene, renderer, getActiveMesh, log) {
           scene.environment = envMap;
 
           const mesh = getActiveMesh();
-          if (mesh && mesh.material) {
-            mesh.material.envMap = envMap;
-            mesh.material.needsUpdate = true;
+          if (mesh) {
+            // Find the top-level object for this mesh (child of scene)
+            let top = mesh;
+            while (top.parent && top.parent !== scene) {
+              top = top.parent;
+            }
+
+            // Traverse the whole model and apply envMap to all materials
+            top.traverse((child) => {
+              if (child.isMesh && child.material) {
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(mat => {
+                  mat.envMap = envMap;
+                  mat.needsUpdate = true;
+                });
+              }
+            });
           }
 
           texture.dispose();

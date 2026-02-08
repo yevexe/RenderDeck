@@ -11,7 +11,14 @@ export class UVEditor {
     this.renderer = renderer;
     this.log = log;
     this.modelManager = modelManager;
-    this.verifier = new ModelVerifier();
+    
+    // Initialize verifier with increased texture size limits
+    this.verifier = new ModelVerifier({
+      maxFileSize: {
+        texture: 20 * 1024 * 1024  // 20MB for textures (up from 10MB)
+      },
+      maxImageDimension: 8192  // Allow up to 8K textures
+    });
     
     // Current state
     this.activeMesh = null;
@@ -231,8 +238,8 @@ export class UVEditor {
     });
     
     // Action buttons
-    document.querySelector('.save-custom-model-btn').addEventListener('click', () => {
-      this.saveAsCustomModel();
+    document.querySelector('.save-custom-model-btn').addEventListener('click', async () => {
+      await this.saveAsCustomModel();
     });
     
     document.querySelector('.apply-texture-btn').addEventListener('click', () => {
@@ -251,40 +258,94 @@ export class UVEditor {
   // ─────────────────────────────────────────────
   // Show Editor with Model Naming
   // ─────────────────────────────────────────────
-  async show(mesh, originalModelName) {
-    // Prompt for custom model name
-    const defaultName = `${originalModelName} (Custom)`;
-    const customName = prompt(`Enter a name for your custom model:`, defaultName);
-    
-    if (!customName) {
-      this.log('Custom model creation cancelled');
-      return;
-    }
-    
+  async show(mesh, originalModelName, currentMaterialPreset = 'Wood') {
     this.activeMesh = mesh;
-    this.activeModelName = originalModelName;
-    this.customModelName = customName;
+    this.currentMaterialPreset = currentMaterialPreset; // Store the current preset
+    
+    // Check if this is already a custom model
+    const existingCustomModel = await this.modelManager.getModel(originalModelName);
+    const isCustomModel = existingCustomModel && existingCustomModel.type === 'custom';
+    
+    if (isCustomModel) {
+      // Editing existing custom model - don't ask for name
+      this.activeModelName = existingCustomModel.basedOn;
+      this.customModelName = originalModelName;
+      // Load the saved preset if it exists
+      this.currentMaterialPreset = existingCustomModel.materialPreset || currentMaterialPreset;
+      
+      // Load existing custom model data
+      if (existingCustomModel.overlayImages && existingCustomModel.overlayImages.length > 0) {
+        this.log(`Loading ${existingCustomModel.overlayImages.length} saved image(s) for: ${originalModelName}`);
+        
+        // Clear current overlay images
+        this.overlayImages = [];
+        this.nextImageId = 1;
+        
+        // Reload saved images from base64 data
+        const loadPromises = existingCustomModel.overlayImages.map(savedImg => {
+          return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              const imageData = {
+                id: this.nextImageId++,
+                image: img,
+                name: savedImg.name,
+                position: { ...savedImg.position },
+                size: { ...savedImg.size },
+                rotation: savedImg.rotation,
+                aspectRatio: savedImg.aspectRatio
+              };
+              this.overlayImages.push(imageData);
+              resolve();
+            };
+            img.onerror = () => {
+              this.log(`Failed to load saved image: ${savedImg.name}`, true);
+              resolve();
+            };
+            img.src = savedImg.imageData;  // Load from base64 data URL
+          });
+        });
+        
+        // Wait for all images to load before rendering
+        await Promise.all(loadPromises);
+        this.log(`✓ Loaded ${this.overlayImages.length} image(s)`);
+      }
+    } else {
+      // Creating new custom model - ask for name
+      const defaultName = `${originalModelName} (Custom)`;
+      const customName = prompt(`Enter a name for your custom model:`, defaultName);
+      
+      if (!customName) {
+        this.log('Custom model creation cancelled');
+        return;
+      }
+      
+      this.activeModelName = originalModelName;
+      this.customModelName = customName;
+      this.overlayImages = [];
+      this.nextImageId = 1;
+    }
     
     const container = document.getElementById('uv-editor');
     container.classList.remove('hidden');
     
     // Update header with model name
-    document.querySelector('.model-name-display').textContent = `- ${customName}`;
+    document.querySelector('.model-name-display').textContent = `- ${this.customModelName}`;
     
     // Extract current texture if exists
     if (mesh.material && mesh.material.map) {
       this.baseTexture = mesh.material.map;
     }
     
-    // Reset position and size
+    // Reset position and use saved size
     this.windowPosition = { x: 0, y: 0 };
-    this.windowSize = { width: 1200, height: 700 };
     container.style.transform = 'translate(-50%, -50%)';
     container.style.width = `${this.windowSize.width}px`;
     container.style.height = `${this.windowSize.height}px`;
     
+    this.updateImagesList();
     this.renderUVPreview();
-    this.log(`UV Editor opened for: ${customName}`);
+    this.log(`UV Editor opened for: ${this.customModelName}`);
   }
 
   hide() {
@@ -293,38 +354,80 @@ export class UVEditor {
   }
 
   // ─────────────────────────────────────────────
-  // Save as Custom Model
+  // Save as Custom Model (Option C - No Baking!)
   // ─────────────────────────────────────────────
-  saveAsCustomModel() {
+  async saveAsCustomModel() {
     if (!this.customModelName) {
       this.log('No custom model name set', true);
       return;
     }
     
-    // Apply texture first
-    this.renderCompositeTexture();
-    const texture = new THREE.CanvasTexture(this.textureCanvas);
-    texture.needsUpdate = true;
+    // DON'T bake texture when saving - just save overlay data
+    // Texture will be composited in real-time when loading
     
-    // Save the custom model data
-    const customModelData = {
-      basedOn: this.activeModelName,
-      customName: this.customModelName,
-      texture: texture,
-      textureCanvas: this.textureCanvas.toDataURL('image/png'),
-      overlayImages: this.overlayImages.map(img => ({
+    // Save current material properties
+    const materialProperties = {};
+    if (this.activeMesh && this.activeMesh.material) {
+      const mat = this.activeMesh.material;
+      materialProperties.metalness = mat.metalness !== undefined ? mat.metalness : 0.0;
+      materialProperties.roughness = mat.roughness !== undefined ? mat.roughness : 0.5;
+      materialProperties.opacity = mat.opacity !== undefined ? mat.opacity : 1.0;
+      materialProperties.transparent = mat.transparent !== undefined ? mat.transparent : false;
+      if (mat.color) {
+        materialProperties.color = {
+          r: mat.color.r,
+          g: mat.color.g,
+          b: mat.color.b
+        };
+      }
+    }
+    
+    // Save the active material preset (Wood/Metal/Glass/Plastic)
+    const activePreset = this.currentMaterialPreset || 'Wood';
+    
+    this.log(`Saving material preset: ${activePreset}`);
+    
+    // Convert overlay images to serializable format with base64 data
+    const serializedImages = [];
+    for (const img of this.overlayImages) {
+      // Create a canvas to convert the image to base64
+      const canvas = document.createElement('canvas');
+      canvas.width = img.image.width;
+      canvas.height = img.image.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img.image, 0, 0);
+      const imageData = canvas.toDataURL('image/png');
+      
+      serializedImages.push({
         name: img.name,
         position: { ...img.position },
         size: { ...img.size },
         rotation: img.rotation,
-        aspectRatio: img.aspectRatio
-      }))
+        aspectRatio: img.aspectRatio,
+        imageData: imageData  // Store as base64
+      });
+    }
+    
+    // Save the custom model data (NO baked texture!)
+    const customModelData = {
+      basedOn: this.activeModelName,
+      customName: this.customModelName,
+      overlayImages: serializedImages,
+      materialProperties: materialProperties,
+      materialPreset: activePreset  // NEW: Save which preset (Wood/Metal/Glass/Plastic)
+      // NO texture property!
+      // NO textureCanvas property!
     };
     
     // Store in modelManager
-    this.modelManager.saveCustomModel(this.customModelName, customModelData);
+    await this.modelManager.saveCustomModel(this.customModelName, customModelData);
     
-    // Apply to current mesh
+    // Apply texture to current mesh for preview
+    this.renderCompositeTexture();
+    const texture = new THREE.CanvasTexture(this.textureCanvas);
+    texture.encoding = THREE.sRGBEncoding;
+    texture.needsUpdate = true;
+    
     if (this.activeMesh.material) {
       if (this.activeMesh.material.map && this.activeMesh.material.map !== this.baseTexture) {
         this.activeMesh.material.map.dispose();
@@ -681,6 +784,7 @@ export class UVEditor {
     
     // Create texture from canvas
     const texture = new THREE.CanvasTexture(this.textureCanvas);
+    texture.encoding = THREE.sRGBEncoding;
     texture.needsUpdate = true;
     
     // Apply to material
