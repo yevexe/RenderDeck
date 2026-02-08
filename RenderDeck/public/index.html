@@ -78,6 +78,23 @@
         <input type="file" id="file-upload" multiple accept=".obj,.mtl,.png,.jpg,.jpeg,.svg,.webp" style="display: none;">
         <p class="upload-hint">Select .obj file + optional .mtl and textures</p>
       </div>
+
+      <!-- Export/Import Controls -->
+      <div class="upload-controls">
+        <button id="export-models-btn" class="upload-button">
+          💾 Export Custom Models
+        </button>
+        <button id="import-models-btn" class="upload-button">
+          📥 Import Custom Models
+        </button>
+        <input type="file" id="import-models-file" accept=".json" style="display: none;">
+        <button id="export-current-btn" class="upload-button">
+          📤 Export This Custom Model
+        </button>
+        <button id="clear-custom-btn" class="upload-button">
+          🗑️ Clear Custom Models
+        </button>
+      </div>
     </div>
 
     <!-- SCENE SELECT -->
