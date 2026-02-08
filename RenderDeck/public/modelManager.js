@@ -4,13 +4,26 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ModelVerifier } from './verifier.js';
+import { CustomModelStorage } from './customModelStorage.js';
 
 export class ModelManager {
-  constructor() {
+  constructor(log) {
     this.models = new Map(); // Store models: name -> {folder, obj, mtl, files}
-    this.customModels = new Map(); // Store custom textured models
     this.verifier = new ModelVerifier();
+    this.storage = new CustomModelStorage(log);
     this.nextModelId = 1;
+    
+    // Load custom models from localStorage on init
+    this.loadCustomModelsFromStorage();
+  }
+
+  // ─────────────────────────────────────────────
+  // Load custom models from localStorage
+  // ─────────────────────────────────────────────
+  async loadCustomModelsFromStorage() {
+    const storedModels = await this.storage.loadAllCustomModels();
+    // Custom models are accessed via storage, not stored in this.models
+    // This keeps them separate and persistent
   }
 
   // ─────────────────────────────────────────────
@@ -135,40 +148,33 @@ export class ModelManager {
   // ─────────────────────────────────────────────
   // Get model data for loading
   // ─────────────────────────────────────────────
-  getModel(name) {
+  async getModel(name) {
+    // Check custom models in storage first
+    const customModel = await this.storage.loadCustomModel(name);
+    if (customModel) {
+      return {
+        type: 'custom',
+        ...customModel
+      };
+    }
+    
+    // Then check regular models
     return this.models.get(name);
   }
 
   // ─────────────────────────────────────────────
   // Save a custom textured model
   // ─────────────────────────────────────────────
-  saveCustomModel(name, customData) {
-    this.customModels.set(name, {
-      type: 'custom',
-      basedOn: customData.basedOn,
-      texture: customData.texture,
-      textureCanvas: customData.textureCanvas,
-      overlayImages: customData.overlayImages,
-      source: 'user-custom',
-      createdDate: new Date()
-    });
-    
-    return true;
-  }
-
-  // ─────────────────────────────────────────────
-  // Get all model names (including custom)
-  // ─────────────────────────────────────────────
-  getAllModelNames() {
-    const regularModels = Array.from(this.models.keys());
-    const customModelNames = Array.from(this.customModels.keys());
-    return [...regularModels, ...customModelNames];
+  async saveCustomModel(name, customData) {
+    // Use storage module to persist to IndexedDB
+    return await this.storage.saveCustomModel(name, customData);
   }
 
   // ─────────────────────────────────────────────
   // Get all model names by category
   // ─────────────────────────────────────────────
-  getModelNamesByCategory() {
+  async getModelNamesByCategory() {
+    const customNames = await this.storage.getAllCustomModelNames();
     return {
       builtin: Array.from(this.models.entries())
         .filter(([_, model]) => model.type === 'registry')
@@ -176,31 +182,18 @@ export class ModelManager {
       uploaded: Array.from(this.models.entries())
         .filter(([_, model]) => model.type === 'uploaded')
         .map(([name, _]) => name),
-      custom: Array.from(this.customModels.keys())
+      custom: customNames
     };
-  }
-
-  // ─────────────────────────────────────────────
-  // Get model data for loading (updated to handle custom)
-  // ─────────────────────────────────────────────
-  getModel(name) {
-    // Check custom models first
-    if (this.customModels.has(name)) {
-      return this.customModels.get(name);
-    }
-    return this.models.get(name);
   }
 
   // ─────────────────────────────────────────────
   // Remove a model (updated to handle custom)
   // ─────────────────────────────────────────────
-  removeModel(name) {
-    // Try custom models first
-    if (this.customModels.has(name)) {
-      const model = this.customModels.get(name);
-      if (model.texture) model.texture.dispose();
-      this.customModels.delete(name);
-      return true;
+  async removeModel(name) {
+    // Try custom models in storage first
+    const customModel = await this.storage.loadCustomModel(name);
+    if (customModel) {
+      return await this.storage.deleteCustomModel(name);
     }
     
     // Regular model removal
@@ -223,17 +216,19 @@ export class ModelManager {
   // ─────────────────────────────────────────────
   // Get model info for display (updated for custom)
   // ─────────────────────────────────────────────
-  getModelInfo(name) {
-    // Check custom models
-    if (this.customModels.has(name)) {
-      const model = this.customModels.get(name);
+  async getModelInfo(name) {
+    // Check custom models in storage
+    const customModel = await this.storage.loadCustomModel(name);
+    if (customModel) {
       return {
         name,
         type: 'Custom',
-        basedOn: model.basedOn,
-        source: model.source,
-        createdDate: model.createdDate,
-        hasCustomTexture: true
+        basedOn: customModel.basedOn,
+        source: 'IndexedDB',
+        createdDate: customModel.createdDate,
+        lastModified: customModel.lastModified,
+        hasCustomTexture: true,
+        imageCount: customModel.overlayImages?.length || 0
       };
     }
     
@@ -299,13 +294,13 @@ export class ModelManager {
   // ─────────────────────────────────────────────
   // Get loading paths for Three.js loaders
   // ─────────────────────────────────────────────
-  getLoadingPaths(name) {
-    // Check if it's a custom model first
-    if (this.customModels.has(name)) {
-      const customModel = this.customModels.get(name);
+  async getLoadingPaths(name) {
+    // Check if it's a custom model from storage
+    const customModel = await this.storage.loadCustomModel(name);
+    if (customModel) {
       // For custom models, return the base model's paths
       // The texture will be applied separately
-      return this.getLoadingPaths(customModel.basedOn);
+      return await this.getLoadingPaths(customModel.basedOn);
     }
     
     const model = this.models.get(name);

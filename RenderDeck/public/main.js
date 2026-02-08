@@ -30,7 +30,7 @@ window.addEventListener('unhandledrejection', (e) => { log(`UNHANDLED: ${e.reaso
 // ─────────────────────────────────────────────
 // MODEL MANAGER INITIALIZATION
 // ─────────────────────────────────────────────
-const modelManager = new ModelManager();
+const modelManager = new ModelManager(log);
 
 // Register built-in models
 const BUILT_IN_MODELS = {
@@ -123,7 +123,10 @@ function createTextureFromCanvas(drawFn, size = 256) {
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   drawFn(ctx, size);
-  return new THREE.CanvasTexture(canvas);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.encoding = THREE.sRGBEncoding;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 function woodTexture() {
@@ -256,52 +259,55 @@ const materialPresets = {
 const modelSelect = document.getElementById('model-select');
 
 function updateModelSelect() {
-  modelSelect.innerHTML = '';
-  const categories = modelManager.getModelNamesByCategory();
-  
-  // Built-in models
-  if (categories.builtin.length > 0) {
-    const builtinGroup = document.createElement('optgroup');
-    builtinGroup.label = 'Built-in Models';
-    categories.builtin.forEach((name) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      builtinGroup.appendChild(opt);
-    });
-    modelSelect.appendChild(builtinGroup);
-  }
-  
-  // User uploaded models
-  if (categories.uploaded.length > 0) {
-    const uploadedGroup = document.createElement('optgroup');
-    uploadedGroup.label = 'Uploaded Models';
-    categories.uploaded.forEach((name) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      uploadedGroup.appendChild(opt);
-    });
-    modelSelect.appendChild(uploadedGroup);
-  }
-  
-  // Custom models
-  if (categories.custom.length > 0) {
-    const customGroup = document.createElement('optgroup');
-    customGroup.label = 'Custom Models';
-    categories.custom.forEach((name) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      customGroup.appendChild(opt);
-    });
-    modelSelect.appendChild(customGroup);
-  }
-  
-  // Select first option
-  if (modelSelect.options.length > 0) {
-    modelSelect.options[0].selected = true;
-  }
+  modelManager.getModelNamesByCategory().then(categories => {
+    modelSelect.innerHTML = '';
+    
+    // Built-in models
+    if (categories.builtin.length > 0) {
+      const builtinGroup = document.createElement('optgroup');
+      builtinGroup.label = 'Built-in Models';
+      categories.builtin.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        builtinGroup.appendChild(opt);
+      });
+      modelSelect.appendChild(builtinGroup);
+    }
+    
+    // User uploaded models
+    if (categories.uploaded.length > 0) {
+      const uploadedGroup = document.createElement('optgroup');
+      uploadedGroup.label = 'Uploaded Models';
+      categories.uploaded.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        uploadedGroup.appendChild(opt);
+      });
+      modelSelect.appendChild(uploadedGroup);
+    }
+    
+    // Custom models
+    if (categories.custom.length > 0) {
+      const customGroup = document.createElement('optgroup');
+      customGroup.label = 'Custom Models';
+      categories.custom.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        customGroup.appendChild(opt);
+      });
+      modelSelect.appendChild(customGroup);
+    }
+    
+    // Select first option
+    if (modelSelect.options.length > 0) {
+      modelSelect.options[0].selected = true;
+    }
+  }).catch(err => {
+    log(`Failed to update model list: ${err.message}`, true);
+  });
 }
 
 // Make updateModelSelect globally accessible for uvEditor
@@ -326,11 +332,8 @@ let originalMaterials = [];
 const objLoader = new OBJLoader();
 const mtlLoader = new MTLLoader();
 
-function loadModel(name) {
-  const loadingPaths = modelManager.getLoadingPaths(name);
-  if (!loadingPaths) { log(`Model not found: ${name}`, true); return; }
-
-  // Clean up previous model
+// Helper function to clean up active model
+function cleanupActiveModel() {
   if (activeModel) {
     scene.remove(activeModel);
     activeModel.traverse((child) => {
@@ -353,6 +356,305 @@ function loadModel(name) {
     activeMesh = null;
     originalMaterials = [];
   }
+}
+
+// Helper function to center and frame model
+function centerAndFrameModel(object) {
+  // Center model at origin
+  const box = new THREE.Box3().setFromObject(object);
+  const center = box.getCenter(new THREE.Vector3());
+  object.position.sub(center);
+
+  // Recompute after centering
+  box.setFromObject(object);
+  const newCenter = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+
+  controls.target.copy(newCenter);
+
+  const maxDim = Math.max(size.x, size.y, size.z);
+  camera.position.set(0, newCenter.y + maxDim * 0.05, maxDim * 2.5);
+  camera.lookAt(newCenter);
+  controls.update();
+}
+
+// Helper function to create composite texture from overlays (Option C)
+async function createCompositeTextureAsync(baseTexture, overlayImages) {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2048;
+    canvas.height = 2048;
+    const ctx = canvas.getContext('2d');
+    
+    // Function to draw everything once base texture is ready
+    const drawComposite = () => {
+      log(`Drawing composite with ${overlayImages ? overlayImages.length : 0} overlays`);
+      
+      // Clear with transparency to preserve alpha
+      ctx.clearRect(0, 0, 2048, 2048);
+      
+      // Draw base texture or white background
+      if (baseTexture && baseTexture.image) {
+        try {
+          ctx.drawImage(baseTexture.image, 0, 0, 2048, 2048);
+        } catch (e) {
+          console.warn('Failed to draw base texture, using white:', e);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, 2048, 2048);
+        }
+      } else {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 2048, 2048);
+      }
+      
+      // If no overlays, return immediately
+      if (!overlayImages || overlayImages.length === 0) {
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.encoding = THREE.sRGBEncoding;
+        texture.needsUpdate = true;
+        resolve(texture);
+        return;
+      }
+      
+      // Load all overlay images
+      const imageLoadPromises = overlayImages.map(overlay => {
+        return new Promise((resolveImg) => {
+          const img = new Image();
+          img.onload = () => resolveImg({ img, overlay });
+          img.onerror = () => {
+            console.warn(`Failed to load overlay: ${overlay.name}`);
+            resolveImg(null); // Continue even if one fails
+          };
+          img.src = overlay.imageData;
+        });
+      });
+      
+      // Once all images loaded, draw them
+      Promise.all(imageLoadPromises)
+        .then(loadedImages => {
+          const successCount = loadedImages.filter(i => i !== null).length;
+          log(`Loaded ${successCount} overlay images successfully`);
+          
+          // Draw each overlay
+          loadedImages.forEach((item, index) => {
+            if (!item) {
+              log(`Overlay ${index + 1} failed to load`, true);
+              return;
+            }
+            
+            const { img, overlay } = item;
+            const x = (overlay.position.x / 100) * 2048;
+            const y = (overlay.position.y / 100) * 2048;
+            const w = (overlay.size.w / 100) * 2048;
+            const h = (overlay.size.h / 100) * 2048;
+            
+            log(`Drawing overlay ${index + 1} at x:${Math.round(x)}, y:${Math.round(y)}, w:${Math.round(w)}, h:${Math.round(h)}`);
+            
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate((overlay.rotation * Math.PI) / 180);
+            ctx.drawImage(img, -w/2, -h/2, w, h);
+            ctx.restore();
+          });
+          
+          // Create Three.js texture with proper encoding
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.encoding = THREE.sRGBEncoding;
+          texture.needsUpdate = true;
+          
+          resolve(texture);
+        })
+        .catch(err => {
+          console.error('Composite texture error:', err);
+          reject(err);
+        });
+    };
+    
+    // Check if base texture image is ready
+    if (baseTexture && baseTexture.image) {
+      const isCanvas = baseTexture.image instanceof HTMLCanvasElement;
+      const isImage = baseTexture.image instanceof HTMLImageElement;
+      const isComplete = isImage ? baseTexture.image.complete : true; // Canvas is always "complete"
+      
+      log(`Base texture type: ${isCanvas ? 'Canvas' : isImage ? 'Image' : 'Unknown'}, ready: ${isComplete}`);
+      
+      if (isCanvas || isComplete) {
+        // Canvas or loaded image - draw immediately
+        log(`Drawing composite immediately (base texture ready)`);
+        drawComposite();
+      } else {
+        // Wait for image to load
+        log(`Waiting for base texture to load...`);
+        baseTexture.image.onload = () => {
+          log(`Base texture loaded, drawing composite`);
+          drawComposite();
+        };
+        baseTexture.image.onerror = () => {
+          log(`Base texture failed to load, using white`, true);
+          drawComposite();
+        };
+      }
+    } else {
+      // No base texture, draw immediately with white
+      log(`No base texture, drawing with white background`);
+      drawComposite();
+    }
+  });
+}
+
+async function loadModel(name) {
+  const modelData = await modelManager.getModel(name);
+  if (!modelData) { log(`Model not found: ${name}`, true); return; }
+  
+  // Handle custom models (pre-textured)
+  if (modelData.type === 'custom') {
+    log(`Loading custom model: ${name}…`);
+    log(`Model data:`, modelData);
+    log(`Material preset: ${modelData.materialPreset || 'NOT FOUND'}`);
+    log(`Overlay images: ${modelData.overlayImages ? modelData.overlayImages.length : 'NONE'}`);
+    
+    // Get the base model to load
+    const baseModelName = modelData.basedOn;
+    const loadingPaths = await modelManager.getLoadingPaths(baseModelName);
+    if (!loadingPaths) { 
+      log(`Base model not found: ${baseModelName}`, true); 
+      return; 
+    }
+    
+    // Clean up previous model
+    cleanupActiveModel();
+    
+    // Load the base OBJ and apply custom texture
+    function loadOBJWithCustomTexture(materials = null) {
+      // DON'T use MTL materials for custom models - we'll apply the preset instead
+      // if (materials) {
+      //   objLoader.setMaterials(materials);
+      // }
+
+      const objPath = loadingPaths.type === 'path' 
+        ? loadingPaths.basePath + loadingPaths.obj
+        : loadingPaths.obj;
+
+      objLoader.load(
+        objPath,
+        (object) => {
+          object.traverse((child) => {
+            if (child.isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+              
+              if (!activeMesh) {
+                activeMesh = child;
+              }
+              
+              // Mark as custom model so procedural materials won't override
+              child.userData.isCustomModel = true;
+              
+              // Apply saved material preset (Wood/Metal/Glass/Plastic) FIRST
+              const presetName = modelData.materialPreset || 'Wood'; // Default to Wood if not saved
+              if (materialPresets[presetName]) {
+                const presetMaterial = materialPresets[presetName]();
+                
+                // Apply environment map
+                if (scene.environment) {
+                  presetMaterial.envMap = scene.environment;
+                  presetMaterial.envMapIntensity = 1.0;
+                }
+                
+                // Dispose old material
+                if (child.material) {
+                  if (Array.isArray(child.material)) {
+                    child.material.forEach(m => m.dispose && m.dispose());
+                  } else {
+                    child.material.dispose && child.material.dispose();
+                  }
+                }
+                
+                child.material = presetMaterial;
+                log(`Applied material preset: ${presetName}`);
+                
+                // Apply saved material properties (opacity, transparency, etc) to override preset defaults
+                if (modelData.materialProperties) {
+                  const saved = modelData.materialProperties;
+                  if (saved.opacity !== undefined) {
+                    child.material.opacity = saved.opacity;
+                    log(`Applied saved opacity: ${saved.opacity}`);
+                  }
+                  if (saved.transparent !== undefined) {
+                    child.material.transparent = saved.transparent;
+                  }
+                  if (saved.metalness !== undefined) {
+                    child.material.metalness = saved.metalness;
+                  }
+                  if (saved.roughness !== undefined) {
+                    child.material.roughness = saved.roughness;
+                  }
+                  if (saved.color) {
+                    child.material.color.setRGB(saved.color.r, saved.color.g, saved.color.b);
+                  }
+                  child.material.needsUpdate = true;
+                }
+              }
+              
+              // Apply the custom texture by compositing overlays in real-time
+              if (child.material && modelData.overlayImages && modelData.overlayImages.length > 0) {
+                log(`Starting composite texture creation...`);
+                // Store reference to the WOOD/METAL/GLASS texture (from the preset material)
+                const presetTexture = child.material.map;
+                log(`Preset texture exists: ${!!presetTexture}, has image: ${!!(presetTexture && presetTexture.image)}`);
+                
+                // Create composite (will wait for preset texture to be ready)
+                createCompositeTextureAsync(presetTexture, modelData.overlayImages)
+                  .then(compositeTexture => {
+                    log(`Composite texture created successfully!`);
+                    // Replace the texture map with our composite (wood + overlays)
+                    if (child.material.map) {
+                      child.material.map.dispose();
+                    }
+                    
+                    child.material.map = compositeTexture;
+                    child.material.needsUpdate = true;
+                    
+                    log(`✓ Custom texture applied to ${name} (${modelData.overlayImages.length} overlays)`);
+                  })
+                  .catch(err => {
+                    log(`Failed to create composite texture: ${err.message}`, true);
+                  });
+              } else {
+                log(`Skipping composite: material=${!!child.material}, overlays=${modelData.overlayImages ? modelData.overlayImages.length : 0}`);
+              }
+            }
+          });
+
+          scene.add(object);
+          activeModel = object;
+          centerAndFrameModel(object);
+          log(`${name} loaded with custom texture.`);
+        },
+        (xhr) => {
+          if (xhr.lengthComputable && xhr.total > 0) {
+            const percent = ((xhr.loaded / xhr.total) * 100).toFixed(0);
+            log(`Loading OBJ… ${percent}%`);
+          }
+        },
+        (err) => {
+          log(`Failed to load OBJ ${name}: ${err}`, true);
+        }
+      );
+    }
+    
+    // For custom models, skip MTL loading - we apply the preset material instead
+    loadOBJWithCustomTexture();
+    
+    return; // Exit early for custom models
+  }
+  
+  // Regular model loading
+  const loadingPaths = await modelManager.getLoadingPaths(name);
+  if (!loadingPaths) { log(`Model not found: ${name}`, true); return; }
+
+  // Clean up previous model
+  cleanupActiveModel();
 
   log(`Loading ${name}…`);
 
@@ -390,22 +692,7 @@ function loadModel(name) {
         scene.add(object);
         activeModel = object;
 
-        // Center model at origin
-        const box = new THREE.Box3().setFromObject(object);
-        const center = box.getCenter(new THREE.Vector3());
-        object.position.sub(center);
-
-        box.setFromObject(object);
-        const newCenter = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-
-        controls.target.copy(newCenter);
-
-        const maxDim = Math.max(size.x, size.y, size.z);
-        camera.position.set(0, newCenter.y + maxDim * 0.05, maxDim * 2.5);
-        camera.lookAt(newCenter);
-        controls.update();
-
+        centerAndFrameModel(object);
         applyPreset(document.getElementById('texture-select').value);
 
         log(`${name} loaded successfully.`);
@@ -467,6 +754,17 @@ function applyPreset(name) {
   
   activeModel.traverse((child) => {
     if (child.isMesh) {
+      // Skip custom models - they have their own textures!
+      if (child.userData && child.userData.isCustomModel) {
+        // Just apply environment map if it exists
+        if (scene.environment && child.material) {
+          child.material.envMap = scene.environment;
+          child.material.envMapIntensity = 1.0;
+          child.material.needsUpdate = true;
+        }
+        return; // Don't replace material
+      }
+      
       const mat = materialPresets[name]();
       
       if (scene.environment) {
@@ -616,10 +914,121 @@ if (editTextureBtn) {
   editTextureBtn.addEventListener('click', () => {
     if (activeMesh) {
       const currentModelName = modelSelect.value;
-      uvEditor.show(activeMesh, currentModelName);
+      const currentPreset = document.getElementById('texture-select').value;
+      uvEditor.show(activeMesh, currentModelName, currentPreset);
     } else {
       log('No model loaded to edit', true);
       alert('Please load a model first before editing textures.');
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// EXPORT/IMPORT CUSTOM MODELS
+// ─────────────────────────────────────────────
+const exportBtn = document.getElementById('export-models-btn');
+const importInput = document.getElementById('import-models-file');
+
+if (exportBtn) {
+  exportBtn.addEventListener('click', async () => {
+    const customModels = await modelManager.storage.loadAllCustomModels();
+    
+    if (Object.keys(customModels).length === 0) {
+      log('No custom models to export', true);
+      alert('You have no custom models to export.');
+      return;
+    }
+
+    const success = await modelManager.storage.exportCustomModels();
+    if (success) {
+      log('✓ Custom models exported successfully');
+    }
+  });
+}
+
+if (importInput) {
+  importInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const result = await modelManager.storage.importCustomModels(file);
+    
+    if (result) {
+      log(`✓ Imported ${result.imported} model(s), skipped ${result.skipped}`);
+      updateModelSelect();
+      if (result.imported > 0) {
+        alert(`Successfully imported ${result.imported} custom model(s)!`);
+      }
+    } else {
+      log('Failed to import custom models', true);
+      alert('Failed to import custom models. Check the file format.');
+    }
+
+    // Reset file input
+    e.target.value = '';
+  });
+}
+
+// Clear all custom models button
+const clearCustomBtn = document.getElementById('clear-custom-btn');
+if (clearCustomBtn) {
+  clearCustomBtn.addEventListener('click', async () => {
+    const cleared = await modelManager.storage.clearAllCustomModels();
+    if (cleared > 0) {
+      log(`✓ Cleared ${cleared} custom model(s)`);
+      updateModelSelect();
+      alert(`Deleted ${cleared} custom model(s).`);
+    } else {
+      log('No custom models cleared');
+    }
+  });
+}
+
+// Make the import button open the hidden file input (so it matches other buttons)
+const importBtn = document.getElementById('import-models-btn');
+if (importBtn && importInput) {
+  importBtn.addEventListener('click', () => {
+    importInput.click();
+  });
+}
+
+// Export the currently selected custom model only
+const exportCurrentBtn = document.getElementById('export-current-btn');
+if (exportCurrentBtn) {
+  exportCurrentBtn.addEventListener('click', async () => {
+    const selected = modelSelect.value;
+    if (!selected) {
+      alert('No model selected to export.');
+      return;
+    }
+
+    const model = await modelManager.storage.loadCustomModel(selected);
+    if (!model) {
+      alert('Selected model is not a custom model or not found in storage.');
+      return;
+    }
+
+    const exportData = {
+      version: modelManager.storage.STORAGE_VERSION,
+      exportDate: new Date().toISOString(),
+      models: {
+        [selected]: model
+      }
+    };
+
+    try {
+      const json = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `renderdeck-custom-model-${selected.replace(/[^a-z0-9_-]/gi, '_')}-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      log(`✓ Exported custom model: ${selected}`);
+    } catch (err) {
+      log(`Failed to export model: ${err.message}`, true);
+      alert('Failed to export model. See debug panel for details.');
     }
   });
 }
