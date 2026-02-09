@@ -1,10 +1,9 @@
-// ═══════════════════════════════════════════════════════════════
+
 // UVEDITOR.JS - UV Map Editor for RenderDeck
 // Allows users to upload and position images on 3D model textures
-// ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
-import { ModelVerifier } from './verifier.js';
+import { ModelVerifier } from '../models/ModelVerifier.js';
 
 export class UVEditor {
   constructor(renderer, log, modelManager) {

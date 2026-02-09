@@ -5,6 +5,12 @@
   <meta charset="UTF-8" />
   <title>RenderDeck</title>
   <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">{
+    "imports": {
+      "three": "https://unpkg.com/three@0.175.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.175.0/examples/jsm/"
+    }
+  }</script>
 </head>
 
 <body>
@@ -15,6 +21,7 @@
       
       <div class="scene-view">
         <h1>Scene Controls</h1>
+        <!-- ✅ FIXED: This is the container Three.js renders to -->
         <div class="scene-view-placeholder">
           <div class="drop-hint">
             <p>Drag & Drop OBJ files here</p>
@@ -35,20 +42,21 @@
               <option>Plastic</option>
             </select>
           </li>
+          <!-- ✅ FIXED: Changed IDs to match what Controls.js expects -->
           <li>
-            <label for="transparency-slider">Transparency:</label>
-            <input type="range" id="transparency-slider" min="0" max="1" step="0.01" value="0.5">
+            <label for="opacity-slider">Opacity:</label>
+            <input type="range" id="opacity-slider" min="0" max="1" step="0.01" value="1.0">
+            <span class="slider-value">1.0</span>
+          </li>
+          <li>
+            <label for="roughness-slider">Roughness:</label>
+            <input type="range" id="roughness-slider" min="0" max="1" step="0.01" value="0.5">
             <span class="slider-value">0.5</span>
           </li>
           <li>
-            <label for="shadows-slider">Shadows:</label>
-            <input type="range" id="shadows-slider" min="0" max="1" step="0.01" value="0.8">
-            <span class="slider-value">0.8</span>
-          </li>
-          <li>
-            <label for="reflexivity-slider">Reflexivity:</label>
-            <input type="range" id="reflexivity-slider" min="0" max="1" step="0.01" value="0.3">
-            <span class="slider-value">0.3</span>
+            <label for="metalness-slider">Metalness:</label>
+            <input type="range" id="metalness-slider" min="0" max="1" step="0.01" value="0.0">
+            <span class="slider-value">0.0</span>
           </li>
           <li class="edit-texture-section">
             <button id="edit-texture-btn" class="edit-texture-button">
@@ -70,30 +78,18 @@
       <h1>Select Model</h1>
       <select id="model-select"></select>
       
-      <!-- File Upload Button -->
+      <!-- ✅ FIXED: Controls.js expects these exact IDs -->
       <div class="upload-controls">
-        <label for="file-upload" class="upload-button">
-          📁 Add Model Files
-        </label>
-        <input type="file" id="file-upload" multiple accept=".obj,.mtl,.png,.jpg,.jpeg,.svg,.webp" style="display: none;">
-        <p class="upload-hint">Select .obj file + optional .mtl and textures</p>
-      </div>
-
-      <!-- Export/Import Controls -->
-      <div class="upload-controls">
-        <button id="export-models-btn" class="upload-button">
-          💾 Export Custom Models
+        <button id="export-btn" class="upload-button">
+          💾 Export Custom Model
         </button>
-        <button id="import-models-btn" class="upload-button">
-          📥 Import Custom Models
-        </button>
-        <input type="file" id="import-models-file" accept=".json" style="display: none;">
-        <button id="export-current-btn" class="upload-button">
-          📤 Export This Custom Model
+        <button id="import-btn" class="upload-button">
+          📥 Import Custom Model
         </button>
         <button id="clear-custom-btn" class="upload-button">
           🗑️ Clear Custom Models
         </button>
+        <input type="file" id="file-input" accept=".json,.renderdeck.json" style="display: none;">
       </div>
     </div>
 
@@ -105,15 +101,7 @@
 
   </main>
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.175.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.175.0/examples/jsm/"
-    }
-  }
-  </script>
-  <script type="module" src="main.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 
 </html>

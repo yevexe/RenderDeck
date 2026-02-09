@@ -1,7 +1,6 @@
-// ═══════════════════════════════════════════════════════════════
+
 // INDEXEDBSTORAGE.JS - IndexedDB Wrapper for RenderDeck
 // Provides Promise-based interface for storing models and blobs
-// ═══════════════════════════════════════════════════════════════
 
 const DB_NAME = 'renderdeck_db';
 const DB_VERSION = 1;

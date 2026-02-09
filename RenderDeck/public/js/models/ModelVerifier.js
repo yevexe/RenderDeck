@@ -1,8 +1,6 @@
-// ═══════════════════════════════════════════════════════════════
+
 // VERIFIER.JS - Universal File Validation System
 // Standalone module for validating 3D model files (OBJ/MTL/textures)
-// Can be used in any project - fully configurable
-// ═══════════════════════════════════════════════════════════════
 
 export class ModelVerifier {
   constructor(config = {}) {
@@ -435,9 +433,7 @@ export class ModelVerifier {
   }
 }
 
-// ─────────────────────────────────────────────
-// Example usage for standalone projects:
-// ─────────────────────────────────────────────
+// Example:
 // import { ModelVerifier } from './verifier.js';
 //
 // // Use with default settings
