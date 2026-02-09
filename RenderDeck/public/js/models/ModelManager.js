@@ -4,6 +4,7 @@
 
 import { ModelVerifier } from './ModelVerifier.js';
 import { CustomModelStorage } from '../storage/CustomModelStorage.js';
+import { MODEL_PATHS } from '../config.js';
 
 export class ModelManager {
   constructor(log) {
@@ -309,7 +310,7 @@ export class ModelManager {
       // Traditional path-based loading
       return {
         type: 'path',
-        basePath: `../models/${model.folder}/`,
+        basePath: `${MODEL_PATHS.BASE_PATH}${model.folder}/`,
         obj: model.obj,
         mtl: model.mtl
       };
