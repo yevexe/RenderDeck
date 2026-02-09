@@ -100,7 +100,7 @@ export const FEATURES = {
 
 // Model Registry Paths
 export const MODEL_PATHS = {
-  BASE_PATH: '../models/',
+  BASE_PATH: './models/',
   PLAIN_MUG: {
     folder: 'plain_mug',
     obj: 'mug.obj',
@@ -115,7 +115,7 @@ export const MODEL_PATHS = {
 
 // Scene Environment Paths
 export const SCENE_PATHS = {
-  BASE_PATH: '../scenes/',
+  BASE_PATH: './scenes/',
   ENVIRONMENTS: {
     'Studio Kominka': 'studio_kominka_02_2k.hdr',
     'Lebombo': 'lebombo_2k.hdr'
