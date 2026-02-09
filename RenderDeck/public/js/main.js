@@ -10,13 +10,10 @@ import { SceneManager } from './core/Scene.js';
 import { RendererManager } from './core/Renderer.js';
 import { CameraManager } from './core/Camera.js';
 
-// Materials - ✅ FIXED: MaterialManager.js (capital M twice)
 import { MaterialManager } from './materials/MaterialManager.js';
 
-// Models - ✅ FIXED: ModelManager.js (capital M twice)
 import { ModelManager } from './models/ModelManager.js';
 
-// UI - ✅ FIXED: UVEditor.js (capital UV)
 import { UVEditor } from './ui/UVEditor.js';
 import { ControlsManager } from './ui/Controls.js';
 
