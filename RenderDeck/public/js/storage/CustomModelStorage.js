@@ -1,9 +1,8 @@
-// ═══════════════════════════════════════════════════════════════
+
 // CUSTOMMODELSTORAGE.JS - Custom Model Storage (IndexedDB)
 // Stores overlay configurations WITHOUT baking textures
 // Textures are composited in real-time for editing/viewing
 // Only baked when user exports the final model
-// ═══════════════════════════════════════════════════════════════
 
 import * as IDBStorage from './indexedDBStorage.js';
 
@@ -291,11 +290,15 @@ export class CustomModelStorage {
       const importData = JSON.parse(text);
       
       if (!importData.models) {
-        throw new Error('Invalid export file format');
+        return { 
+          success: false, 
+          error: 'Invalid export file format - missing models property' 
+        };
       }
       
       let importedCount = 0;
       let skippedCount = 0;
+      let firstImportedName = null;
       
       for (const [name, modelData] of Object.entries(importData.models)) {
         // Check if exists
@@ -314,15 +317,33 @@ export class CustomModelStorage {
         const success = await this.saveCustomModel(name, modelData);
         if (success) {
           importedCount++;
+          if (!firstImportedName) {
+            firstImportedName = name;
+          }
         }
       }
       
-      this.log(`✓ Imported ${importedCount} model(s), skipped ${skippedCount}`);
-      return { imported: importedCount, skipped: skippedCount };
+      if (importedCount > 0) {
+        this.log(`✓ Imported ${importedCount} model(s), skipped ${skippedCount}`);
+        return { 
+          success: true, 
+          name: firstImportedName,
+          count: importedCount,
+          skipped: skippedCount
+        };
+      } else {
+        return { 
+          success: false, 
+          error: `No models imported (${skippedCount} skipped)` 
+        };
+      }
       
     } catch (error) {
       this.log(`Failed to import: ${error.message}`, true);
-      return null;
+      return { 
+        success: false, 
+        error: error.message 
+      };
     }
   }
 
@@ -336,25 +357,20 @@ export class CustomModelStorage {
       
       if (count === 0) {
         this.log('No custom models to clear');
-        return 0;
+        return { success: true, count: 0 };
       }
       
-      const confirmClear = confirm(`Delete all ${count} custom model(s)? This cannot be undone.`);
-      
-      if (confirmClear) {
-        for (const name of names) {
-          await this.deleteCustomModel(name);
-        }
-        
-        this.log(`✓ Cleared ${count} custom model(s)`);
-        return count;
+      // Delete all custom models (no confirm here - main.js handles it)
+      for (const name of names) {
+        await this.deleteCustomModel(name);
       }
       
-      return 0;
+      this.log(`✓ Cleared ${count} custom model(s)`);
+      return { success: true, count: count };
       
     } catch (error) {
       this.log(`Failed to clear: ${error.message}`, true);
-      return 0;
+      return { success: false, count: 0, error: error.message };
     }
   }
 

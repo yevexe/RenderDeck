@@ -1,10 +1,9 @@
-// ═══════════════════════════════════════════════════════════════
+
 // MODELMANAGER.JS - Model Management System for RenderDeck
 // Handles adding, loading, and managing 3D models dynamically
-// ═══════════════════════════════════════════════════════════════
 
-import { ModelVerifier } from './verifier.js';
-import { CustomModelStorage } from './customModelStorage.js';
+import { ModelVerifier } from './ModelVerifier.js';
+import { CustomModelStorage } from '../storage/CustomModelStorage.js';
 
 export class ModelManager {
   constructor(log) {
@@ -358,5 +357,29 @@ export class ModelManager {
         });
       }
     });
+  }
+
+  // ─────────────────────────────────────────────
+  // Clear all custom models from storage
+  // ─────────────────────────────────────────────
+  async clearAllCustomModels() {
+    const result = await this.storage.clearAllCustomModels();
+    return result;
+  }
+
+  // ─────────────────────────────────────────────
+  // Export a single custom model
+  // ─────────────────────────────────────────────
+  async exportCustomModel(name) {
+    const success = await this.storage.exportSingleModel(name);
+    return success;
+  }
+
+  // ─────────────────────────────────────────────
+  // Import custom model(s) from JSON file
+  // ─────────────────────────────────────────────
+  async importCustomModel(file) {
+    const result = await this.storage.importCustomModels(file);
+    return result;
   }
 }
