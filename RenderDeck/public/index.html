@@ -21,7 +21,6 @@
       
       <div class="scene-view">
         <h1>Scene Controls</h1>
-        <!-- ✅ FIXED: This is the container Three.js renders to -->
         <div class="scene-view-placeholder">
           <div class="drop-hint">
             <p>Drag & Drop OBJ files here</p>
@@ -42,7 +41,6 @@
               <option>Plastic</option>
             </select>
           </li>
-          <!-- ✅ FIXED: Changed IDs to match what Controls.js expects -->
           <li>
             <label for="opacity-slider">Opacity:</label>
             <input type="range" id="opacity-slider" min="0" max="1" step="0.01" value="1.0">
@@ -78,7 +76,18 @@
       <h1>Select Model</h1>
       <select id="model-select"></select>
       
-      <!-- ✅ FIXED: Controls.js expects these exact IDs -->
+      <!-- Upload 3D Model Button -->
+      <div class="upload-controls">
+        <button id="upload-model-btn" class="upload-button">
+          📁 Upload 3D Model (.obj)
+        </button>
+        <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg" multiple style="display: none;">
+        <p class="upload-hint" style="font-size: 0.9em; color: #666; margin: 5px 0;">
+          Select .obj file + optional .mtl and textures, or drag & drop anywhere
+        </p>
+      </div>
+      
+      <!-- Custom Model Management -->
       <div class="upload-controls">
         <button id="export-btn" class="upload-button">
           💾 Export Custom Model
@@ -101,6 +110,7 @@
 
   </main>
 
+  <!-- CRITICAL FIX: Changed from "main.js" to "js/main.js" -->
   <script type="module" src="js/main.js"></script>
 </body>
 
