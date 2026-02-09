@@ -1,6 +1,5 @@
 
 // MAIN.JS - Application Orchestrator (Refactored)
-// FIXED IMPORT PATHS FOR CASE-SENSITIVE SYSTEMS
 
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -379,6 +378,7 @@ const controls = new ControlsManager({
   onSceneChange: (sceneName) => {
     loadScene(sceneName, (name, texture) => {
       sceneManager.setEnvironment(texture);
+      // Also set as background so you can see it!
       sceneManager.getScene().background = texture;
       log(`Scene changed to: ${name}`);
       
@@ -416,6 +416,26 @@ const controls = new ControlsManager({
     const currentModelName = document.getElementById('model-select').value;
     const currentPreset = document.getElementById('texture-select').value;
     uvEditor.show(activeMesh, currentModelName, currentPreset);
+  },
+  
+  onUploadModel: async (files) => {
+    if (!files || files.length === 0) return;
+    
+    log(`Processing ${files.length} uploaded file(s)...`);
+    
+    const result = await modelManager.addModelFromFiles(files);
+    
+    if (result.success) {
+      logSuccess(`Model added: ${result.name}`);
+      if (result.warnings.length > 0) {
+        result.warnings.forEach(w => logWarn(w));
+      }
+      await updateModelList();
+      loadModel(result.name);
+    } else {
+      logError('Failed to add model:');
+      result.errors.forEach(e => logError(e));
+    }
   },
   
   onExport: async () => {

@@ -24,10 +24,12 @@ export class ControlsManager {
       roughnessSlider: document.getElementById('roughness-slider'),
       metalnessSlider: document.getElementById('metalness-slider'),
       editTextureBtn: document.getElementById('edit-texture-btn'),
+      uploadModelBtn: document.getElementById('upload-model-btn'),
+      modelFileInput: document.getElementById('model-file-input'),
       exportBtn: document.getElementById('export-btn'),
       importBtn: document.getElementById('import-btn'),
       fileInput: document.getElementById('file-input'),
-      clearCustomBtn: document.getElementById('clear-custom-btn')  // ← ADDED
+      clearCustomBtn: document.getElementById('clear-custom-btn')
     };
 
     // Log missing elements (helpful for debugging)
@@ -109,6 +111,27 @@ export class ControlsManager {
         if (this.callbacks.onEditTexture) {
           this.callbacks.onEditTexture();
         }
+      });
+    }
+
+    // Upload model button
+    if (this.elements.uploadModelBtn) {
+      this.elements.uploadModelBtn.addEventListener('click', () => {
+        if (this.elements.modelFileInput) {
+          this.elements.modelFileInput.click();
+        }
+      });
+    }
+
+    // Model file input
+    if (this.elements.modelFileInput) {
+      this.elements.modelFileInput.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (files && files.length > 0 && this.callbacks.onUploadModel) {
+          this.callbacks.onUploadModel(files);
+        }
+        // Reset input so same file can be selected again
+        e.target.value = '';
       });
     }
 
