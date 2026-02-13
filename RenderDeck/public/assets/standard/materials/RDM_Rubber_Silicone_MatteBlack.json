@@ -1,0 +1,14 @@
+{
+  "id": "rubber.silicone.matte.black",
+  "displayName": "Silicone Rubber (Matte Black)",
+  "category": "Rubber",
+  "workflow": "MeshPhysicalMaterial",
+  "params": {
+    "color": "#202020",
+    "metalness": 0.0,
+    "roughness": 0.9,
+    "ior": 1.4,
+    "clearcoat": 0.0
+  },
+  "notes": "Uniform matte rubber; reads well even without micro-normal detail."
+}
