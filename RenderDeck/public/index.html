@@ -14,7 +14,7 @@
     <div class="preview">
       <div class="panel scene-view">
         <h2>Scene Controls</h2>
-        <div class="scene-view-placeholder">
+        <div id="scene-view-placeholder" class="scene-view-placeholder">
           <p>three.js scene preview will be here</p>
         </div>
         <div>
@@ -126,16 +126,16 @@
             <!-- Width: Range 0.01 to 2 (allows scaling from tiny to 2x original) -->
             <div class="control-row">
               <h5 class="control-label">Width</h5>
-              <input id="design-width-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01"
-                max="2" value="0.50">
+              <input id="design-width-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0.01" max="2" value="0.50">
             </div>
             <input id="design-width-slider" class="slider" type="range" min="0.01" max="2" step="0.01" value="0.50">
 
             <!-- Height: Range 0.01 to 2 (allows scaling from tiny to 2x original) -->
             <div class="control-row">
               <h5 class="control-label">Height</h5>
-              <input id="design-height-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01"
-                max="2" value="0.50">
+              <input id="design-height-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0.01" max="2" value="0.50">
             </div>
             <input id="design-height-slider" class="slider" type="range" min="0.01" max="2" step="0.01" value="0.50">
 
@@ -155,15 +155,8 @@
             <hr>
 
             <h5>Select an Object</h5>
-            <select id="object-select" class="dropdown">
+            <select id="object-select-materialtab" class="dropdown">
               <option value="" disabled selected>--- Standard Objects ---</option>
-              <option value="sphere">Sphere</option>
-              <option value="cube">Cube</option>
-              <option value="cylinder">Cylinder</option>
-              <option value="torus">Torus</option>
-              <option value="cone">Cone</option>
-              <option value="teapot">Teapot</option>
-              <option value="monkey">Suzanne (Monkey)</option>
               <option value="" disabled>--- User Objects ---</option>
             </select>
 
@@ -171,28 +164,28 @@
             <select id="object-part-select" class="dropdown">
               <option value="" disabled>--- Choose Part ---</option>
             </select>
+
             <hr>
+
             <h4>Preset</h4>
             <select id="material-select" class="dropdown">
               <option value="" disabled selected>--- Standard Materials ---</option>
-              <option value="plastic">Plastic</option>
-              <option value="paint">Paint (Clearcoat)</option>
-              <option value="metal">Metal</option>
-              <option value="glass">Glass</option>
-              <option value="ceramic">Ceramic</option>
               <option value="" disabled>--- User Materials ---</option>
             </select>
 
             <button class="button-medium" id="add-new-material">New Material</button>
             <button class="button-medium" id="delete-current-material">Delete Material</button>
 
+            <!-- ===================== Base ===================== -->
             <h4>Base</h4>
+
             <!-- Base Color -->
             <div class="control-row">
               <h5 class="control-label">Base Color</h5>
+              <input id="basecolor-picker" type="color" class="colorPicker" value="#FF6600">
               <div class="color-field">
                 <span class="color-swatch" id="basecolor-swatch"></span>
-                <input id="basecolor-hex" class="value-input value-input-hex" type="text" value="#e9e9e9" maxlength="7"
+                <input id="basecolor-hex" class="value-input value-input-hex" type="text" value="#FF6600" maxlength="7"
                   spellcheck="false">
               </div>
             </div>
@@ -213,16 +206,26 @@
             </div>
             <input id="roughness-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.50">
 
-            <!-- Specular -->
+            <!-- ===================== Specular ===================== -->
             <h4>Specular</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="specular-enable">
+                <span>Enable Specular Controls</span>
+              </label>
+            </div>
+
             <div class="control-row">
               <h5 class="control-label">Specular Color</h5>
+              <input id="speccolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
                 <span class="color-swatch" id="speccolor-swatch"></span>
                 <input id="speccolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
                   spellcheck="false">
               </div>
             </div>
+
             <div class="control-row">
               <h5 class="control-label">Specular Intensity</h5>
               <input id="specint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
@@ -230,14 +233,12 @@
             </div>
             <input id="specint-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
 
-
-
-            <!-- Clearcoat -->
+            <!-- ===================== Clearcoat ===================== -->
             <h4>Clearcoat</h4>
 
             <div class="toggle-list">
               <label class="toggle-row">
-                <input type="checkbox" id="clearcoat-enable" checked>
+                <input type="checkbox" id="clearcoat-enable">
                 <span>Enable Clearcoat</span>
               </label>
             </div>
@@ -256,13 +257,30 @@
             </div>
             <input id="clearcoatrough-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.10">
 
-            <!-- Transmission / Glass -->
+            <!-- ===================== Transparency (Opacity) ===================== -->
+            <h4>Transparency</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="opacity-enable">
+                <span>Enable Transparency</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Opacity</h5>
+              <input id="opacity-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="1.00">
+            </div>
+            <input id="opacity-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
+
+            <!-- ===================== Transmission / Glass ===================== -->
             <h4>Transmission</h4>
 
             <div class="toggle-list">
               <label class="toggle-row">
                 <input type="checkbox" id="trans-enable">
-                <span>Enable Transmission</span>
+                <span>Enable Transmission (Glass)</span>
               </label>
             </div>
 
@@ -287,6 +305,13 @@
             </div>
             <input id="thickness-slider" class="slider" type="range" min="0" max="5" step="0.01" value="0.00">
 
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="atten-enable">
+                <span>Enable Volume Absorption</span>
+              </label>
+            </div>
+
             <div class="control-row">
               <h5 class="control-label">Attenuation Distance</h5>
               <input id="attdist-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0"
@@ -296,6 +321,7 @@
 
             <div class="control-row">
               <h5 class="control-label">Attenuation Color</h5>
+              <input id="attcolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
                 <span class="color-swatch" id="attcolor-swatch"></span>
                 <input id="attcolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
@@ -303,7 +329,7 @@
               </div>
             </div>
 
-            <!-- Sheen (fabric) -->
+            <!-- ===================== Sheen (fabric) ===================== -->
             <h4>Sheen</h4>
 
             <div class="toggle-list">
@@ -314,14 +340,8 @@
             </div>
 
             <div class="control-row">
-              <h5 class="control-label">Sheen Roughness</h5>
-              <input id="sheenrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
-                max="1" value="1.00">
-            </div>
-            <input id="sheenrough-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
-
-            <div class="control-row">
               <h5 class="control-label">Sheen Color</h5>
+              <input id="sheencolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
                 <span class="color-swatch" id="sheencolor-swatch"></span>
                 <input id="sheencolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
@@ -329,11 +349,26 @@
               </div>
             </div>
 
-            <!-- Emission -->
+            <div class="control-row">
+              <h5 class="control-label">Sheen Roughness</h5>
+              <input id="sheenrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="1.00">
+            </div>
+            <input id="sheenrough-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
+
+            <!-- ===================== Emission ===================== -->
             <h4>Emission</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="emissive-enable">
+                <span>Enable Emission</span>
+              </label>
+            </div>
 
             <div class="control-row">
               <h5 class="control-label">Emissive Color</h5>
+              <input id="emissivecolor-picker" type="color" class="colorPicker" value="#000000">
               <div class="color-field">
                 <span class="color-swatch" id="emissive-swatch"></span>
                 <input id="emissive-hex" class="value-input value-input-hex" type="text" value="#000000" maxlength="7"
@@ -348,7 +383,7 @@
             </div>
             <input id="emissiveint-slider" class="slider" type="range" min="0" max="50" step="0.01" value="0.00">
 
-            <!-- Environment -->
+            <!-- ===================== Environment ===================== -->
             <h4>Environment</h4>
 
             <div class="control-row">
@@ -369,8 +404,8 @@
 
             <h5>Camera Type</h5>
             <select id="camera-type-select" class="dropdown">
-              <option value="" disabled selected>--- Choose Camera ---</option>
-              <option value="perspective">Perspective</option>
+              <option value="" disabled>--- Choose Camera ---</option>
+              <option value="perspective" selected>Perspective</option>
               <option value="orthographic">Orthographic (CAD)</option>
             </select>
 
@@ -380,14 +415,14 @@
               <option value="18">18mm (Ultra Wide)</option>
               <option value="24">24mm (Wide)</option>
               <option value="35">35mm (Natural Wide)</option>
-              <option value="50">50mm (Normal)</option>
+              <option value="50" selected>50mm (Normal)</option>
               <option value="85">85mm (Portrait)</option>
             </select>
 
             <h5>Film / Sensor Gauge</h5>
             <select id="film-gauge-select" class="dropdown">
               <option value="" disabled selected>--- Sensor Size Preset ---</option>
-              <option value="fullframe">35mm Full Frame (36×24mm)</option>
+              <option value="fullframe" selected>35mm Full Frame (36×24mm)</option>
               <option value="aps-c">APS-C (≈24×16mm)</option>
               <option value="mft">Micro Four Thirds (≈17.3×13mm)</option>
             </select>
@@ -416,7 +451,7 @@
             <select id="tone-mapping-select" class="dropdown">
               <option value="" disabled selected>--- Color Response ---</option>
               <option value="none">Off</option>
-              <option value="aces">ACES Filmic</option>
+              <option value="aces" selected>ACES Filmic</option>
               <option value="reinhard">Reinhard</option>
               <option value="cineon">Cineon</option>
             </select>
@@ -465,9 +500,9 @@
 
             <h5>Select Resolution</h5>
             <select id="resolution-select" class="dropdown">
-              <option value="" disabled selected>--- Common (16:9) ---</option>
+              <option value="" disabled>--- Common (16:9) ---</option>
               <option value="1280x720">1280 x 720 — HD (16:9)</option>
-              <option value="1600x900">1600 x 900 — HD+ (16:9)</option>
+              <option value="1600x900" selected>1600 x 900 — HD+ (16:9)</option>
               <option value="1920x1080">1920 x 1080 — Full HD (16:9)</option>
               <option value="2560x1440">2560 x 1440 — QHD / 2K (16:9)</option>
               <option value="3840x2160">3840 x 2160 — 4K UHD (16:9)</option>
@@ -495,7 +530,7 @@
             <h5>Render Scale</h5>
             <select id="render-scale-select" class="dropdown">
               <option value="" disabled selected>--- AE-Style Resolution Scale ---</option>
-              <option value="1.0">100% (Full)</option>
+              <option value="1.0" selected>100% (Full)</option>
               <option value="0.75">75%</option>
               <option value="0.5">50% (Half)</option>
               <option value="0.25">25% (Quarter)</option>
@@ -505,7 +540,7 @@
             <select id="max-dpr-select" class="dropdown">
               <option value="" disabled selected>--- Device Pixel Ratio Cap ---</option>
               <option value="auto">Auto (Device DPR)</option>
-              <option value="1">1.0 (Fast)</option>
+              <option value="1" selected>1.0 (Fast)</option>
               <option value="1.5">1.5</option>
               <option value="2">2.0 (Sharp)</option>
             </select>
@@ -516,7 +551,7 @@
             <select id="aa-mode-select" class="dropdown">
               <option value="" disabled selected>--- Anti-Aliasing Mode ---</option>
               <option value="off">Off</option>
-              <option value="msaa">MSAA (renderer)</option>
+              <option value="msaa" selected>MSAA (renderer)</option>
               <option value="fxaa">FXAA (post)</option>
             </select>
 
@@ -526,16 +561,16 @@
               <option value="off">Off</option>
               <option value="low">Low (512)</option>
               <option value="medium">Medium (1024)</option>
-              <option value="high">High (2048)</option>
+              <option value="high" selected>High (2048)</option>
               <option value="ultra">Ultra (4096)</option>
             </select>
 
             <h5>Texture Filtering</h5>
             <select id="texture-filtering-select" class="dropdown">
               <option value="" disabled selected>--- Texture Quality ---</option>
-              <option value="high">High (Aniso 16)</option>
-              <option value="medium">Medium (Aniso 8)</option>
               <option value="low">Low (Aniso 1)</option>
+              <option value="medium">Medium (Aniso 8)</option>
+              <option value="high" selected>High (Aniso 16)</option>
             </select>
 
             <h4>Pipeline & Helpers</h4>
@@ -557,7 +592,7 @@
               </label>
 
               <label class="toggle-row">
-                <input type="checkbox" id="preview-toggle-helpers" checked>
+                <input type="checkbox" id="preview-toggle-helpers">
                 <span>Show Helpers (Grid/Axes)</span>
               </label>
 
@@ -579,7 +614,7 @@
               <option value="" disabled selected>--- Postprocessing ---</option>
               <option value="off">Off</option>
               <option value="basic">Basic (Tone + Mild Bloom)</option>
-              <option value="pretty">Pretty (Bloom + AO + DOF)</option>
+              <option value="pretty" selected>Pretty (Bloom + AO + DOF)</option>
               <option value="cinema">Cinema (Bloom + Vignette + DOF)</option>
             </select>
 
@@ -697,17 +732,48 @@
       </div>
     </div>
 
-    <div class="debug-section">
+    <!-- <div class="debug-section">
       <div class="panel scene-debug">
         <h2>Debug</h2>
         <div class="scene-debug-content">
           <p>debug info will be here</p>
         </div>
       </div>
-    </div>
+    </div> -->
   </main>
 
-  <script src="js/controls.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/RGBELoader.js"></script>
+
+<!-- Postprocessing core -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+
+<!-- Common shaders -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+
+<!-- FXAA (if you want AA=FXAA to work) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FXAAShader.js"></script>
+
+<!-- Vignette -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/VignetteShader.js"></script>
+
+<!-- Bloom -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+<!-- AO -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/SSAOShader.js"></script>
+
+<!-- DOF -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/BokehPass.js"></script>
+
+<script src="js/controls.js"></script>
+<script src="js/app.js"></script>
 </body>
 
 </html>
