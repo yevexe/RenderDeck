@@ -1,0 +1,112 @@
+{
+  "standard": {
+    "objects": [
+      {
+        "id": "RDO_Standard_Mug",
+        "label": "Mug",
+        "path": "assets/standard/objects/RDO_Standard_Mug.obj",
+        "defaultMaterialId": "RDM_Ceramic_Porcelain_GlossyWhite"
+      },
+      {
+        "id": "RDO_Standard_Pen",
+        "label": "Pen",
+        "path": "assets/standard/objects/RDO_Standard_Pen.obj",
+        "defaultMaterialId": "RDM_Standard_Pen"
+      }
+    ],
+    "environments": [
+      {
+        "id": "RDE_Lebombo_2K",
+        "label": "Lebombo 2K",
+        "path": "assets/standard/environments/RDE_Lebombo_2K.hdr"
+      },
+      {
+        "id": "RDE_StudioKominka_2k",
+        "label": "Studio Kominka 2K",
+        "path": "assets/standard/environments/RDE_StudioKominka_2k.hdr"
+      }
+    ],
+    "materials": [
+      {
+        "id": "RDM_Ceramic_Porcelain_GlossyWhite",
+        "label": "Ceramic — Porcelain Glossy White",
+        "typeHint": "json",
+        "path": "assets/standard/materials/RDM_Ceramic_Porcelain_GlossyWhite.json"
+      },
+      {
+        "id": "RDM_Glass_Clear_IOR150",
+        "label": "Glass — Clear (IOR 1.50)",
+        "typeHint": "json",
+        "path": "assets/standard/materials/RDM_Glass_Clear_IOR150.json"
+      },
+      {
+        "id": "RDM_Metal_Aluminum_Anodized_Satin",
+        "label": "Metal — Aluminum Anodized Satin",
+        "typeHint": "json",
+        "path": "assets/standard/materials/RDM_Metal_Aluminum_Anodized_Satin.json"
+      },
+      {
+        "id": "RDM_Metal_Chrome_Mirror",
+        "label": "Metal — Chrome Mirror",
+        "typeHint": "json",
+        "path": "assets/standard/materials/RDM_Metal_Chrome_Mirror.json"
+      },
+      {
+        "id": "RDM_Metal_Gold_Polished",
+        "label": "Metal — Gold Polished",
+        "typeHint": "json",
+        "path": "assets/standard/materials/RDM_Metal_Gold_Polished.json"
+      },
+      {
+        "id": "RDM_Paint_Acrylic_SatinBlue",
+        "label": "Paint — Acrylic Satin Blue",
+        "typeHint": "json",
+        "path": "assets/standard/materials/RDM_Paint_Acrylic_SatinBlue.json"
+      },
+      {
+        "id": "RDM_Rubber_Silicone_MatteBlack",
+        "label": "Rubber — Silicone Matte Black",
+        "typeHint": "json",
+        "path": "assets/standard/materials/RDM_Rubber_Silicone_MatteBlack.json"
+      },
+      {
+        "id": "RDM_Standard_Pen",
+        "label": "Standard — Pen (MTL)",
+        "typeHint": "mtl",
+        "path": "assets/standard/materials/RDM_Standard_Pen.mtl",
+        "textures": {
+          "aoMap": "assets/standard/images/maps/RDM_Standard_Pen_AO.png",
+          "map": "assets/standard/images/maps/RDM_Standard_Pen_Diffuse.png"
+        }
+      }
+    ],
+    "images": {
+      "maps": [
+        {
+          "id": "RDM_Standard_Pen_AO",
+          "label": "Pen — AO",
+          "path": "assets/standard/images/maps/RDM_Standard_Pen_AO.png",
+          "usageHint": "aoMap"
+        },
+        {
+          "id": "RDM_Standard_Pen_Diffuse",
+          "label": "Pen — Diffuse",
+          "path": "assets/standard/images/maps/RDM_Standard_Pen_Diffuse.png",
+          "usageHint": "map"
+        }
+      ],
+      "designs": []
+    },
+    "renders": []
+  },
+  "user": {
+    "objects": [],
+    "environments": [],
+    "materials": [],
+    "images": {
+      "maps": [],
+      "designs": []
+    },
+    "renders": []
+  }
+}

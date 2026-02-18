@@ -1,0 +1,14 @@
+{
+  "id": "metal.gold.polished",
+  "displayName": "Polished Gold",
+  "category": "Metal",
+  "workflow": "MeshPhysicalMaterial",
+  "params": {
+    "color": "#d4af37",
+    "metalness": 1.0,
+    "roughness": 0.12,
+    "ior": 1.5,
+    "clearcoat": 0.0
+  },
+  "notes": "Uniform metal preset; realism depends mostly on environment reflections."
+}
