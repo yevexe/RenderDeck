@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>RenderDeck</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!--
+    Import map — resolves bare "three" and "three/addons/" specifiers used in
+    app.js to jsDelivr-hosted ES module files for three.js r182 (0.182.0).
+
+    From r135 onward, three.js removed examples/js entirely. All addons
+    (OrbitControls, postprocessing, loaders, shaders…) are now ES-only modules
+    in examples/jsm/. The importmap lets app.js use clean bare specifiers
+    (e.g. import { OrbitControls } from 'three/addons/controls/OrbitControls.js')
+    without a build step.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three":         "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+
+<body>
+  <main>
+    <h1 class="site-name-header">RenderDeck</h1>
+    <!-- PREVIEW -->
+    <div class="preview">
+      <div class="panel scene-view">
+        <h2>Scene Controls</h2>
+        <div id="scene-view-placeholder" class="scene-view-placeholder">
+          <p>three.js scene preview will be here</p>
+        </div>
+        <div>
+          <b>shortcuts: UP/DOWN/RIGHT/LEFT, E, Q, R</b>
+        </div>
+      </div>
+      <div class="panel scene-settings">
+        <h2>Scene Settings</h2>
+        <div class="scene-settings-controls">
+          <!-- Tab links -->
+          <div class="tab">
+            <button class="tablinks active" onclick="openSetting(event, 'Setting1')">1</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting2')">2</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting3')">3</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting4')">4</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting5')">5</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting6')">6</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting7')">7</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting8')">8</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting9')">9</button>
+            <button class="tablinks" onclick="openSetting(event, 'Setting10')">10</button>
+          </div>
+
+          <!-- ===================== Setting 1: Scene Set-Up ===================== -->
+          <div id="Setting1" class="tabcontent" style="display: block;">
+            <h3>Scene Set-Up</h3>
+            <hr>
+            <h4>Object</h4>
+            <h5>Select an Object</h5>
+            <select id="object-select" class="dropdown">
+              <option value="" disabled selected>--- Standard Objects ---</option>
+              <option value="sphere">Sphere</option>
+              <option value="cube">Cube</option>
+              <option value="cylinder">Cylinder</option>
+              <option value="torus">Torus</option>
+              <option value="cone">Cone</option>
+              <option value="teapot">Teapot</option>
+              <option value="monkey">Suzanne (Monkey)</option>
+              <option value="" disabled>--- User Objects ---</option>
+            </select>
+            <h4>Background</h4>
+            <select id="background-select" class="dropdown">
+              <option value="" disabled selected>--- Standard Backgrounds ---</option>
+              <option value="color">Solid Color</option>
+              <option value="gradient">Gradient</option>
+              <option value="studio_dark">Studio Dark</option>
+              <option value="studio_light">Studio Light</option>
+              <option value="" disabled>--- User Backgrounds ---</option>
+            </select>
+            <h4>Environmental Lighting</h4>
+            <select id="environment-select" class="dropdown">
+              <option value="" disabled selected>--- Standard Lighting ---</option>
+              <option value="studio1">Studio 1</option>
+              <option value="studio2">Studio 2</option>
+              <option value="studio3">Studio 3</option>
+              <option value="" disabled>--- User Lighting ---</option>
+            </select>
+          </div>
+
+
+          <!-- ===================== Setting 2: Design Editor ===================== -->
+          <div id="Setting2" class="tabcontent">
+            <h3>Design Editor</h3>
+            <hr>
+
+            <div class="design-canvas-container">
+              <canvas id="design-preview-canvas" width="512" height="512"></canvas>
+              <p class="design-hint">Design Preview - Drag images to position</p>
+            </div>
+
+            <h4>Add Design</h4>
+            <label for="texture-image-upload" class="button">Upload Image</label>
+            <input type="file" id="texture-image-upload" accept=".png,.jpg,.jpeg,.svg" style="display: none;">
+            <p class="upload-hint">PNG, JPG, or SVG</p>
+
+            <h4>Designs on Model</h4>
+            <div id="image-layers-list" class="image-layers-list">
+              <p class="empty-message">No images added yet</p>
+            </div>
+
+            <h4>Actions</h4>
+            <button class="button-medium" id="apply-design-btn">Apply to Model</button>
+            <button class="button-medium" id="save-custom-model-btn">Save as Custom Model</button>
+            <button class="button-medium" id="reset-texture-btn">Reset</button>
+
+            <h4>Transformations</h4>
+            <div class="control-row">
+              <h5 class="control-label">Position X</h5>
+              <input id="design-posx-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="-1" max="1" value="0.00">
+            </div>
+            <input id="design-posx-slider" class="slider" type="range" min="-1" max="1" step="0.01" value="0.00">
+
+            <div class="control-row">
+              <h5 class="control-label">Position Y</h5>
+              <input id="design-posy-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="-1" max="1" value="0.00">
+            </div>
+            <input id="design-posy-slider" class="slider" type="range" min="-1" max="1" step="0.01" value="0.00">
+
+            <div class="control-row">
+              <h5 class="control-label">Width</h5>
+              <input id="design-width-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01" max="2" value="0.50">
+            </div>
+            <input id="design-width-slider" class="slider" type="range" min="0.01" max="2" step="0.01" value="0.50">
+
+            <div class="control-row">
+              <h5 class="control-label">Height</h5>
+              <input id="design-height-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01" max="2" value="0.50">
+            </div>
+            <input id="design-height-slider" class="slider" type="range" min="0.01" max="2" step="0.01" value="0.50">
+
+            <div class="control-row">
+              <h5 class="control-label">Rotation (deg)</h5>
+              <input id="design-rotation-input" class="value-input" type="number" inputmode="decimal" step="1" min="0" max="360" value="0">
+            </div>
+            <input id="design-rotation-slider" class="slider" type="range" min="0" max="360" step="1" value="0">
+          </div>
+
+
+          <!-- ===================== Setting 3: Material ===================== -->
+          <div id="Setting3" class="tabcontent">
+            <h3>Materials (MeshPhysicalMaterial)</h3>
+            <hr>
+
+            <h5>Select an Object</h5>
+            <select id="object-select-materialtab" class="dropdown">
+              <option value="" disabled selected>--- Standard Objects ---</option>
+              <option value="" disabled>--- User Objects ---</option>
+            </select>
+
+            <h5>Select Part</h5>
+            <select id="object-part-select" class="dropdown">
+              <option value="" disabled>--- Choose Part ---</option>
+            </select>
+
+            <hr>
+
+            <h4>Preset</h4>
+            <select id="material-select" class="dropdown">
+              <option value="" disabled selected>--- Standard Materials ---</option>
+              <option value="" disabled>--- User Materials ---</option>
+            </select>
+
+            <button class="button-medium" id="add-new-material">New Material</button>
+            <button class="button-medium" id="delete-current-material">Delete Material</button>
+
+            <h4>Base</h4>
+
+            <div class="control-row">
+              <h5 class="control-label">Base Color</h5>
+              <input id="basecolor-picker" type="color" class="colorPicker" value="#FF6600">
+              <div class="color-field">
+                <span class="color-swatch" id="basecolor-swatch"></span>
+                <input id="basecolor-hex" class="value-input value-input-hex" type="text" value="#FF6600" maxlength="7" spellcheck="false">
+              </div>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Metalness</h5>
+              <input id="metalness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+            </div>
+            <input id="metalness-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
+
+            <div class="control-row">
+              <h5 class="control-label">Roughness</h5>
+              <input id="roughness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.50">
+            </div>
+            <input id="roughness-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.50">
+
+            <h4>Specular</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="specular-enable">
+                <span>Enable Specular Controls</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Specular Color</h5>
+              <input id="speccolor-picker" type="color" class="colorPicker" value="#ffffff">
+              <div class="color-field">
+                <span class="color-swatch" id="speccolor-swatch"></span>
+                <input id="speccolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7" spellcheck="false">
+              </div>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Specular Intensity</h5>
+              <input id="specint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="1.00">
+            </div>
+            <input id="specint-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
+
+            <h4>Clearcoat</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="clearcoat-enable">
+                <span>Enable Clearcoat</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Clearcoat</h5>
+              <input id="clearcoat-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+            </div>
+            <input id="clearcoat-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
+
+            <div class="control-row">
+              <h5 class="control-label">Clearcoat Roughness</h5>
+              <input id="clearcoatrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.10">
+            </div>
+            <input id="clearcoatrough-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.10">
+
+            <h4>Transparency</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="opacity-enable">
+                <span>Enable Transparency</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Opacity</h5>
+              <input id="opacity-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="1.00">
+            </div>
+            <input id="opacity-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
+
+            <h4>Transmission</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="trans-enable">
+                <span>Enable Transmission (Glass)</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Transmission</h5>
+              <input id="transmission-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+            </div>
+            <input id="transmission-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
+
+            <div class="control-row">
+              <h5 class="control-label">IOR</h5>
+              <input id="ior-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="1.0" max="2.5" value="1.50">
+            </div>
+            <input id="ior-slider" class="slider" type="range" min="1.0" max="2.5" step="0.01" value="1.50">
+
+            <div class="control-row">
+              <h5 class="control-label">Thickness</h5>
+              <input id="thickness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="5" value="0.00">
+            </div>
+            <input id="thickness-slider" class="slider" type="range" min="0" max="5" step="0.01" value="0.00">
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="atten-enable">
+                <span>Enable Volume Absorption</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Attenuation Distance</h5>
+              <input id="attdist-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0" max="100" value="0.00">
+            </div>
+            <input id="attdist-slider" class="slider" type="range" min="0" max="100" step="0.1" value="0.00">
+
+            <div class="control-row">
+              <h5 class="control-label">Attenuation Color</h5>
+              <input id="attcolor-picker" type="color" class="colorPicker" value="#ffffff">
+              <div class="color-field">
+                <span class="color-swatch" id="attcolor-swatch"></span>
+                <input id="attcolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7" spellcheck="false">
+              </div>
+            </div>
+
+            <h4>Sheen</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="sheen-enable">
+                <span>Enable Sheen</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Sheen Color</h5>
+              <input id="sheencolor-picker" type="color" class="colorPicker" value="#ffffff">
+              <div class="color-field">
+                <span class="color-swatch" id="sheencolor-swatch"></span>
+                <input id="sheencolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7" spellcheck="false">
+              </div>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Sheen Roughness</h5>
+              <input id="sheenrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="1.00">
+            </div>
+            <input id="sheenrough-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
+
+            <h4>Emission</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="emissive-enable">
+                <span>Enable Emission</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Emissive Color</h5>
+              <input id="emissivecolor-picker" type="color" class="colorPicker" value="#000000">
+              <div class="color-field">
+                <span class="color-swatch" id="emissive-swatch"></span>
+                <input id="emissive-hex" class="value-input value-input-hex" type="text" value="#000000" maxlength="7" spellcheck="false">
+              </div>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">Emissive Intensity</h5>
+              <input id="emissiveint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="50" value="0.00">
+            </div>
+            <input id="emissiveint-slider" class="slider" type="range" min="0" max="50" step="0.01" value="0.00">
+
+            <h4>Environment</h4>
+
+            <div class="control-row">
+              <h5 class="control-label">Env Map Intensity</h5>
+              <input id="envint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="5" value="1.00">
+            </div>
+            <input id="envint-slider" class="slider" type="range" min="0" max="5" step="0.01" value="1.00">
+          </div>
+
+
+          <!-- ===================== Setting 4: Camera ===================== -->
+          <div id="Setting4" class="tabcontent">
+            <h3>Camera</h3>
+            <hr>
+
+            <h4>Camera Body</h4>
+
+            <h5>Camera Type</h5>
+            <select id="camera-type-select" class="dropdown">
+              <option value="" disabled>--- Choose Camera ---</option>
+              <option value="perspective" selected>Perspective</option>
+              <option value="orthographic">Orthographic (CAD)</option>
+            </select>
+
+            <h5>Lens Preset (mm)</h5>
+            <div class="button-row" id="lens-mm-buttons" data-target-input="lens-mm-value">
+              <button class="button" type="button" data-value="18">18mm</button>
+              <button class="button" type="button" data-value="24">24mm</button>
+              <button class="button" type="button" data-value="35">35mm</button>
+              <button class="button button-selected" type="button" data-value="50">50mm</button>
+              <button class="button" type="button" data-value="85">85mm</button>
+            </div>
+            <input id="lens-mm-value" type="hidden" value="50">
+
+            <div class="control-row" style="margin-top:10px;">
+              <h5 class="control-label">Lens (mm)</h5>
+              <input id="lens-mm-input" class="value-input" type="number" inputmode="numeric" step="1" min="12" max="200" value="50">
+            </div>
+            <input id="lens-mm-slider" class="slider" type="range" min="12" max="200" step="1" value="50">
+
+            <h5>Film / Sensor Gauge</h5>
+            <div class="button-row" id="film-gauge-buttons" data-target-input="film-gauge-value">
+              <button class="button button-selected" type="button" data-value="fullframe">Full Frame</button>
+              <button class="button" type="button" data-value="aps-c">APS-C</button>
+              <button class="button" type="button" data-value="mft">Micro 4/3</button>
+            </div>
+            <input id="film-gauge-value" type="hidden" value="fullframe">
+
+            <h4>Framing Safety</h4>
+
+            <div class="control-row">
+              <h5 class="control-label">Near Clip</h5>
+              <input id="near-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01" max="5.0" value="0.10">
+            </div>
+            <input id="near-slider" type="range" min="0.01" max="5.0" step="0.01" value="0.1" class="slider">
+
+            <div class="control-row">
+              <h5 class="control-label">Far Clip</h5>
+              <input id="far-input" class="value-input" type="number" inputmode="numeric" step="10" min="10" max="5000" value="2000">
+            </div>
+            <input id="far-slider" type="range" min="10" max="5000" step="10" value="2000" class="slider">
+
+            <h4>Camera Look</h4>
+
+            <h5>Tone Mapping</h5>
+            <div class="button-row" id="tone-mapping-buttons" data-target-input="tone-mapping-value">
+              <button class="button" type="button" data-value="none">Off</button>
+              <button class="button button-selected" type="button" data-value="aces">ACES</button>
+              <button class="button" type="button" data-value="reinhard">Reinhard</button>
+              <button class="button" type="button" data-value="cineon">Cineon</button>
+            </div>
+            <input id="tone-mapping-value" type="hidden" value="aces">
+
+            <div class="control-row">
+              <h5 class="control-label">Exposure</h5>
+              <input id="exposure-input" class="value-input" type="number" inputmode="decimal" step="0.05" min="0.1" max="2.5" value="1.00">
+            </div>
+            <input id="exposure-slider" type="range" min="0.1" max="2.5" step="0.05" value="1.0" class="slider">
+
+            <h4>Focus</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="cam-toggle-dof">
+                <span>Depth of Field (DOF)</span>
+              </label>
+            </div>
+
+            <div class="control-row">
+              <h5 class="control-label">DOF Focus Distance</h5>
+              <input id="cam-dof-focus-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0.1" max="50" value="5.0">
+            </div>
+            <input id="cam-dof-focus-slider" type="range" min="0.1" max="50" step="0.1" value="5" class="slider">
+
+            <div class="control-row">
+              <h5 class="control-label">DOF Strength (Aperture)</h5>
+              <input id="cam-dof-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.25">
+            </div>
+            <input id="cam-dof-strength-slider" type="range" min="0" max="1" step="0.01" value="0.25" class="slider">
+          </div>
+
+
+          <!-- ===================== Setting 5: Preview Quality ===================== -->
+          <div id="Setting5" class="tabcontent">
+            <h3>Preview Quality</h3>
+            <hr>
+
+            <h4>Output</h4>
+
+            <h5>Select Resolution</h5>
+            <select id="resolution-select" class="dropdown">
+              <option value="" disabled>--- Common (16:9) ---</option>
+              <option value="1280x720">1280 x 720 — HD (16:9)</option>
+              <option value="1600x900" selected>1600 x 900 — HD+ (16:9)</option>
+              <option value="1920x1080">1920 x 1080 — Full HD (16:9)</option>
+              <option value="2560x1440">2560 x 1440 — QHD / 2K (16:9)</option>
+              <option value="3840x2160">3840 x 2160 — 4K UHD (16:9)</option>
+              <option value="" disabled>--- Cinema / Ultrawide ---</option>
+              <option value="2560x1080">2560 x 1080 — Ultrawide (21:9)</option>
+              <option value="3440x1440">3440 x 1440 — Ultrawide QHD (21:9)</option>
+              <option value="4096x2160">4096 x 2160 — DCI 4K (≈17:9)</option>
+              <option value="" disabled>--- Square / Texture ---</option>
+              <option value="512x512">512 x 512 — Square (1:1)</option>
+              <option value="1024x1024">1024 x 1024 — Square (1:1)</option>
+              <option value="2048x2048">2048 x 2048 — Square (1:1)</option>
+              <option value="4096x4096">4096 x 4096 — Square (1:1)</option>
+              <option value="" disabled>--- Portrait / Vertical ---</option>
+              <option value="1080x1920">1080 x 1920 — Portrait (9:16)</option>
+              <option value="1440x2560">1440 x 2560 — Portrait QHD (9:16)</option>
+              <option value="" disabled>--- Print / Photo ---</option>
+              <option value="3000x2000">3000 x 2000 — Photo (3:2)</option>
+              <option value="2400x3000">2400 x 3000 — Print (4:5)</option>
+            </select>
+
+            <h5>Render Scale</h5>
+            <div class="button-row" id="render-scale-buttons" data-target-input="render-scale-value">
+              <button class="button button-selected" type="button" data-value="1.0">100%</button>
+              <button class="button" type="button" data-value="0.75">75%</button>
+              <button class="button" type="button" data-value="0.5">50%</button>
+              <button class="button" type="button" data-value="0.25">25%</button>
+            </div>
+            <input id="render-scale-value" type="hidden" value="1.0">
+
+            <h5>Max DPR (Retina Cap)</h5>
+            <div class="button-row" id="max-dpr-buttons" data-target-input="max-dpr-value">
+              <button class="button" type="button" data-value="auto">Auto</button>
+              <button class="button button-selected" type="button" data-value="1">1.0</button>
+              <button class="button" type="button" data-value="1.5">1.5</button>
+              <button class="button" type="button" data-value="2">2.0</button>
+            </div>
+            <input id="max-dpr-value" type="hidden" value="1">
+
+            <h4>Quality</h4>
+
+            <h5>Anti-Aliasing</h5>
+            <div class="button-row" id="aa-mode-buttons" data-target-input="aa-mode-value">
+              <button class="button" type="button" data-value="off">Off</button>
+              <button class="button button-selected" type="button" data-value="msaa">MSAA</button>
+              <button class="button" type="button" data-value="fxaa">FXAA</button>
+            </div>
+            <input id="aa-mode-value" type="hidden" value="msaa">
+
+            <h5>Shadow Quality</h5>
+            <div class="button-row" id="shadow-quality-buttons" data-target-input="shadow-quality-value">
+              <button class="button" type="button" data-value="off">Off</button>
+              <button class="button" type="button" data-value="low">Low (512)</button>
+              <button class="button" type="button" data-value="medium">Med (1024)</button>
+              <button class="button button-selected" type="button" data-value="high">High (2048)</button>
+              <button class="button" type="button" data-value="ultra">Ultra (4096)</button>
+            </div>
+            <input id="shadow-quality-value" type="hidden" value="high">
+
+            <h5>Texture Filtering</h5>
+            <div class="button-row" id="texture-filtering-buttons" data-target-input="texture-filtering-value">
+              <button class="button" type="button" data-value="low">Low (Aniso 1)</button>
+              <button class="button" type="button" data-value="medium">Med (Aniso 8)</button>
+              <button class="button button-selected" type="button" data-value="high">High (Aniso 16)</button>
+            </div>
+            <input id="texture-filtering-value" type="hidden" value="high">
+
+            <h4>Pipeline &amp; Helpers</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="preview-toggle-shadows" checked>
+                <span>Enable Shadows</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="preview-toggle-postfx" checked>
+                <span>Enable Post Effects</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="preview-toggle-wireframe">
+                <span>Wireframe</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="preview-toggle-helpers">
+                <span>Show Helpers (Grid/Axes)</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="preview-toggle-vertexcolors">
+                <span>Vertex Colors</span>
+              </label>
+            </div>
+          </div>
+
+
+          <!-- ===================== Setting 6: Post-Processing ===================== -->
+          <div id="Setting6" class="tabcontent">
+            <h3>Post-Processing</h3>
+            <hr>
+            <h4>Effects</h4>
+
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="post-toggle-bloom">
+                <span>Bloom</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="post-toggle-vignette">
+                <span>Vignette</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="post-toggle-ao">
+                <span>Ambient Occlusion (AO)</span>
+              </label>
+
+              <label class="toggle-row">
+                <input type="checkbox" id="post-toggle-motionblur">
+                <span>Motion Blur</span>
+              </label>
+            </div>
+
+            <h4>Bloom Controls</h4>
+
+            <div class="control-row">
+              <h5 class="control-label">Bloom Strength</h5>
+              <input id="bloom-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="2" value="0.35">
+            </div>
+            <input id="bloom-strength-slider" type="range" min="0" max="2" step="0.01" value="0.35" class="slider">
+
+            <div class="control-row">
+              <h5 class="control-label">Bloom Radius</h5>
+              <input id="bloom-radius-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.20">
+            </div>
+            <input id="bloom-radius-slider" type="range" min="0" max="1" step="0.01" value="0.2" class="slider">
+
+            <div class="control-row">
+              <h5 class="control-label">Bloom Threshold</h5>
+              <input id="bloom-threshold-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.85">
+            </div>
+            <input id="bloom-threshold-slider" type="range" min="0" max="1" step="0.01" value="0.85" class="slider">
+
+            <h4>Vignette Controls</h4>
+
+            <div class="control-row">
+              <h5 class="control-label">Vignette Intensity</h5>
+              <input id="vignette-intensity-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.25">
+            </div>
+            <input id="vignette-intensity-slider" type="range" min="0" max="1" step="0.01" value="0.25" class="slider">
+
+            <div class="control-row">
+              <h5 class="control-label">Vignette Softness</h5>
+              <input id="vignette-softness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.60">
+            </div>
+            <input id="vignette-softness-slider" type="range" min="0" max="1" step="0.01" value="0.6" class="slider">
+
+            <h4>AO Controls</h4>
+
+            <div class="control-row">
+              <h5 class="control-label">AO Intensity</h5>
+              <input id="ao-intensity-input" class="value-input" type="number" inputmode="decimal" step="0.05" min="0" max="3" value="1.00">
+            </div>
+            <input id="ao-intensity-slider" type="range" min="0" max="3" step="0.05" value="1.0" class="slider">
+
+            <div class="control-row">
+              <h5 class="control-label">AO Radius</h5>
+              <input id="ao-radius-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="3.0">
+            </div>
+            <input id="ao-radius-slider" type="range" min="0" max="10" step="0.1" value="3.0" class="slider">
+
+            <h4>Motion Blur Controls</h4>
+
+            <div class="control-row">
+              <h5 class="control-label">Shutter Strength</h5>
+              <input id="motionblur-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.15">
+            </div>
+            <input id="motionblur-strength-slider" type="range" min="0" max="1" step="0.01" value="0.15" class="slider">
+          </div>
+
+
+          <!-- ===================== Setting 7: Export & Project ===================== -->
+          <div id="Setting7" class="tabcontent">
+            <h3>Export &amp; Project</h3>
+            <hr>
+
+            <h4>Download → Image Render</h4>
+            <h5>Format</h5>
+
+            <div class="button-row">
+              <button class="button" id="export-jpg-btn">.jpg</button>
+              <button class="button" id="export-png-btn">.png</button>
+              <button class="button" id="export-webp-btn">.webp</button>
+              <button class="button" id="export-exr-btn">.exr</button>
+            </div>
+
+            <h5>Render Options</h5>
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="export-transparent-bg">
+                <span>Transparent Background</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-postfx" checked>
+                <span>Include Post-Processing</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-use-preview-res" checked>
+                <span>Use Selected Resolution</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-full-quality">
+                <span>Force Full Quality (Ignore Preview Scale)</span>
+              </label>
+            </div>
+
+            <hr>
+
+            <h4>Download → Model Package</h4>
+            <h5>Format</h5>
+
+            <div class="button-row">
+              <button class="button" id="export-glb-btn">.glb</button>
+              <button class="button" id="export-gltf-btn">.gltf</button>
+              <button class="button" id="export-obj-btn">.obj + .mtl</button>
+              <button class="button" id="export-zip-btn">.zip (All Assets)</button>
+            </div>
+
+            <h5>Package Options</h5>
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="export-embed-textures" checked>
+                <span>Embed Textures</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-env">
+                <span>Include Environment HDR</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-material-json" checked>
+                <span>Include Material Presets (.json)</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-decals" checked>
+                <span>Include Design Textures</span>
+              </label>
+            </div>
+
+            <hr>
+
+            <h4>Project</h4>
+            <div class="button-row">
+              <button class="button" id="save-project-btn">Save Project</button>
+              <button class="button" id="download-project-btn">Download Project</button>
+              <button class="button" id="load-project-btn">Load Project</button>
+            </div>
+            <div class="toggle-list" style="margin-top:8px;">
+              <label class="toggle-row">
+                <input type="checkbox" id="project-include-images" checked>
+                <span>Include Uploaded Images in Project File</span>
+              </label>
+            </div>
+
+            <hr>
+
+            <h4>Project Thumbnail</h4>
+            <div class="button-row">
+              <button class="button" id="capture-thumbnail-btn">Capture Thumbnail</button>
+              <button class="button" id="download-thumbnail-btn">Download Thumbnail</button>
+            </div>
+          </div>
+
+          <!-- ===================== Setting 8: Rendering ===================== -->
+          <div id="Setting8" class="tabcontent">
+            <h3>Rendering</h3>
+            <hr>
+            <p>Rendering controls will be here.</p>
+          </div>
+
+          <div id="Setting9" class="tabcontent">
+            <h3>Setting 9</h3>
+            <hr>
+            <p>Setting 9 controls will be here.</p>
+          </div>
+
+          <div id="Setting10" class="tabcontent">
+            <h3>Setting 10</h3>
+            <hr>
+            <p>Setting 10 controls will be here.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!--
+    controls.js has no Three.js imports — it provides openSetting() and UI
+    binding helpers as plain globals. Must load before app.js so that
+    openSetting (called from inline onclick attributes) is defined, and so
+    that window.Controls is available when the module boots.
+  -->
+  <script src="js/controls.js"></script>
+
+  <!--
+    app.js is a true ES module. type="module" defers execution until after
+    the DOM is parsed AND makes the importmap above take effect for all
+    bare specifier imports inside it.
+  -->
+  <script type="module" src="js/app.js"></script>
+</body>
+
+</html>
