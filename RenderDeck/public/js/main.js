@@ -127,6 +127,10 @@ async function loadCustomModel(name, modelData) {
     centerAndFrameModel(object, cameraManager);
     if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
     log(`${name} loaded.`);
+    // Initialize UV editor for this custom model
+    if (activeMesh) {
+      uvEditor.open(activeMesh, name, modelData.materialPreset || 'Wood');
+    }
   },
   (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
   (err) => logError(`OBJ load failed: ${err}`));
@@ -154,6 +158,10 @@ async function loadRegularModel(name, modelData) {
       centerAndFrameModel(object, cameraManager);
       applyMaterialPreset('Wood');
       log(`${name} loaded.`);
+      // Initialize UV editor for this model
+      if (activeMesh) {
+        uvEditor.open(activeMesh, name, 'Wood');
+      }
     },
     (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
     (err) => logError(`OBJ load failed: ${err}`));
@@ -210,6 +218,14 @@ function applyMaterialPreset(presetName) {
     child.material.needsUpdate = true;
   });
   if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+  
+  // Update UV editor's base texture to match the new material
+  if (activeMesh?.material?.map) {
+    uvEditor.baseTexture = activeMesh.material.map;
+    uvEditor.currentMaterialPreset = presetName;
+    uvEditor._renderPreview();
+  }
+  
   log(`Preset: ${presetName}`);
 }
 
@@ -414,7 +430,8 @@ const controls = new ControlsManager({
 
   onApplyDesign: () => {
     if (!activeMesh) { logError('No model loaded'); return; }
-    uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
+    // Just apply the texture to model - don't call open() which would prompt for name
+    uvEditor.applyTextureToModel();
   },
 
   onResetTexture: () => {
@@ -623,6 +640,163 @@ function setupPostFXUI() {
 }
 
 //═══════════════════════════════════════════════════════════════
+// PREVIEW QUALITY UI (Setting 5)
+//═══════════════════════════════════════════════════════════════
+
+// Store helpers so we can toggle them
+let gridHelper = null;
+let axesHelper = null;
+
+function setupPreviewQualityUI() {
+  const renderer = rendererManager.getRenderer();
+  const scene = sceneManager.getScene();
+
+  // ── Shadows toggle ──
+  const shadowsToggle = document.getElementById('preview-toggle-shadows');
+  if (shadowsToggle) {
+    shadowsToggle.addEventListener('change', (e) => {
+      renderer.shadowMap.enabled = e.target.checked;
+      // Need to update all materials
+      if (activeModel) {
+        activeModel.traverse((child) => {
+          if (child.isMesh && child.material) {
+            child.material.needsUpdate = true;
+          }
+        });
+      }
+      log(`Shadows: ${e.target.checked ? 'on' : 'off'}`);
+    });
+  }
+
+  // ── Wireframe toggle ──
+  const wireframeToggle = document.getElementById('preview-toggle-wireframe');
+  if (wireframeToggle) {
+    wireframeToggle.addEventListener('change', (e) => {
+      if (activeModel) {
+        activeModel.traverse((child) => {
+          if (child.isMesh && child.material) {
+            child.material.wireframe = e.target.checked;
+            child.material.needsUpdate = true;
+          }
+        });
+      }
+      log(`Wireframe: ${e.target.checked ? 'on' : 'off'}`);
+    });
+  }
+
+  // ── Helpers toggle (Grid + Axes) ──
+  const helpersToggle = document.getElementById('preview-toggle-helpers');
+  if (helpersToggle) {
+    helpersToggle.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        // Create and add helpers if they don't exist
+        if (!gridHelper) {
+          gridHelper = new THREE.GridHelper(10, 10, 0x888888, 0x444444);
+          gridHelper.position.y = -0.01; // Slightly below origin
+        }
+        if (!axesHelper) {
+          axesHelper = new THREE.AxesHelper(2);
+        }
+        scene.add(gridHelper);
+        scene.add(axesHelper);
+        log('Helpers: on');
+      } else {
+        // Remove helpers
+        if (gridHelper) scene.remove(gridHelper);
+        if (axesHelper) scene.remove(axesHelper);
+        log('Helpers: off');
+      }
+    });
+  }
+
+  // ── Vertex Colors toggle ──
+  const vertexColorsToggle = document.getElementById('preview-toggle-vertexcolors');
+  if (vertexColorsToggle) {
+    vertexColorsToggle.addEventListener('change', (e) => {
+      if (activeModel) {
+        activeModel.traverse((child) => {
+          if (child.isMesh && child.material) {
+            child.material.vertexColors = e.target.checked;
+            child.material.needsUpdate = true;
+          }
+        });
+      }
+      log(`Vertex colors: ${e.target.checked ? 'on' : 'off'}`);
+    });
+  }
+
+  // ── Render Scale ──
+  const renderScaleSelect = document.getElementById('render-scale-select');
+  if (renderScaleSelect) {
+    renderScaleSelect.addEventListener('change', (e) => {
+      const scale = parseFloat(e.target.value);
+      const baseDPR = window.devicePixelRatio || 1;
+      renderer.setPixelRatio(Math.min(baseDPR * scale, 2));
+      log(`Render scale: ${(scale * 100).toFixed(0)}%`);
+    });
+  }
+
+  // ── Max DPR ──
+  const maxDprSelect = document.getElementById('max-dpr-select');
+  if (maxDprSelect) {
+    maxDprSelect.addEventListener('change', (e) => {
+      const val = e.target.value;
+      if (val === 'auto') {
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      } else {
+        renderer.setPixelRatio(parseFloat(val));
+      }
+      log(`Max DPR: ${val}`);
+    });
+  }
+
+  // ── Anti-Aliasing mode ──
+  const aaSelect = document.getElementById('aa-mode-select');
+  if (aaSelect) {
+    aaSelect.addEventListener('change', (e) => {
+      const mode = e.target.value;
+      // MSAA is baked into renderer at creation, but we can toggle FXAA
+      if (mode === 'fxaa') {
+        rendererManager.setFXAA(true);
+      } else {
+        rendererManager.setFXAA(false);
+      }
+      log(`Anti-aliasing: ${mode}`);
+    });
+  }
+
+  // ── Shadow Quality ──
+  const shadowQualitySelect = document.getElementById('shadow-quality-select');
+  if (shadowQualitySelect) {
+    shadowQualitySelect.addEventListener('change', (e) => {
+      const quality = e.target.value;
+      const sizes = { off: 0, low: 512, medium: 1024, high: 2048, ultra: 4096 };
+      const size = sizes[quality] || 2048;
+      
+      if (quality === 'off') {
+        renderer.shadowMap.enabled = false;
+      } else {
+        renderer.shadowMap.enabled = true;
+        // Update shadow map size on lights
+        scene.traverse((obj) => {
+          if (obj.isLight && obj.shadow) {
+            obj.shadow.mapSize.width = size;
+            obj.shadow.mapSize.height = size;
+            if (obj.shadow.map) {
+              obj.shadow.map.dispose();
+              obj.shadow.map = null;
+            }
+          }
+        });
+      }
+      log(`Shadow quality: ${quality}`);
+    });
+  }
+
+  log('Preview quality UI ready.');
+}
+
+//═══════════════════════════════════════════════════════════════
 // ANIMATION LOOP
 //═══════════════════════════════════════════════════════════════
 
@@ -642,6 +816,7 @@ updateSceneList();
 updateMaterialPresetList();
 setupCameraUI();
 setupPostFXUI();
+setupPreviewQualityUI();
 
 // Apply initial renderer tone mapping
 rendererManager.getRenderer().toneMapping = THREE.ACESFilmicToneMapping;
