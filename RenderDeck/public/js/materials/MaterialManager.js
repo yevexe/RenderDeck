@@ -1,5 +1,5 @@
-
 // MATERIALMANAGER.JS - Centralized Material Management
+// Uses MeshPhysicalMaterial for full PBR support (clearcoat, transmission, sheen, etc.)
 
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
@@ -13,52 +13,80 @@ import {
 export class MaterialManager {
   constructor() {
     this.presets = this.initializePresets();
-    this.cache = new Map(); // Cache created materials
+    this.cache = new Map();
   }
 
   /**
-   * Initialize all material presets
-   * @returns {Object} Preset name -> generator function map
+   * Initialize all material presets using MeshPhysicalMaterial
    */
   initializePresets() {
     return {
       Wood: () => this.createMaterial('Wood', {
         map: createWoodTexture(),
-        ...CONFIG.MATERIALS.WOOD
+        roughness: CONFIG.MATERIALS.WOOD.roughness,
+        metalness: CONFIG.MATERIALS.WOOD.metalness,
+        clearcoat: 0.1,
+        clearcoatRoughness: 0.3,
       }),
       Metal: () => this.createMaterial('Metal', {
         map: createMetalTexture(),
-        ...CONFIG.MATERIALS.METAL
+        roughness: CONFIG.MATERIALS.METAL.roughness,
+        metalness: CONFIG.MATERIALS.METAL.metalness,
+        reflectivity: 1.0,
       }),
       Glass: () => this.createMaterial('Glass', {
         map: createGlassTexture(),
-        ...CONFIG.MATERIALS.GLASS
+        roughness: CONFIG.MATERIALS.GLASS.roughness,
+        metalness: CONFIG.MATERIALS.GLASS.metalness,
+        opacity: CONFIG.MATERIALS.GLASS.opacity,
+        transparent: CONFIG.MATERIALS.GLASS.transparent,
+        transmission: 0.9,
+        ior: 1.5,
+        thickness: 0.5,
+        envMapIntensity: 1.5,
       }),
       Plastic: () => this.createMaterial('Plastic', {
         map: createPlasticTexture(),
-        ...CONFIG.MATERIALS.PLASTIC
-      })
+        roughness: CONFIG.MATERIALS.PLASTIC.roughness,
+        metalness: CONFIG.MATERIALS.PLASTIC.metalness,
+        clearcoat: 0.4,
+        clearcoatRoughness: 0.1,
+        specularIntensity: 0.8,
+      }),
     };
   }
 
   /**
-   * Create a material with common defaults
-   * @param {string} name - Material name
-   * @param {Object} properties - Material properties
-   * @returns {THREE.MeshStandardMaterial}
+   * Create a MeshPhysicalMaterial with full defaults
    */
   createMaterial(name, properties) {
-    return new THREE.MeshStandardMaterial({
+    return new THREE.MeshPhysicalMaterial({
       side: THREE.DoubleSide,
+      color: 0xffffff,
+      metalness: 0.0,
+      roughness: 0.5,
+      clearcoat: 0.0,
+      clearcoatRoughness: 0.1,
+      specularIntensity: 1.0,
+      specularColor: new THREE.Color(0xffffff),
+      transmission: 0.0,
+      ior: 1.5,
+      thickness: 0.0,
+      sheen: 0.0,
+      sheenRoughness: 1.0,
+      sheenColor: new THREE.Color(0xffffff),
+      emissive: new THREE.Color(0x000000),
+      emissiveIntensity: 0.0,
+      attenuationDistance: Infinity,
+      attenuationColor: new THREE.Color(0xffffff),
+      envMapIntensity: 1.0,
       ...properties,
-      name: name // Tag it for debugging
+      name,
     });
   }
 
   /**
-   * Get a material preset
-   * @param {string} name - Preset name (Wood, Metal, Glass, Plastic)
-   * @returns {THREE.MeshStandardMaterial}
+   * Get a material preset by name
    */
   getPreset(name) {
     if (!this.presets[name]) {
@@ -68,88 +96,98 @@ export class MaterialManager {
     return this.presets[name]();
   }
 
-  /**
-   * Get all preset names
-   * @returns {string[]}
-   */
   getPresetNames() {
     return Object.keys(this.presets);
   }
 
-  /**
-   * Add a custom preset (for future expansion)
-   * @param {string} name - Preset name
-   * @param {Function} generator - Generator function
-   */
   addPreset(name, generator) {
     this.presets[name] = generator;
   }
 
-  /**
-   * Apply environment map to material
-   * @param {THREE.Material} material
-   * @param {THREE.Texture} envMap
-   */
   applyEnvironment(material, envMap) {
     if (material && envMap) {
       material.envMap = envMap;
-      material.envMapIntensity = 1.0;
+      material.envMapIntensity = material.envMapIntensity ?? 1.0;
       material.needsUpdate = true;
     }
   }
 
   /**
-   * Apply saved properties to material
-   * @param {THREE.Material} material
-   * @param {Object} properties - Saved material properties
+   * Apply saved properties to a MeshPhysicalMaterial
    */
   applySavedProperties(material, properties) {
     if (!properties) return;
 
-    if (properties.opacity !== undefined) material.opacity = properties.opacity;
-    if (properties.transparent !== undefined) material.transparent = properties.transparent;
+    if (properties.color !== undefined) material.color.set(properties.color);
     if (properties.metalness !== undefined) material.metalness = properties.metalness;
     if (properties.roughness !== undefined) material.roughness = properties.roughness;
-    if (properties.color) {
-      material.color.setRGB(properties.color.r, properties.color.g, properties.color.b);
+    if (properties.opacity !== undefined) material.opacity = properties.opacity;
+    if (properties.transparent !== undefined) material.transparent = properties.transparent;
+    if (properties.clearcoat !== undefined) material.clearcoat = properties.clearcoat;
+    if (properties.clearcoatRoughness !== undefined) material.clearcoatRoughness = properties.clearcoatRoughness;
+    if (properties.specularIntensity !== undefined) material.specularIntensity = properties.specularIntensity;
+    if (properties.specularColor !== undefined) material.specularColor.set(properties.specularColor);
+    if (properties.transmission !== undefined) material.transmission = properties.transmission;
+    if (properties.ior !== undefined) material.ior = properties.ior;
+    if (properties.thickness !== undefined) material.thickness = properties.thickness;
+    if (properties.attenuationDistance !== undefined) {
+      // 0 is stored in JSON to represent Infinity (JSON can't serialize Infinity)
+      material.attenuationDistance = (properties.attenuationDistance === 0 || properties.attenuationDistance === null)
+        ? Infinity
+        : properties.attenuationDistance;
     }
+    if (properties.attenuationColor !== undefined) material.attenuationColor.set(properties.attenuationColor);
+    if (properties.sheen !== undefined) material.sheen = properties.sheen;
+    if (properties.sheenRoughness !== undefined) material.sheenRoughness = properties.sheenRoughness;
+    if (properties.sheenColor !== undefined) material.sheenColor.set(properties.sheenColor);
+    if (properties.emissive !== undefined) material.emissive.set(properties.emissive);
+    if (properties.emissiveIntensity !== undefined) material.emissiveIntensity = properties.emissiveIntensity;
+    if (properties.envMapIntensity !== undefined) material.envMapIntensity = properties.envMapIntensity;
+
     material.needsUpdate = true;
   }
 
   /**
-   * Get current material properties (for saving)
-   * @param {THREE.Material} material
-   * @returns {Object}
+   * Extract all physical material properties for saving
    */
   extractProperties(material) {
     if (!material) return {};
-
     return {
+      color: '#' + material.color.getHexString(),
       metalness: material.metalness,
       roughness: material.roughness,
       opacity: material.opacity,
       transparent: material.transparent,
-      color: material.color ? {
-        r: material.color.r,
-        g: material.color.g,
-        b: material.color.b
-      } : null
+      clearcoat: material.clearcoat,
+      clearcoatRoughness: material.clearcoatRoughness,
+      specularIntensity: material.specularIntensity,
+      specularColor: '#' + material.specularColor.getHexString(),
+      transmission: material.transmission,
+      ior: material.ior,
+      thickness: material.thickness,
+      attenuationDistance: (material.attenuationDistance === Infinity ? 0 : material.attenuationDistance),
+      attenuationColor: '#' + material.attenuationColor.getHexString(),
+      sheen: material.sheen,
+      sheenRoughness: material.sheenRoughness,
+      sheenColor: '#' + material.sheenColor.getHexString(),
+      emissive: '#' + material.emissive.getHexString(),
+      emissiveIntensity: material.emissiveIntensity,
+      envMapIntensity: material.envMapIntensity,
     };
   }
 
-  /**
-   * Dispose of material and its textures
-   * @param {THREE.Material} material
-   */
   dispose(material) {
     if (!material) return;
-
-    if (material.map) material.map.dispose();
-    if (material.normalMap) material.normalMap.dispose();
-    if (material.roughnessMap) material.roughnessMap.dispose();
-    if (material.metalnessMap) material.metalnessMap.dispose();
-    if (material.envMap) material.envMap.dispose();
-    
+    const maps = [
+      'map', 'normalMap', 'roughnessMap', 'metalnessMap',
+      'aoMap', 'emissiveMap', 'bumpMap', 'displacementMap',
+      'alphaMap', 'lightMap', 'envMap', 'clearcoatMap',
+      'clearcoatNormalMap', 'clearcoatRoughnessMap',
+      'sheenColorMap', 'sheenRoughnessMap',
+      'specularIntensityMap', 'specularColorMap',
+      'transmissionMap', 'thicknessMap',
+    ];
+    maps.forEach(prop => { if (material[prop]) material[prop].dispose(); });
     material.dispose();
   }
 }

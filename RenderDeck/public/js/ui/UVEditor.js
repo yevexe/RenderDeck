@@ -1,831 +1,557 @@
-
-// UVEDITOR.JS - UV Map Editor for RenderDeck
-// Allows users to upload and position images on 3D model textures
+// UVEDITOR.JS - Design Editor (Inline Tab 2)
+// No floating modal. All UI lives inside Tab 2's existing elements.
 
 import * as THREE from 'three';
 import { ModelVerifier } from '../models/ModelVerifier.js';
 
 export class UVEditor {
-  constructor(renderer, log, modelManager) {
+  constructor(renderer, log, modelManager, materialManager) {
     this.renderer = renderer;
     this.log = log;
     this.modelManager = modelManager;
-    
-    // Initialize verifier with increased texture size limits
+    this.materialManager = materialManager; // used for full property extraction
+
     this.verifier = new ModelVerifier({
-      maxFileSize: {
-        texture: 20 * 1024 * 1024  // 20MB for textures (up from 10MB)
-      },
-      maxImageDimension: 8192  // Allow up to 8K textures
+      maxFileSize: { texture: 20 * 1024 * 1024 },
+      maxImageDimension: 8192
     });
-    
-    // Current state
+
+    // State
     this.activeMesh = null;
     this.activeModelName = null;
     this.customModelName = null;
     this.baseTexture = null;
-    this.overlayImages = []; // Array of { image: Image, position: {x, y}, size: {w, h}, rotation: number, id: number, aspectRatio: number }
+    this.overlayImages = [];
     this.nextImageId = 1;
     this.selectedImageId = null;
-    
-    // Canvas for compositing
-    this.textureCanvas = null;
-    this.textureCtx = null;
-    this.textureSize = 2048; // Default texture resolution
-    
-    // UV preview canvas
+    this.currentMaterialPreset = 'Wood';
+
+    // High-res composite canvas (offscreen)
+    this.textureCanvas = document.createElement('canvas');
+    this.textureCanvas.width = 2048;
+    this.textureCanvas.height = 2048;
+    this.textureCtx = this.textureCanvas.getContext('2d');
+
+    // Preview canvas lives in Tab 2 HTML (#design-preview-canvas)
     this.uvCanvas = null;
     this.uvCtx = null;
-    
-    // Interaction state
+
+    // Drag state on preview canvas
     this.isDragging = false;
-    this.isResizing = false;
-    this.dragStart = { x: 0, y: 0 };
     this.dragOffset = { x: 0, y: 0 };
-    
-    // Window dragging
-    this.isWindowDragging = false;
-    this.windowDragStart = { x: 0, y: 0 };
-    this.windowPosition = { x: 0, y: 0 };
-    
-    // Window resizing
-    this.isWindowResizing = false;
-    this.resizeDragStart = { x: 0, y: 0 };
-    
-    // Load saved window size or use defaults
-    const savedSize = localStorage.getItem('uvEditorWindowSize');
-    if (savedSize) {
-      this.windowSize = JSON.parse(savedSize);
+
+    this._setupInlineUI();
+  }
+
+  // ─── Wire up Tab 2's existing HTML elements ───────────────────
+  _setupInlineUI() {
+    // Wait for DOM
+    const init = () => {
+      this.uvCanvas = document.getElementById('design-preview-canvas');
+      if (!this.uvCanvas) return; // Tab 2 not ready yet
+      this.uvCtx = this.uvCanvas.getContext('2d');
+
+      // Initial empty render
+      this._renderPreview();
+
+      // Upload button
+      const uploadInput = document.getElementById('texture-image-upload');
+      if (uploadInput) {
+        uploadInput.addEventListener('change', (e) => {
+          if (e.target.files[0]) this.handleImageUpload(e.target.files[0]);
+          e.target.value = '';
+        });
+      }
+
+      // Apply / Reset / Save buttons
+      const applyBtn = document.getElementById('apply-design-btn');
+      if (applyBtn) applyBtn.addEventListener('click', () => this.applyTextureToModel());
+
+      const resetBtn = document.getElementById('reset-texture-btn');
+      if (resetBtn) resetBtn.addEventListener('click', () => this.resetTexture());
+
+      const saveBtn = document.getElementById('save-custom-model-btn');
+      if (saveBtn) saveBtn.addEventListener('click', () => this.saveAsCustomModel());
+
+      const deleteBtn = document.getElementById('delete-selected-image-btn');
+      if (deleteBtn) deleteBtn.addEventListener('click', () => this.deleteSelectedImage());
+
+      // Canvas drag interactions
+      this.uvCanvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
+      this.uvCanvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
+      this.uvCanvas.addEventListener('mouseup', () => { this.isDragging = false; });
+      this.uvCanvas.addEventListener('mouseleave', () => { this.isDragging = false; });
+
+      // Transformation sliders (Tab 2 IDs)
+      this._linkSlider('design-posx-slider', 'design-posx-input', v => this._setSelected('posX', v));
+      this._linkSlider('design-posy-slider', 'design-posy-input', v => this._setSelected('posY', v));
+      this._linkSlider('design-width-slider', 'design-width-input', v => this._setSelected('width', v));
+      this._linkSlider('design-height-slider', 'design-height-input', v => this._setSelected('height', v));
+      this._linkSlider('design-rotation-slider', 'design-rotation-input', v => this._setSelected('rotation', v));
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
     } else {
-      this.windowSize = { width: 1200, height: 700 };
+      init();
     }
-    
-    this.setupUI();
   }
 
-  // ─────────────────────────────────────────────
-  // Setup UI Elements
-  // ─────────────────────────────────────────────
-  setupUI() {
-    // Create UV editor container
-    const editorContainer = document.createElement('div');
-    editorContainer.id = 'uv-editor';
-    editorContainer.className = 'uv-editor-container hidden';
-    editorContainer.innerHTML = `
-      <div class="uv-editor-header">
-        <h2>Texture Editor <span class="model-name-display"></span></h2>
-        <button class="close-editor-btn">✕</button>
-      </div>
-      
-      <div class="uv-editor-content">
-        <!-- UV Canvas Preview -->
-        <div class="uv-canvas-container">
-          <canvas id="uv-preview-canvas" width="512" height="512"></canvas>
-          <div class="uv-controls">
-            <p class="uv-hint">UV Map Preview - Drag images to position</p>
-          </div>
-        </div>
-        
-        <!-- Image Upload and Controls -->
-        <div class="uv-sidebar">
-          <div class="upload-section">
-            <h3>Add Image</h3>
-            <label for="texture-image-upload" class="texture-upload-button">
-              📷 Upload Image
-            </label>
-            <input type="file" id="texture-image-upload" accept=".png,.jpg,.jpeg,.svg" style="display: none;">
-            <p class="upload-hint">PNG, JPG, or SVG</p>
-          </div>
-          
-          <div class="images-list">
-            <h3>Images on Model</h3>
-            <div id="image-layers-list"></div>
-          </div>
-          
-          <div class="selected-image-controls hidden">
-            <h3>Selected Image</h3>
-            <div class="control-group">
-              <label>Position X:</label>
-              <input type="range" id="img-pos-x" min="0" max="100" value="50" step="0.1">
-              <span class="control-value">50%</span>
-            </div>
-            <div class="control-group">
-              <label>Position Y:</label>
-              <input type="range" id="img-pos-y" min="0" max="100" value="50" step="0.1">
-              <span class="control-value">50%</span>
-            </div>
-            <div class="control-group">
-              <label>Width:</label>
-              <input type="range" id="img-width" min="5" max="100" value="30" step="0.1">
-              <span class="control-value">30%</span>
-            </div>
-            <div class="control-group">
-              <label>Height:</label>
-              <input type="range" id="img-height" min="5" max="100" value="30" step="0.1">
-              <span class="control-value">30%</span>
-            </div>
-            <div class="control-group">
-              <label>Rotation:</label>
-              <input type="range" id="img-rotation" min="0" max="360" value="0" step="1">
-              <span class="control-value">0°</span>
-            </div>
-            <button class="delete-image-btn">🗑️ Delete Image</button>
-          </div>
-          
-          <div class="editor-actions">
-            <button class="save-custom-model-btn">💾 Save as Custom Model</button>
-            <button class="apply-texture-btn">✓ Apply to Model</button>
-            <button class="reset-texture-btn">↺ Reset</button>
-          </div>
-        </div>
-      </div>
-      
-      <div class="resize-handle"></div>
-    `;
-    
-    document.body.appendChild(editorContainer);
-    
-    // Get canvas references
-    this.uvCanvas = document.getElementById('uv-preview-canvas');
-    this.uvCtx = this.uvCanvas.getContext('2d');
-    
-    // Create texture compositing canvas (higher resolution)
-    this.textureCanvas = document.createElement('canvas');
-    this.textureCanvas.width = this.textureSize;
-    this.textureCanvas.height = this.textureSize;
-    this.textureCtx = this.textureCanvas.getContext('2d');
-    
-    this.attachEventListeners();
-  }
-
-  // ─────────────────────────────────────────────
-  // Attach Event Listeners
-  // ─────────────────────────────────────────────
-  attachEventListeners() {
-    const container = document.getElementById('uv-editor');
-    const header = document.querySelector('.uv-editor-header');
-    const resizeHandle = document.querySelector('.resize-handle');
-    
-    // Window dragging
-    header.addEventListener('mousedown', (e) => {
-      if (e.target.classList.contains('close-editor-btn')) return;
-      this.isWindowDragging = true;
-      this.windowDragStart = { x: e.clientX - this.windowPosition.x, y: e.clientY - this.windowPosition.y };
-      container.style.cursor = 'move';
+  // ─── Slider ↔ number input sync ──────────────────────────────
+  _linkSlider(sliderId, inputId, callback) {
+    const slider = document.getElementById(sliderId);
+    const input = document.getElementById(inputId);
+    if (!slider || !input) return;
+    slider.addEventListener('input', () => {
+      input.value = slider.value;
+      callback(parseFloat(slider.value));
     });
-    
-    document.addEventListener('mousemove', (e) => {
-      if (this.isWindowDragging) {
-        this.windowPosition.x = e.clientX - this.windowDragStart.x;
-        this.windowPosition.y = e.clientY - this.windowDragStart.y;
-        container.style.transform = `translate(calc(-50% + ${this.windowPosition.x}px), calc(-50% + ${this.windowPosition.y}px))`;
-      }
-      
-      if (this.isWindowResizing) {
-        const deltaX = e.clientX - this.resizeDragStart.x;
-        const deltaY = e.clientY - this.resizeDragStart.y;
-        
-        this.windowSize.width = Math.max(800, this.windowSize.width + deltaX);
-        this.windowSize.height = Math.max(500, this.windowSize.height + deltaY);
-        
-        container.style.width = `${this.windowSize.width}px`;
-        container.style.height = `${this.windowSize.height}px`;
-        
-        this.resizeDragStart = { x: e.clientX, y: e.clientY };
-        
-        // Save window size to localStorage
-        localStorage.setItem('uvEditorWindowSize', JSON.stringify(this.windowSize));
-      }
-    });
-    
-    document.addEventListener('mouseup', () => {
-      this.isWindowDragging = false;
-      this.isWindowResizing = false;
-      container.style.cursor = 'default';
-    });
-    
-    // Window resizing
-    resizeHandle.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      this.isWindowResizing = true;
-      this.resizeDragStart = { x: e.clientX, y: e.clientY };
-    });
-    
-    // Close button
-    document.querySelector('.close-editor-btn').addEventListener('click', () => {
-      this.hide();
-    });
-    
-    // Image upload
-    document.getElementById('texture-image-upload').addEventListener('change', (e) => {
-      this.handleImageUpload(e.target.files[0]);
-    });
-    
-    // UV Canvas interactions
-    this.uvCanvas.addEventListener('mousedown', (e) => this.handleCanvasMouseDown(e));
-    this.uvCanvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
-    this.uvCanvas.addEventListener('mouseup', (e) => this.handleCanvasMouseUp(e));
-    this.uvCanvas.addEventListener('mouseleave', (e) => this.handleCanvasMouseUp(e));
-    
-    // Slider controls
-    const sliders = ['img-pos-x', 'img-pos-y', 'img-width', 'img-height', 'img-rotation'];
-    sliders.forEach(id => {
-      const slider = document.getElementById(id);
-      if (slider) {
-        slider.addEventListener('input', (e) => this.handleSliderChange(id, e.target.value));
-      }
-    });
-    
-    // Action buttons
-    document.querySelector('.save-custom-model-btn').addEventListener('click', async () => {
-      await this.saveAsCustomModel();
-    });
-    
-    document.querySelector('.apply-texture-btn').addEventListener('click', () => {
-      this.applyTextureToModel();
-    });
-    
-    document.querySelector('.reset-texture-btn').addEventListener('click', () => {
-      this.resetTexture();
-    });
-    
-    document.querySelector('.delete-image-btn').addEventListener('click', () => {
-      this.deleteSelectedImage();
+    input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      if (!isNaN(v)) { slider.value = v; callback(v); }
     });
   }
 
-  // ─────────────────────────────────────────────
-  // Show Editor with Model Naming
-  // ─────────────────────────────────────────────
-  async show(mesh, originalModelName, currentMaterialPreset = 'Wood') {
+  // ─── Apply transformation to selected image ───────────────────
+  _setSelected(prop, value) {
+    const img = this.overlayImages.find(i => i.id === this.selectedImageId);
+    if (!img) return;
+    // Tab 2 sliders use -1 to 1 for position, 0.01-2 for size, 0-360 for rotation
+    // UVEditor internally uses 0-100 % space
+    switch (prop) {
+      case 'posX': img.position.x = (value + 1) / 2 * 100; break;
+      case 'posY': img.position.y = (value + 1) / 2 * 100; break;
+      case 'width': img.size.w = value * 50; break;   // 0.01-2 → 0.5-100%
+      case 'height': img.size.h = value * 50; break;
+      case 'rotation': img.rotation = value; break;
+    }
+    this._renderPreview();
+    this._renderComposite();
+  }
+
+  // ─── Sync Tab 2 sliders from selected image data ─────────────
+  _syncSlidersFromImage(img) {
+    const set = (sliderId, inputId, val) => {
+      const s = document.getElementById(sliderId);
+      const i = document.getElementById(inputId);
+      if (s) s.value = val;
+      if (i) i.value = val;
+    };
+    set('design-posx-slider', 'design-posx-input', ((img.position.x / 100) * 2 - 1).toFixed(2));
+    set('design-posy-slider', 'design-posy-input', ((img.position.y / 100) * 2 - 1).toFixed(2));
+    set('design-width-slider', 'design-width-input', (img.size.w / 50).toFixed(2));
+    set('design-height-slider', 'design-height-input', (img.size.h / 50).toFixed(2));
+    set('design-rotation-slider', 'design-rotation-input', img.rotation);
+  }
+
+  // ─── Open editor for a mesh ───────────────────────────────────
+  async open(mesh, originalModelName, currentMaterialPreset = 'Wood') {
     this.activeMesh = mesh;
-    this.currentMaterialPreset = currentMaterialPreset; // Store the current preset
-    
-    // Check if this is already a custom model
-    const existingCustomModel = await this.modelManager.getModel(originalModelName);
-    const isCustomModel = existingCustomModel && existingCustomModel.type === 'custom';
-    
-    if (isCustomModel) {
-      // Editing existing custom model - don't ask for name
-      this.activeModelName = existingCustomModel.basedOn;
+    this.currentMaterialPreset = currentMaterialPreset;
+
+    const existingCustom = await this.modelManager.getModel(originalModelName);
+    const isCustom = existingCustom?.type === 'custom';
+
+    if (isCustom) {
+      this.activeModelName = existingCustom.basedOn;
       this.customModelName = originalModelName;
-      // Load the saved preset if it exists
-      this.currentMaterialPreset = existingCustomModel.materialPreset || currentMaterialPreset;
-      
-      // Load existing custom model data
-      if (existingCustomModel.overlayImages && existingCustomModel.overlayImages.length > 0) {
-        this.log(`Loading ${existingCustomModel.overlayImages.length} saved image(s) for: ${originalModelName}`);
-        
-        // Clear current overlay images
+      this.currentMaterialPreset = existingCustom.materialPreset || currentMaterialPreset;
+
+      if (existingCustom.overlayImages?.length > 0) {
         this.overlayImages = [];
         this.nextImageId = 1;
-        
-        // Reload saved images from base64 data
-        const loadPromises = existingCustomModel.overlayImages.map(savedImg => {
-          return new Promise((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-              const imageData = {
-                id: this.nextImageId++,
-                image: img,
-                name: savedImg.name,
-                position: { ...savedImg.position },
-                size: { ...savedImg.size },
-                rotation: savedImg.rotation,
-                aspectRatio: savedImg.aspectRatio
-              };
-              this.overlayImages.push(imageData);
-              resolve();
-            };
-            img.onerror = () => {
-              this.log(`Failed to load saved image: ${savedImg.name}`, true);
-              resolve();
-            };
-            img.src = savedImg.imageData;  // Load from base64 data URL
-          });
-        });
-        
-        // Wait for all images to load before rendering
-        await Promise.all(loadPromises);
-        this.log(`✓ Loaded ${this.overlayImages.length} image(s)`);
+        await Promise.all(existingCustom.overlayImages.map(saved => new Promise(res => {
+          const img = new Image();
+          img.onload = () => {
+            this.overlayImages.push({
+              id: this.nextImageId++,
+              image: img,
+              name: saved.name,
+              position: { ...saved.position },
+              size: { ...saved.size },
+              rotation: saved.rotation,
+              aspectRatio: saved.aspectRatio
+            });
+            res();
+          };
+          img.onerror = res;
+          img.src = saved.imageData;
+        })));
       }
     } else {
-      // Creating new custom model - ask for name
       const defaultName = `${originalModelName} (Custom)`;
-      const customName = prompt(`Enter a name for your custom model:`, defaultName);
-      
-      if (!customName) {
-        this.log('Custom model creation cancelled');
-        return;
-      }
-      
+      const customName = prompt('Enter a name for your custom model:', defaultName);
+      if (!customName) { this.log('Custom model creation cancelled'); return; }
       this.activeModelName = originalModelName;
       this.customModelName = customName;
       this.overlayImages = [];
       this.nextImageId = 1;
     }
-    
-    const container = document.getElementById('uv-editor');
-    container.classList.remove('hidden');
-    
-    // Update header with model name
-    document.querySelector('.model-name-display').textContent = `- ${this.customModelName}`;
-    
-    // Extract current texture if exists
-    if (mesh.material && mesh.material.map) {
-      this.baseTexture = mesh.material.map;
-    }
-    
-    // Reset position and use saved size
-    this.windowPosition = { x: 0, y: 0 };
-    container.style.transform = 'translate(-50%, -50%)';
-    container.style.width = `${this.windowSize.width}px`;
-    container.style.height = `${this.windowSize.height}px`;
-    
-    this.updateImagesList();
-    this.renderUVPreview();
-    this.log(`UV Editor opened for: ${this.customModelName}`);
+
+    if (mesh.material?.map) this.baseTexture = mesh.material.map;
+
+    // Reset live canvas texture reference for this session
+    this.liveCanvasTexture = null;
+
+    this._updateLayersList();
+    this._renderPreview();
+    this.log(`Design Editor active for: ${this.customModelName}`);
   }
 
-  hide() {
-    document.getElementById('uv-editor').classList.add('hidden');
-    this.log('UV Editor closed');
+  // ─── Keep old show() as alias for backward compat ────────────
+  show(mesh, modelName, preset) {
+    return this.open(mesh, modelName, preset);
   }
 
-  // ─────────────────────────────────────────────
-  // Save as Custom Model (Option C - No Baking!)
-  // ─────────────────────────────────────────────
-  async saveAsCustomModel() {
-    if (!this.customModelName) {
-      this.log('No custom model name set', true);
+  // ─── Image upload ─────────────────────────────────────────────
+  async handleImageUpload(file) {
+    if (!file) return;
+    this.log(`Validating: ${file.name}...`);
+    const validation = await this.verifier.validateTextureFile(file);
+    if (!validation.valid) {
+      this.log(`Invalid image: ${validation.errors.join(', ')}`, true);
+      alert(`Invalid image:\n${validation.errors.join('\n')}`);
       return;
     }
-    
-    // DON'T bake texture when saving - just save overlay data
-    // Texture will be composited in real-time when loading
-    
-    // Save current material properties
-    const materialProperties = {};
-    if (this.activeMesh && this.activeMesh.material) {
-      const mat = this.activeMesh.material;
-      materialProperties.metalness = mat.metalness !== undefined ? mat.metalness : 0.0;
-      materialProperties.roughness = mat.roughness !== undefined ? mat.roughness : 0.5;
-      materialProperties.opacity = mat.opacity !== undefined ? mat.opacity : 1.0;
-      materialProperties.transparent = mat.transparent !== undefined ? mat.transparent : false;
-      if (mat.color) {
-        materialProperties.color = {
-          r: mat.color.r,
-          g: mat.color.g,
-          b: mat.color.b
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const aspectRatio = img.width / img.height;
+        const imageData = {
+          id: this.nextImageId++,
+          image: img,
+          name: file.name,
+          position: { x: 50, y: 50 },
+          size: { w: 30, h: 30 / aspectRatio },
+          rotation: 0,
+          aspectRatio
+        };
+        this.overlayImages.push(imageData);
+        this._updateLayersList();
+        this._renderPreview();
+        this._renderComposite();
+        this.log(`Image added: ${file.name}`);
+
+        // Auto-select the new image
+        this.selectImage(imageData.id);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ─── Select an overlay image ──────────────────────────────────
+  selectImage(id) {
+    this.selectedImageId = id;
+    const img = this.overlayImages.find(i => i.id === id);
+    if (img) this._syncSlidersFromImage(img);
+    this._updateLayersList();
+    this._renderPreview();
+  }
+
+  // ─── Delete selected ──────────────────────────────────────────
+  deleteSelectedImage() {
+    if (!this.selectedImageId) return;
+    this.overlayImages = this.overlayImages.filter(i => i.id !== this.selectedImageId);
+    this.selectedImageId = null;
+    this._updateLayersList();
+    this._renderPreview();
+    this._renderComposite();
+    this.log('Image deleted');
+  }
+
+  // ─── Update the layer list in Tab 2 ──────────────────────────
+  _updateLayersList() {
+    const list = document.getElementById('image-layers-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (this.overlayImages.length === 0) {
+      list.innerHTML = '<p class="empty-message">No images added yet</p>';
+      return;
+    }
+    this.overlayImages.forEach((img, i) => {
+      const item = document.createElement('div');
+      item.className = 'image-layer-item' + (img.id === this.selectedImageId ? ' selected' : '');
+
+      // Thumbnail
+      const thumb = document.createElement('canvas');
+      thumb.width = 30; thumb.height = 30;
+      thumb.style.cssText = 'width:30px;height:30px;border:1px solid #555;border-radius:2px;margin-right:8px;flex-shrink:0;';
+      const tCtx = thumb.getContext('2d');
+      tCtx.drawImage(img.image, 0, 0, 30, 30);
+
+      const name = document.createElement('span');
+      name.className = 'image-layer-name';
+      name.textContent = `${i + 1}. ${img.name}`;
+
+      const del = document.createElement('button');
+      del.textContent = '✕';
+      del.className = 'button-medium';
+      del.style.marginLeft = 'auto';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.selectedImageId = img.id;
+        this.deleteSelectedImage();
+      });
+
+      item.appendChild(thumb);
+      item.appendChild(name);
+      item.appendChild(del);
+      item.addEventListener('click', () => this.selectImage(img.id));
+      list.appendChild(item);
+    });
+  }
+
+  // ─── UV Preview render ────────────────────────────────────────
+  _renderPreview() {
+    if (!this.uvCanvas || !this.uvCtx) return;
+    const ctx = this.uvCtx;
+    const { width: w, height: h } = this.uvCanvas;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Checkerboard background
+    const sq = 32;
+    for (let row = 0; row < h / sq; row++) {
+      for (let col = 0; col < w / sq; col++) {
+        ctx.fillStyle = (row + col) % 2 === 0 ? '#2a2a2a' : '#333';
+        ctx.fillRect(col * sq, row * sq, sq, sq);
+      }
+    }
+
+    // Base texture ghost
+    if (this.baseTexture?.image) {
+      ctx.globalAlpha = 0.25;
+      ctx.drawImage(this.baseTexture.image, 0, 0, w, h);
+      ctx.globalAlpha = 1;
+    }
+
+    // Grid
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 10; i++) {
+      const p = (i / 10);
+      ctx.beginPath(); ctx.moveTo(p * w, 0); ctx.lineTo(p * w, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, p * h); ctx.lineTo(w, p * h); ctx.stroke();
+    }
+
+    // Overlays
+    this.overlayImages.forEach(img => {
+      const x = (img.position.x / 100) * w;
+      const y = (img.position.y / 100) * h;
+      const iw = (img.size.w / 100) * w;
+      const ih = (img.size.h / 100) * h;
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate((img.rotation * Math.PI) / 180);
+      ctx.drawImage(img.image, -iw / 2, -ih / 2, iw, ih);
+
+      if (img.id === this.selectedImageId) {
+        ctx.strokeStyle = '#4CAF50';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-iw / 2, -ih / 2, iw, ih);
+        // Corner handles
+        ctx.fillStyle = '#4CAF50';
+        const hs = 7;
+        [[-iw/2, -ih/2], [iw/2, -ih/2], [-iw/2, ih/2], [iw/2, ih/2]].forEach(([cx, cy]) => {
+          ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
+        });
+      }
+      ctx.restore();
+    });
+  }
+
+  // ─── High-res composite render ────────────────────────────────
+  _renderComposite() {
+    const ctx = this.textureCtx;
+    const { width: w, height: h } = this.textureCanvas;
+    ctx.clearRect(0, 0, w, h);
+
+    if (this.baseTexture?.image) {
+      ctx.drawImage(this.baseTexture.image, 0, 0, w, h);
+    } else {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    this.overlayImages.forEach(img => {
+      const x = (img.position.x / 100) * w;
+      const y = (img.position.y / 100) * h;
+      const iw = (img.size.w / 100) * w;
+      const ih = (img.size.h / 100) * h;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate((img.rotation * Math.PI) / 180);
+      ctx.drawImage(img.image, -iw / 2, -ih / 2, iw, ih);
+      ctx.restore();
+    });
+
+    // If a live CanvasTexture is already applied to the mesh,
+    // mark it dirty so Three.js re-uploads to GPU on next frame.
+    if (this.liveCanvasTexture) {
+      this.liveCanvasTexture.needsUpdate = true;
+    }
+  }
+
+  // ─── Apply texture to 3D model ────────────────────────────────
+  applyTextureToModel() {
+    if (!this.activeMesh) { this.log('No model loaded', true); return; }
+
+    // Dispose any previously-applied live canvas texture (not the original base)
+    if (this.liveCanvasTexture) {
+      this.liveCanvasTexture.dispose();
+      this.liveCanvasTexture = null;
+    }
+
+    // Dispose previous map if it's not the original base preset texture
+    if (this.activeMesh.material?.map && this.activeMesh.material.map !== this.baseTexture) {
+      this.activeMesh.material.map.dispose();
+    }
+
+    // Create a new CanvasTexture backed by this.textureCanvas.
+    // Because it references the same canvas, every _renderComposite()
+    // call will update the pixel data and we just need needsUpdate = true.
+    const texture = new THREE.CanvasTexture(this.textureCanvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+
+    this.liveCanvasTexture = texture; // keep reference so _renderComposite can flag dirty
+
+    if (this.activeMesh.material) {
+      this.activeMesh.material.map = texture;
+      this.activeMesh.material.needsUpdate = true;
+    }
+
+    // Render composite now so the texture is populated
+    this._renderComposite();
+    this.log('✓ Design applied to model — drag images to reposition');
+  }
+
+  // ─── Reset ────────────────────────────────────────────────────
+  resetTexture() {
+    if (!confirm('Reset all designs? This cannot be undone.')) return;
+    this.overlayImages = [];
+    this.selectedImageId = null;
+    this._updateLayersList();
+    this._renderPreview();
+    this.log('Design reset');
+  }
+
+  // ─── Save as custom model ─────────────────────────────────────
+  async saveAsCustomModel() {
+    if (!this.customModelName) { this.log('No model name set', true); return; }
+
+    // Extract ALL physical material properties using MaterialManager
+    // (covers color, metalness, roughness, clearcoat, transmission, IOR,
+    //  sheen, emissive, specular, attenuation, envMapIntensity, etc.)
+    let materialProperties = {};
+    if (this.activeMesh?.material) {
+      if (this.materialManager) {
+        materialProperties = this.materialManager.extractProperties(this.activeMesh.material);
+      } else {
+        // Fallback: manual extraction of the full physical property set
+        const m = this.activeMesh.material;
+        materialProperties = {
+          color: m.color ? '#' + m.color.getHexString() : '#ffffff',
+          metalness: m.metalness ?? 0,
+          roughness: m.roughness ?? 0.5,
+          opacity: m.opacity ?? 1,
+          transparent: m.transparent ?? false,
+          clearcoat: m.clearcoat ?? 0,
+          clearcoatRoughness: m.clearcoatRoughness ?? 0.1,
+          specularIntensity: m.specularIntensity ?? 1,
+          specularColor: m.specularColor ? '#' + m.specularColor.getHexString() : '#ffffff',
+          transmission: m.transmission ?? 0,
+          ior: m.ior ?? 1.5,
+          thickness: m.thickness ?? 0,
+          attenuationDistance: m.attenuationDistance === Infinity ? 0 : (m.attenuationDistance ?? 0),
+          attenuationColor: m.attenuationColor ? '#' + m.attenuationColor.getHexString() : '#ffffff',
+          sheen: m.sheen ?? 0,
+          sheenRoughness: m.sheenRoughness ?? 1,
+          sheenColor: m.sheenColor ? '#' + m.sheenColor.getHexString() : '#ffffff',
+          emissive: m.emissive ? '#' + m.emissive.getHexString() : '#000000',
+          emissiveIntensity: m.emissiveIntensity ?? 0,
+          envMapIntensity: m.envMapIntensity ?? 1,
         };
       }
     }
-    
-    // Save the active material preset (Wood/Metal/Glass/Plastic)
-    const activePreset = this.currentMaterialPreset || 'Wood';
-    
-    this.log(`Saving material preset: ${activePreset}`);
-    
-    // Convert overlay images to serializable format with base64 data
-    const serializedImages = [];
-    for (const img of this.overlayImages) {
-      // Create a canvas to convert the image to base64
-      const canvas = document.createElement('canvas');
-      canvas.width = img.image.width;
-      canvas.height = img.image.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img.image, 0, 0);
-      const imageData = canvas.toDataURL('image/png');
-      
-      serializedImages.push({
+
+    const serializedImages = await Promise.all(this.overlayImages.map(async img => {
+      const c = document.createElement('canvas');
+      c.width = img.image.width; c.height = img.image.height;
+      c.getContext('2d').drawImage(img.image, 0, 0);
+      return {
         name: img.name,
         position: { ...img.position },
         size: { ...img.size },
         rotation: img.rotation,
         aspectRatio: img.aspectRatio,
-        imageData: imageData  // Store as base64
-      });
-    }
-    
-    // Save the custom model data (NO baked texture!)
-    const customModelData = {
+        imageData: c.toDataURL('image/png')
+      };
+    }));
+
+    await this.modelManager.saveCustomModel(this.customModelName, {
       basedOn: this.activeModelName,
       customName: this.customModelName,
       overlayImages: serializedImages,
-      materialProperties: materialProperties,
-      materialPreset: activePreset  // NEW: Save which preset (Wood/Metal/Glass/Plastic)
-      // NO texture property!
-      // NO textureCanvas property!
-    };
-    
-    // Store in modelManager
-    await this.modelManager.saveCustomModel(this.customModelName, customModelData);
-    
-    // Apply texture to current mesh for preview
-    this.renderCompositeTexture();
+      materialProperties,
+      materialPreset: this.currentMaterialPreset
+    });
+
+    // Apply composite texture to preview
+    this._renderComposite();
     const texture = new THREE.CanvasTexture(this.textureCanvas);
-    texture.encoding = THREE.sRGBEncoding;
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
-    
-    if (this.activeMesh.material) {
+    if (this.activeMesh?.material) {
       if (this.activeMesh.material.map && this.activeMesh.material.map !== this.baseTexture) {
         this.activeMesh.material.map.dispose();
       }
       this.activeMesh.material.map = texture;
       this.activeMesh.material.needsUpdate = true;
     }
-    
-    this.log(`✓ Custom model saved: ${this.customModelName}`);
-    
-    // Trigger model list update in main
-    if (window.updateModelSelect) {
-      window.updateModelSelect();
-    }
-    
-    // Switch to the new custom model in the dropdown
-    if (window.switchToModel) {
-      window.switchToModel(this.customModelName);
-    }
-    
-    // Close the editor
-    this.hide();
+
+    this.log(`✓ Saved: ${this.customModelName}`);
+    window.updateModelSelect?.();
+    window.switchToModel?.(this.customModelName);
   }
 
-  // ─────────────────────────────────────────────
-  // Handle Image Upload
-  // ─────────────────────────────────────────────
-  async handleImageUpload(file) {
-    if (!file) return;
-    
-    this.log(`Validating image: ${file.name}...`);
-    
-    // Verify the file
-    const validation = await this.verifier.validateTextureFile(file);
-    
-    if (!validation.valid) {
-      this.log(`Image validation failed: ${validation.errors.join(', ')}`, true);
-      alert(`Invalid image file:\n${validation.errors.join('\n')}`);
-      return;
-    }
-    
-    // Load the image
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        // Calculate aspect ratio
-        const aspectRatio = img.width / img.height;
-        
-        // Add image to overlay list
-        const imageData = {
-          id: this.nextImageId++,
-          image: img,
-          name: file.name,
-          position: { x: 50, y: 50 }, // Center (percentage)
-          size: { w: 30, h: 30 / aspectRatio },  // Maintain aspect ratio
-          rotation: 0,
-          aspectRatio: aspectRatio
-        };
-        
-        this.overlayImages.push(imageData);
-        this.updateImagesList();
-        this.renderUVPreview();
-        this.renderCompositeTexture();
-        
-        this.log(`Image added: ${file.name}`);
-      };
-      img.onerror = () => {
-        this.log(`Failed to load image: ${file.name}`, true);
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-    
-    // Clear the input
-    document.getElementById('texture-image-upload').value = '';
-  }
-
-  // ─────────────────────────────────────────────
-  // Update Images List UI
-  // ─────────────────────────────────────────────
-  updateImagesList() {
-    const listContainer = document.getElementById('image-layers-list');
-    listContainer.innerHTML = '';
-    
-    if (this.overlayImages.length === 0) {
-      listContainer.innerHTML = '<p class="empty-message">No images added yet</p>';
-      return;
-    }
-    
-    this.overlayImages.forEach((imgData, index) => {
-      const item = document.createElement('div');
-      item.className = 'image-layer-item';
-      if (imgData.id === this.selectedImageId) {
-        item.classList.add('selected');
-      }
-      
-      item.innerHTML = `
-        <span class="layer-number">${index + 1}</span>
-        <span class="layer-name">${imgData.name}</span>
-      `;
-      
-      item.addEventListener('click', () => {
-        this.selectImage(imgData.id);
-      });
-      
-      listContainer.appendChild(item);
-    });
-  }
-
-  // ─────────────────────────────────────────────
-  // Select an Image
-  // ─────────────────────────────────────────────
-  selectImage(id) {
-    this.selectedImageId = id;
-    const imgData = this.overlayImages.find(img => img.id === id);
-    
-    if (imgData) {
-      // Update controls
-      document.getElementById('img-pos-x').value = imgData.position.x;
-      document.getElementById('img-pos-y').value = imgData.position.y;
-      document.getElementById('img-width').value = imgData.size.w;
-      document.getElementById('img-height').value = imgData.size.h;
-      document.getElementById('img-rotation').value = imgData.rotation;
-      
-      // Update value displays
-      document.querySelectorAll('.selected-image-controls .control-value')[0].textContent = `${imgData.position.x.toFixed(1)}%`;
-      document.querySelectorAll('.selected-image-controls .control-value')[1].textContent = `${imgData.position.y.toFixed(1)}%`;
-      document.querySelectorAll('.selected-image-controls .control-value')[2].textContent = `${imgData.size.w.toFixed(1)}%`;
-      document.querySelectorAll('.selected-image-controls .control-value')[3].textContent = `${imgData.size.h.toFixed(1)}%`;
-      document.querySelectorAll('.selected-image-controls .control-value')[4].textContent = `${imgData.rotation}°`;
-      
-      // Show controls
-      document.querySelector('.selected-image-controls').classList.remove('hidden');
-    }
-    
-    this.updateImagesList();
-    this.renderUVPreview();
-  }
-
-  // ─────────────────────────────────────────────
-  // Handle Slider Changes
-  // ─────────────────────────────────────────────
-  handleSliderChange(sliderId, value) {
-    if (!this.selectedImageId) return;
-    
-    const imgData = this.overlayImages.find(img => img.id === this.selectedImageId);
-    if (!imgData) return;
-    
-    const numValue = parseFloat(value);
-    
-    switch(sliderId) {
-      case 'img-pos-x':
-        imgData.position.x = numValue;
-        document.querySelectorAll('.selected-image-controls .control-value')[0].textContent = `${numValue.toFixed(1)}%`;
-        break;
-      case 'img-pos-y':
-        imgData.position.y = numValue;
-        document.querySelectorAll('.selected-image-controls .control-value')[1].textContent = `${numValue.toFixed(1)}%`;
-        break;
-      case 'img-width':
-        imgData.size.w = numValue;
-        document.querySelectorAll('.selected-image-controls .control-value')[2].textContent = `${numValue.toFixed(1)}%`;
-        break;
-      case 'img-height':
-        imgData.size.h = numValue;
-        document.querySelectorAll('.selected-image-controls .control-value')[3].textContent = `${numValue.toFixed(1)}%`;
-        break;
-      case 'img-rotation':
-        imgData.rotation = numValue;
-        document.querySelectorAll('.selected-image-controls .control-value')[4].textContent = `${numValue}°`;
-        break;
-    }
-    
-    this.renderUVPreview();
-    this.renderCompositeTexture();
-  }
-
-  // ─────────────────────────────────────────────
-  // Canvas Mouse Interactions
-  // ─────────────────────────────────────────────
-  handleCanvasMouseDown(e) {
+  // ─── Canvas mouse interactions ────────────────────────────────
+  _onMouseDown(e) {
+    if (!this.uvCanvas) return;
     const rect = this.uvCanvas.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    
-    // Check if clicking on an image
+
     for (let i = this.overlayImages.length - 1; i >= 0; i--) {
       const img = this.overlayImages[i];
-      if (this.isPointInImage(x, y, img)) {
+      const hw = img.size.w / 2, hh = img.size.h / 2;
+      if (x >= img.position.x - hw && x <= img.position.x + hw &&
+          y >= img.position.y - hh && y <= img.position.y + hh) {
         this.selectImage(img.id);
         this.isDragging = true;
-        this.dragStart = { x, y };
-        this.dragOffset = {
-          x: x - img.position.x,
-          y: y - img.position.y
-        };
+        this.dragOffset = { x: x - img.position.x, y: y - img.position.y };
         break;
       }
     }
   }
 
-  handleCanvasMouseMove(e) {
-    if (!this.isDragging || !this.selectedImageId) return;
-    
+  _onMouseMove(e) {
+    if (!this.isDragging || !this.selectedImageId || !this.uvCanvas) return;
     const rect = this.uvCanvas.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    
-    const imgData = this.overlayImages.find(img => img.id === this.selectedImageId);
-    if (imgData) {
-      imgData.position.x = Math.max(0, Math.min(100, x - this.dragOffset.x));
-      imgData.position.y = Math.max(0, Math.min(100, y - this.dragOffset.y));
-      
-      // Update sliders
-      document.getElementById('img-pos-x').value = imgData.position.x;
-      document.getElementById('img-pos-y').value = imgData.position.y;
-      document.querySelectorAll('.selected-image-controls .control-value')[0].textContent = `${imgData.position.x.toFixed(1)}%`;
-      document.querySelectorAll('.selected-image-controls .control-value')[1].textContent = `${imgData.position.y.toFixed(1)}%`;
-      
-      this.renderUVPreview();
-      this.renderCompositeTexture();
-    }
-  }
 
-  handleCanvasMouseUp(e) {
-    this.isDragging = false;
-  }
-
-  // ─────────────────────────────────────────────
-  // Check if point is inside image bounds
-  // ─────────────────────────────────────────────
-  isPointInImage(x, y, imgData) {
-    const halfW = imgData.size.w / 2;
-    const halfH = imgData.size.h / 2;
-    
-    return x >= imgData.position.x - halfW &&
-           x <= imgData.position.x + halfW &&
-           y >= imgData.position.y - halfH &&
-           y <= imgData.position.y + halfH;
-  }
-
-  // ─────────────────────────────────────────────
-  // Render UV Preview
-  // ─────────────────────────────────────────────
-  renderUVPreview() {
-    const ctx = this.uvCtx;
-    const canvas = this.uvCanvas;
-    
-    // Clear canvas
-    ctx.fillStyle = '#2a2a2a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw grid
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 10; i++) {
-      const pos = (i / 10) * canvas.width;
-      ctx.beginPath();
-      ctx.moveTo(pos, 0);
-      ctx.lineTo(pos, canvas.height);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(0, pos);
-      ctx.lineTo(canvas.width, pos);
-      ctx.stroke();
+    const img = this.overlayImages.find(i => i.id === this.selectedImageId);
+    if (img) {
+      img.position.x = Math.max(0, Math.min(100, x - this.dragOffset.x));
+      img.position.y = Math.max(0, Math.min(100, y - this.dragOffset.y));
+      this._syncSlidersFromImage(img);
+      this._renderPreview();
+      this._renderComposite();
     }
-    
-    // Draw base texture if exists
-    if (this.baseTexture && this.baseTexture.image) {
-      ctx.globalAlpha = 0.3;
-      ctx.drawImage(this.baseTexture.image, 0, 0, canvas.width, canvas.height);
-      ctx.globalAlpha = 1.0;
-    }
-    
-    // Draw overlay images
-    this.overlayImages.forEach(imgData => {
-      const x = (imgData.position.x / 100) * canvas.width;
-      const y = (imgData.position.y / 100) * canvas.height;
-      const w = (imgData.size.w / 100) * canvas.width;
-      const h = (imgData.size.h / 100) * canvas.height;
-      
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate((imgData.rotation * Math.PI) / 180);
-      
-      // Draw image
-      ctx.drawImage(imgData.image, -w/2, -h/2, w, h);
-      
-      // Draw selection border if selected
-      if (imgData.id === this.selectedImageId) {
-        ctx.strokeStyle = '#4CAF50';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(-w/2, -h/2, w, h);
-        
-        // Draw corner handles
-        ctx.fillStyle = '#4CAF50';
-        const handleSize = 6;
-        ctx.fillRect(-w/2 - handleSize/2, -h/2 - handleSize/2, handleSize, handleSize);
-        ctx.fillRect(w/2 - handleSize/2, -h/2 - handleSize/2, handleSize, handleSize);
-        ctx.fillRect(-w/2 - handleSize/2, h/2 - handleSize/2, handleSize, handleSize);
-        ctx.fillRect(w/2 - handleSize/2, h/2 - handleSize/2, handleSize, handleSize);
-      }
-      
-      ctx.restore();
-    });
-  }
-
-  // ─────────────────────────────────────────────
-  // Render Composite Texture (High Resolution)
-  // ─────────────────────────────────────────────
-  renderCompositeTexture() {
-    const ctx = this.textureCtx;
-    const canvas = this.textureCanvas;
-    
-    // Clear
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw base texture
-    if (this.baseTexture && this.baseTexture.image) {
-      ctx.drawImage(this.baseTexture.image, 0, 0, canvas.width, canvas.height);
-    } else {
-      // Default white background
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    
-    // Draw overlay images
-    this.overlayImages.forEach(imgData => {
-      const x = (imgData.position.x / 100) * canvas.width;
-      const y = (imgData.position.y / 100) * canvas.height;
-      const w = (imgData.size.w / 100) * canvas.width;
-      const h = (imgData.size.h / 100) * canvas.height;
-      
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate((imgData.rotation * Math.PI) / 180);
-      ctx.drawImage(imgData.image, -w/2, -h/2, w, h);
-      ctx.restore();
-    });
-  }
-
-  // ─────────────────────────────────────────────
-  // Apply Texture to Model
-  // ─────────────────────────────────────────────
-  applyTextureToModel() {
-    if (!this.activeMesh) {
-      this.log('No active mesh to apply texture to', true);
-      return;
-    }
-    
-    // Render final composite
-    this.renderCompositeTexture();
-    
-    // Create texture from canvas
-    const texture = new THREE.CanvasTexture(this.textureCanvas);
-    texture.encoding = THREE.sRGBEncoding;
-    texture.needsUpdate = true;
-    
-    // Apply to material
-    if (this.activeMesh.material) {
-      // Dispose old texture
-      if (this.activeMesh.material.map && this.activeMesh.material.map !== this.baseTexture) {
-        this.activeMesh.material.map.dispose();
-      }
-      
-      this.activeMesh.material.map = texture;
-      this.activeMesh.material.needsUpdate = true;
-    }
-    
-    this.log('✓ Texture applied to model');
-  }
-
-  // ─────────────────────────────────────────────
-  // Reset Texture
-  // ─────────────────────────────────────────────
-  resetTexture() {
-    if (confirm('Reset all images? This cannot be undone.')) {
-      this.overlayImages = [];
-      this.selectedImageId = null;
-      this.updateImagesList();
-      this.renderUVPreview();
-      document.querySelector('.selected-image-controls').classList.add('hidden');
-      this.log('Texture reset');
-    }
-  }
-
-  // ─────────────────────────────────────────────
-  // Delete Selected Image
-  // ─────────────────────────────────────────────
-  deleteSelectedImage() {
-    if (!this.selectedImageId) return;
-    
-    this.overlayImages = this.overlayImages.filter(img => img.id !== this.selectedImageId);
-    this.selectedImageId = null;
-    this.updateImagesList();
-    this.renderUVPreview();
-    this.renderCompositeTexture();
-    document.querySelector('.selected-image-controls').classList.add('hidden');
-    this.log('Image deleted');
   }
 }

@@ -1,5 +1,4 @@
-
-// MAIN.JS - Application Orchestrator (Refactored)
+// MAIN.JS - Application Orchestrator
 
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -11,7 +10,6 @@ import { RendererManager } from './core/Renderer.js';
 import { CameraManager } from './core/Camera.js';
 
 import { MaterialManager } from './materials/MaterialManager.js';
-
 import { ModelManager } from './models/ModelManager.js';
 
 import { UVEditor } from './ui/UVEditor.js';
@@ -32,24 +30,20 @@ import { initScenes, loadScene, getSceneNames } from './scenes.js';
 // INITIALIZATION
 //═══════════════════════════════════════════════════════════════
 
-const container = document.querySelector('.scene-view-placeholder');
+const container = document.getElementById('scene-view-placeholder');
 
-// Initialize core systems
 const sceneManager = new SceneManager();
 const rendererManager = new RendererManager(container);
 const cameraManager = new CameraManager(container);
 cameraManager.setupControls(rendererManager.getDomElement());
 
-// Initialize managers
 const materialManager = new MaterialManager();
 const modelManager = new ModelManager(log);
-const uvEditor = new UVEditor(rendererManager, log, modelManager);
+const uvEditor = new UVEditor(rendererManager, log, modelManager, materialManager);
 
-// Three.js loaders
 const objLoader = new OBJLoader();
 const mtlLoader = new MTLLoader();
 
-// Application state
 let activeModel = null;
 let activeMesh = null;
 
@@ -57,26 +51,22 @@ let activeMesh = null;
 // SCENE SETUP
 //═══════════════════════════════════════════════════════════════
 
-log('RenderDeck initialized. Drag & drop OBJ files to add models!');
+log('RenderDeck initialized.');
 
-// Load HDR environments
 initScenes((name, texture) => {
   sceneManager.setEnvironment(texture);
-  sceneManager.getScene().background = texture;  // Also set as visible background
-  log(`Scene set to: ${name}`);
+  sceneManager.getScene().background = texture;
+  log(`Scene: ${name}`);
 });
 
-// Register built-in models
 registerBuiltInModels();
 
 function registerBuiltInModels() {
-  Object.entries(MODEL_PATHS).forEach(([key, config]) => {
+  Object.entries(MODEL_PATHS).forEach(([key, cfg]) => {
     if (key !== 'BASE_PATH') {
-      // Convert PLAIN_MUG to "Plain Mug"
       const displayName = key.split('_')
-        .map(word => word.charAt(0) + word.slice(1).toLowerCase())
-        .join(' ');
-      modelManager.registerModel(displayName, config);
+        .map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+      modelManager.registerModel(displayName, cfg);
     }
   });
 }
@@ -85,19 +75,10 @@ function registerBuiltInModels() {
 // MODEL LOADING
 //═══════════════════════════════════════════════════════════════
 
-/**
- * Main model loading function
- * @param {string} name - Model name
- */
 async function loadModel(name) {
   const modelData = await modelManager.getModel(name);
-  if (!modelData) {
-    logError(`Model not found: ${name}`);
-    return;
-  }
-
+  if (!modelData) { logError(`Model not found: ${name}`); return; }
   cleanupActiveModel();
-
   if (modelData.type === 'custom') {
     await loadCustomModel(name, modelData);
   } else {
@@ -105,192 +86,98 @@ async function loadModel(name) {
   }
 }
 
-/**
- * Load custom model (with saved textures)
- */
 async function loadCustomModel(name, modelData) {
   log(`Loading custom model: ${name}…`);
-  log(`Material preset: ${modelData.materialPreset || 'NOT FOUND'}`);
-  log(`Overlay images: ${modelData.overlayImages ? modelData.overlayImages.length : 'NONE'}`);
+  const loadingPaths = await modelManager.getLoadingPaths(modelData.basedOn);
+  if (!loadingPaths) { logError(`Base model not found: ${modelData.basedOn}`); return; }
 
-  const baseModelName = modelData.basedOn;
-  const loadingPaths = await modelManager.getLoadingPaths(baseModelName);
-  
-  if (!loadingPaths) {
-    logError(`Base model not found: ${baseModelName}`);
-    return;
-  }
+  const objPath = loadingPaths.type === 'path'
+    ? loadingPaths.basePath + loadingPaths.obj : loadingPaths.obj;
 
-  const objPath = loadingPaths.type === 'path' 
-    ? loadingPaths.basePath + loadingPaths.obj
-    : loadingPaths.obj;
+  objLoader.load(objPath, (object) => {
+    object.traverse((child) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.userData.isCustomModel = true;
+      if (!activeMesh) activeMesh = child;
 
-  objLoader.load(
-    objPath,
-    (object) => {
+      const presetName = modelData.materialPreset || 'Wood';
+      const material = materialManager.getPreset(presetName);
+      materialManager.applyEnvironment(material, sceneManager.getScene().environment);
+      child.material = material;
+
+      if (modelData.materialProperties) {
+        materialManager.applySavedProperties(child.material, modelData.materialProperties);
+      }
+
+      if (child.material && modelData.overlayImages?.length > 0) {
+        TextureCompositor.createCompositeTexture(child.material.map, modelData.overlayImages)
+          .then(tex => {
+            if (child.material.map) child.material.map.dispose();
+            child.material.map = tex;
+            child.material.needsUpdate = true;
+          })
+          .catch(err => logError(`Composite failed: ${err.message}`));
+      }
+    });
+
+    sceneManager.add(object);
+    activeModel = object;
+    centerAndFrameModel(object, cameraManager);
+    if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+    log(`${name} loaded.`);
+  },
+  (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
+  (err) => logError(`OBJ load failed: ${err}`));
+}
+
+async function loadRegularModel(name, modelData) {
+  log(`Loading ${name}…`);
+  const loadingPaths = await modelManager.getLoadingPaths(name);
+  if (!loadingPaths) { logError(`No paths for ${name}`); return; }
+
+  function loadOBJ(materials = null) {
+    if (materials) objLoader.setMaterials(materials);
+    const objPath = loadingPaths.type === 'path'
+      ? loadingPaths.basePath + loadingPaths.obj : loadingPaths.obj;
+
+    objLoader.load(objPath, (object) => {
       object.traverse((child) => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-          child.userData.isCustomModel = true;
-          
-          if (!activeMesh) {
-            activeMesh = child;
-          }
-
-          // Apply material preset
-          const presetName = modelData.materialPreset || 'Wood';
-          const material = materialManager.getPreset(presetName);
-          materialManager.applyEnvironment(material, sceneManager.getScene().environment);
-          child.material = material;
-          log(`Applied material preset: ${presetName}`);
-
-          // Apply saved material properties (opacity, etc.)
-          if (modelData.materialProperties) {
-            materialManager.applySavedProperties(child.material, modelData.materialProperties);
-            if (modelData.materialProperties.opacity !== undefined) {
-              log(`Applied saved opacity: ${modelData.materialProperties.opacity}`);
-            }
-          }
-
-          // Create and apply composite texture
-          if (child.material && modelData.overlayImages && modelData.overlayImages.length > 0) {
-            log('Starting composite texture creation...');
-            const presetTexture = child.material.map;
-            log(`Preset texture exists: ${!!presetTexture}, has image: ${!!(presetTexture && presetTexture.image)}`);
-
-            TextureCompositor.createCompositeTexture(presetTexture, modelData.overlayImages)
-              .then(compositeTexture => {
-                log('Composite texture created successfully!');
-                if (child.material.map) {
-                  child.material.map.dispose();
-                }
-                child.material.map = compositeTexture;
-                child.material.needsUpdate = true;
-                log(`✓ Custom texture applied to ${name} (${modelData.overlayImages.length} overlays)`);
-              })
-              .catch(err => {
-                logError(`Failed to create composite texture: ${err.message}`);
-              });
-          } else {
-            log(`Skipping composite: material=${!!child.material}, overlays=${modelData.overlayImages ? modelData.overlayImages.length : 0}`);
-          }
-        }
+        if (!child.isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        if (!activeMesh) activeMesh = child;
       });
-
       sceneManager.add(object);
       activeModel = object;
       centerAndFrameModel(object, cameraManager);
-      log(`${name} loaded with custom texture.`);
+      applyMaterialPreset('Wood');
+      log(`${name} loaded.`);
     },
-    (xhr) => {
-      if (xhr.lengthComputable && xhr.total > 0) {
-        const percent = ((xhr.loaded / xhr.total) * 100).toFixed(0);
-        log(`Loading OBJ… ${percent}%`);
-      }
-    },
-    (err) => {
-      logError(`Failed to load OBJ ${name}: ${err}`);
-    }
-  );
-}
-
-/**
- * Load regular model (built-in or uploaded)
- */
-async function loadRegularModel(name, modelData) {
-  log(`Loading ${name}…`);
-
-  const loadingPaths = await modelManager.getLoadingPaths(name);
-  if (!loadingPaths) {
-    logError(`Could not get loading paths for ${name}`);
-    return;
+    (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
+    (err) => logError(`OBJ load failed: ${err}`));
   }
 
-  function loadOBJ(materials = null) {
-    if (materials) {
-      objLoader.setMaterials(materials);
-    }
-
-    const objPath = loadingPaths.type === 'path' 
-      ? loadingPaths.basePath + loadingPaths.obj
-      : loadingPaths.obj;
-
-    objLoader.load(
-      objPath,
-      (object) => {
-        object.traverse((child) => {
-          if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            
-            if (!activeMesh) {
-              activeMesh = child;
-            }
-          }
-        });
-
-        sceneManager.add(object);
-        activeModel = object;
-        centerAndFrameModel(object, cameraManager);
-        applyMaterialPreset(document.getElementById('texture-select').value);
-        log(`${name} loaded successfully.`);
-      },
-      (xhr) => {
-        if (xhr.lengthComputable && xhr.total > 0) {
-          const percent = ((xhr.loaded / xhr.total) * 100).toFixed(0);
-          log(`Loading OBJ… ${percent}%`);
-        }
-      },
-      (err) => {
-        logError(`Failed to load OBJ ${name}: ${err}`);
-      }
-    );
-  }
-
-  // Load MTL first if exists
   if (loadingPaths.mtl) {
     const mtlPath = loadingPaths.type === 'path'
-      ? loadingPaths.basePath + loadingPaths.mtl
-      : loadingPaths.mtl;
-
+      ? loadingPaths.basePath + loadingPaths.mtl : loadingPaths.mtl;
     if (loadingPaths.type === 'path') {
       mtlLoader.setPath(loadingPaths.basePath);
-      mtlLoader.load(
-        loadingPaths.mtl,
-        (materials) => {
-          materials.preload();
-          log(`Materials loaded for ${name}.`);
-          loadOBJ(materials);
-        },
+      mtlLoader.load(loadingPaths.mtl,
+        (m) => { m.preload(); loadOBJ(m); },
         undefined,
-        (err) => {
-          logWarn(`MTL load failed, loading OBJ without materials: ${err}`);
-          loadOBJ();
-        }
-      );
+        () => loadOBJ());
     } else {
-      fetch(mtlPath)
-        .then(response => response.text())
-        .then(mtlText => {
-          const materials = mtlLoader.parse(mtlText, '');
-          materials.preload();
-          log(`Materials loaded for ${name}.`);
-          loadOBJ(materials);
-        })
-        .catch(err => {
-          logWarn(`MTL load failed: ${err}`);
-          loadOBJ();
-        });
+      fetch(mtlPath).then(r => r.text())
+        .then(t => { const m = mtlLoader.parse(t, ''); m.preload(); loadOBJ(m); })
+        .catch(() => loadOBJ());
     }
   } else {
     loadOBJ();
   }
 }
 
-/**
- * Clean up active model
- */
 function cleanupActiveModel() {
   if (activeModel) {
     sceneManager.remove(activeModel);
@@ -304,59 +191,196 @@ function cleanupActiveModel() {
 // MATERIAL MANAGEMENT
 //═══════════════════════════════════════════════════════════════
 
-/**
- * Apply material preset to active model
- * @param {string} presetName - Material preset name
- */
 function applyMaterialPreset(presetName) {
   if (!activeModel) return;
-
   activeModel.traverse((child) => {
-    if (child.isMesh) {
-      // Skip custom models - they manage their own materials
-      if (child.userData && child.userData.isCustomModel) {
-        // Just update environment map
-        if (sceneManager.getScene().environment && child.material) {
-          child.material.envMap = sceneManager.getScene().environment;
-          child.material.envMapIntensity = 1.0;
-          child.material.needsUpdate = true;
-        }
-        return;
+    if (!child.isMesh) return;
+    if (child.userData?.isCustomModel) {
+      if (sceneManager.getScene().environment && child.material) {
+        child.material.envMap = sceneManager.getScene().environment;
+        child.material.needsUpdate = true;
       }
-
-      // Regular models - apply preset
-      const material = materialManager.getPreset(presetName);
-      materialManager.applyEnvironment(material, sceneManager.getScene().environment);
-      
-      // Dispose old material
-      if (child.material) {
-        materialManager.dispose(child.material);
-      }
-      
-      child.material = material;
-      child.material.needsUpdate = true;
+      return;
     }
+    const material = materialManager.getPreset(presetName);
+    materialManager.applyEnvironment(material, sceneManager.getScene().environment);
+    if (child.material) materialManager.dispose(child.material);
+    child.material = material;
+    if (!activeMesh) activeMesh = child;
+    child.material.needsUpdate = true;
   });
-
-  log(`Texture preset applied: ${presetName}`);
+  if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+  log(`Preset: ${presetName}`);
 }
 
-/**
- * Update material property on active mesh
- * @param {string} property - Property name (opacity, roughness, metalness)
- * @param {number} value - New value
- */
 function updateMaterialProperty(property, value) {
-  if (!activeMesh || !activeMesh.material) return;
-
-  activeMesh.material[property] = value;
-  
-  // Enable transparency if opacity < 1
-  if (property === 'opacity') {
-    activeMesh.material.transparent = value < 1.0;
+  if (!activeMesh?.material) return;
+  const mat = activeMesh.material;
+  const colorProps = ['color', 'specularColor', 'sheenColor', 'emissive', 'attenuationColor'];
+  if (colorProps.includes(property)) {
+    mat[property].set(value);
+  } else {
+    mat[property] = value;
   }
-  
-  activeMesh.material.needsUpdate = true;
+  if (property === 'opacity') mat.transparent = value < 1.0;
+  if (property === 'transmission') mat.transparent = value > 0;
+  mat.needsUpdate = true;
+}
+
+//═══════════════════════════════════════════════════════════════
+// CAMERA CONTROLS
+//═══════════════════════════════════════════════════════════════
+
+// Sensor sizes in mm (width × height)
+const SENSOR_SIZES = {
+  fullframe: { w: 36, h: 24 },
+  'aps-c':   { w: 23.5, h: 15.6 },
+  mft:       { w: 17.3, h: 13 }
+};
+
+// State for camera settings
+const camState = {
+  type: 'perspective',
+  focalLength: 50,
+  sensorKey: 'fullframe',
+  near: 0.1,
+  far: 2000,
+  exposure: 1.0,
+  toneMapping: 'aces',
+  dofEnabled: false,
+  dofFocus: 5.0,
+  dofAperture: 25,  // 1/aperture used by BokehPass
+};
+
+function computeFOV(focalLength, sensorKey) {
+  const sensor = SENSOR_SIZES[sensorKey] || SENSOR_SIZES.fullframe;
+  // Vertical FOV: 2 * atan(sensorHeight / (2 * focalLength))
+  return 2 * Math.atan(sensor.h / (2 * focalLength)) * (180 / Math.PI);
+}
+
+function applyCameraSettings() {
+  const cam = cameraManager.getCamera();
+  const renderer = rendererManager.getRenderer();
+
+  if (camState.type === 'perspective') {
+    cam.fov = computeFOV(camState.focalLength, camState.sensorKey);
+    cam.near = camState.near;
+    cam.far = camState.far;
+    cam.updateProjectionMatrix();
+  }
+
+  // Tone mapping
+  const TM = {
+    none: THREE.NoToneMapping,
+    aces: THREE.ACESFilmicToneMapping,
+    reinhard: THREE.ReinhardToneMapping,
+    cineon: THREE.CineonToneMapping,
+  };
+  renderer.toneMapping = TM[camState.toneMapping] ?? THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = camState.exposure;
+}
+
+function setupCameraUI() {
+  // Helpers: link slider ↔ input
+  const link = (sliderId, inputId, callback) => {
+    const s = document.getElementById(sliderId);
+    const i = document.getElementById(inputId);
+    if (!s || !i) return;
+    s.addEventListener('input', () => { i.value = s.value; callback(parseFloat(s.value)); });
+    i.addEventListener('input', () => {
+      const v = parseFloat(i.value);
+      if (!isNaN(v)) { s.value = v; callback(v); }
+    });
+  };
+
+  // Camera type
+  const typeSelect = document.getElementById('camera-type-select');
+  if (typeSelect) {
+    typeSelect.addEventListener('change', (e) => {
+      camState.type = e.target.value;
+      // Orthographic camera swap would need deeper integration;
+      // for now we just update FOV approach or set very high FOV
+      if (camState.type === 'orthographic') {
+        cameraManager.getCamera().fov = 1; // Near-orthographic
+      } else {
+        cameraManager.getCamera().fov = computeFOV(camState.focalLength, camState.sensorKey);
+      }
+      cameraManager.getCamera().updateProjectionMatrix();
+    });
+  }
+
+  // Lens / focal length
+  const lensSelect = document.getElementById('lens-mm-select');
+  if (lensSelect) {
+    lensSelect.addEventListener('change', (e) => {
+      camState.focalLength = parseFloat(e.target.value);
+      applyCameraSettings();
+      log(`Lens: ${camState.focalLength}mm`);
+    });
+  }
+
+  // Film / sensor gauge
+  const filmSelect = document.getElementById('film-gauge-select');
+  if (filmSelect) {
+    filmSelect.addEventListener('change', (e) => {
+      camState.sensorKey = e.target.value;
+      applyCameraSettings();
+      log(`Sensor: ${e.target.value}`);
+    });
+  }
+
+  // Near clip
+  link('near-slider', 'near-input', (v) => {
+    camState.near = v;
+    cameraManager.getCamera().near = v;
+    cameraManager.getCamera().updateProjectionMatrix();
+  });
+
+  // Far clip
+  link('far-slider', 'far-input', (v) => {
+    camState.far = v;
+    cameraManager.getCamera().far = v;
+    cameraManager.getCamera().updateProjectionMatrix();
+  });
+
+  // Tone mapping
+  const toneSelect = document.getElementById('tone-mapping-select');
+  if (toneSelect) {
+    toneSelect.addEventListener('change', (e) => {
+      camState.toneMapping = e.target.value;
+      applyCameraSettings();
+    });
+  }
+
+  // Exposure
+  link('exposure-slider', 'exposure-input', (v) => {
+    camState.exposure = v;
+    rendererManager.getRenderer().toneMappingExposure = v;
+  });
+
+  // DOF toggle
+  const dofToggle = document.getElementById('cam-toggle-dof');
+  if (dofToggle) {
+    dofToggle.addEventListener('change', (e) => {
+      camState.dofEnabled = e.target.checked;
+      log(`DOF: ${camState.dofEnabled ? 'on' : 'off'}`);
+      // Full DOF (BokehPass) would require EffectComposer integration in Renderer
+      // Noted for future post-processing implementation
+    });
+  }
+
+  // DOF focus distance
+  link('cam-dof-focus-slider', 'cam-dof-focus-input', (v) => {
+    camState.dofFocus = v;
+  });
+
+  // DOF aperture/strength
+  link('cam-dof-strength-slider', 'cam-dof-strength-input', (v) => {
+    camState.dofAperture = v;
+  });
+
+  // Apply initial camera settings from UI defaults
+  applyCameraSettings();
 }
 
 //═══════════════════════════════════════════════════════════════
@@ -364,206 +388,239 @@ function updateMaterialProperty(property, value) {
 //═══════════════════════════════════════════════════════════════
 
 const controls = new ControlsManager({
-  onModelChange: (name) => {
-    loadModel(name);
-  },
-  
-  onMaterialChange: (preset) => {
-    applyMaterialPreset(preset);
-  },
-  
+  onModelChange: (name) => loadModel(name),
+
+  onMaterialChange: (preset) => applyMaterialPreset(preset),
+
   onSceneChange: (sceneName) => {
     loadScene(sceneName, (name, texture) => {
       sceneManager.setEnvironment(texture);
-      // Also set as background so you can see it!
       sceneManager.getScene().background = texture;
-      log(`Scene changed to: ${name}`);
-      
-      // Update environment map on active model
+      log(`Scene: ${name}`);
       if (activeModel) {
         activeModel.traverse((child) => {
           if (child.isMesh && child.material) {
             child.material.envMap = texture;
-            child.material.envMapIntensity = 1.0;
             child.material.needsUpdate = true;
           }
         });
       }
     });
   },
-  
-  onOpacityChange: (value) => {
-    updateMaterialProperty('opacity', value);
+
+  onMaterialPropertyChange: (property, value) => {
+    updateMaterialProperty(property, value);
   },
-  
-  onRoughnessChange: (value) => {
-    updateMaterialProperty('roughness', value);
+
+  onApplyDesign: () => {
+    if (!activeMesh) { logError('No model loaded'); return; }
+    uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
   },
-  
-  onMetalnessChange: (value) => {
-    updateMaterialProperty('metalness', value);
+
+  onResetTexture: () => {
+    uvEditor.resetTexture();
   },
-  
-  onEditTexture: () => {
-    if (!activeMesh) {
-      logError('No model loaded to edit');
-      alert('Please load a model first before editing textures.');
-      return;
-    }
-    const currentModelName = document.getElementById('model-select').value;
-    const currentPreset = document.getElementById('texture-select').value;
-    uvEditor.show(activeMesh, currentModelName, currentPreset);
-  },
-  
+
   onUploadModel: async (files) => {
-    if (!files || files.length === 0) return;
-    
-    log(`Processing ${files.length} uploaded file(s)...`);
-    
+    if (!files?.length) return;
     const result = await modelManager.addModelFromFiles(files);
-    
     if (result.success) {
       logSuccess(`Model added: ${result.name}`);
-      if (result.warnings.length > 0) {
-        result.warnings.forEach(w => logWarn(w));
-      }
+      result.warnings.forEach(w => logWarn(w));
       await updateModelList();
       loadModel(result.name);
     } else {
-      logError('Failed to add model:');
       result.errors.forEach(e => logError(e));
     }
   },
-  
+
   onExport: async () => {
-    const modelName = document.getElementById('model-select').value;
-    if (!modelName) {
-      logError('No model selected');
-      return;
-    }
-    
-    const modelData = await modelManager.getModel(modelName);
-    if (modelData && modelData.type === 'custom') {
-      const success = await modelManager.exportCustomModel(modelName);
-      if (success) {
-        logSuccess(`Exported: ${modelName}`);
-      }
+    const name = getCurrentModelName();
+    if (!name) { logError('No model selected'); return; }
+    const data = await modelManager.getModel(name);
+    if (data?.type === 'custom') {
+      await modelManager.exportCustomModel(name);
+      logSuccess(`Exported: ${name}`);
     } else {
       logError('Only custom models can be exported');
     }
   },
-  
+
   onImport: async (files) => {
-    if (!files || files.length === 0) return;
-    
+    if (!files?.length) return;
     const file = files[0];
     if (!file.name.endsWith('.json') && !file.name.endsWith('.renderdeck.json')) {
       logError('Please select a .json or .renderdeck.json file');
       return;
     }
-    
     const result = await modelManager.importCustomModel(file);
     if (result.success) {
       logSuccess(`Imported: ${result.name}`);
-      updateModelList();
-      // Load the imported model
+      await updateModelList();
       loadModel(result.name);
     } else {
       logError(`Import failed: ${result.error}`);
     }
   },
-  
+
   onClearCustom: async () => {
-    if (!confirm('Clear all custom models? This cannot be undone!')) {
-      return;
-    }
-    
+    if (!confirm('Clear all custom models? This cannot be undone!')) return;
     const result = await modelManager.clearAllCustomModels();
     if (result.success) {
       logSuccess(`Cleared ${result.count} custom model(s)`);
-      updateModelList();
-      // Load first built-in model
-      const firstModel = Object.keys(MODEL_PATHS).find(k => k !== 'BASE_PATH');
-      if (firstModel) {
-        const displayName = firstModel.split('_')
-          .map(word => word.charAt(0) + word.slice(1).toLowerCase())
-          .join(' ');
-        loadModel(displayName);
+      await updateModelList();
+
+      // Reset the material preset dropdown to its placeholder
+      const matSelect = document.getElementById('material-select');
+      if (matSelect) matSelect.selectedIndex = 0;
+
+      // Load the first built-in model — this applies the Wood default preset
+      const first = Object.keys(MODEL_PATHS).find(k => k !== 'BASE_PATH');
+      if (first) {
+        const name = first.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+        // loadModel → loadRegularModel → applyMaterialPreset('Wood') → syncMaterialUI
+        // so the UI will fully reset to Wood defaults automatically
+        loadModel(name);
       }
-    } else {
-      logError('Failed to clear custom models');
     }
-  }
+  },
 });
 
-/**
- * Update model dropdown list
- */
+function getCurrentModelName() {
+  return document.getElementById('object-select')?.value
+    || document.getElementById('model-select')?.value || '';
+}
+
+function getCurrentMaterialPreset() {
+  return document.getElementById('material-select')?.value || 'Wood';
+}
+
 async function updateModelList() {
   const categories = await modelManager.getModelNamesByCategory();
   controls.updateModelSelect(categories);
 }
 
-/**
- * Update scene dropdown list
- */
 function updateSceneList() {
-  const sceneNames = getSceneNames();
-  controls.updateSceneSelect(sceneNames);
+  controls.updateSceneSelect(getSceneNames());
 }
 
-// Make updateModelSelect available globally (for UVEditor)
-window.updateModelSelect = updateModelList;
+function updateMaterialPresetList() {
+  controls.updateMaterialPresetSelect(materialManager.getPresetNames());
+}
 
-// Make switchToModel available globally (for UVEditor)
+window.updateModelSelect = updateModelList;
 window.switchToModel = (name) => {
-  const modelSelect = document.getElementById('model-select');
-  if (modelSelect) {
-    modelSelect.value = name;
-    loadModel(name);
-  }
+  const sel = document.getElementById('object-select') || document.getElementById('model-select');
+  if (sel) { sel.value = name; loadModel(name); }
 };
 
 //═══════════════════════════════════════════════════════════════
-// DRAG & DROP FILE UPLOAD
+// DRAG & DROP
 //═══════════════════════════════════════════════════════════════
 
 container.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  container.style.borderColor = '#4CAF50';
+  e.preventDefault(); e.stopPropagation();
+  container.classList.add('drag-over');
 });
-
 container.addEventListener('dragleave', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  container.style.borderColor = '';
+  e.preventDefault(); e.stopPropagation();
+  container.classList.remove('drag-over');
 });
-
 container.addEventListener('drop', async (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  container.style.borderColor = '';
-
+  e.preventDefault(); e.stopPropagation();
+  container.classList.remove('drag-over');
   const files = Array.from(e.dataTransfer.files);
-  if (files.length === 0) return;
-
-  log(`Processing ${files.length} dropped file(s)...`);
-
+  if (!files.length) return;
   const result = await modelManager.addModelFromFiles(files);
-  
   if (result.success) {
     logSuccess(`Model added: ${result.name}`);
-    if (result.warnings.length > 0) {
-      result.warnings.forEach(w => logWarn(w));
-    }
+    result.warnings.forEach(w => logWarn(w));
     await updateModelList();
     loadModel(result.name);
   } else {
-    logError('Failed to add model:');
     result.errors.forEach(e => logError(e));
   }
 });
+
+
+//═══════════════════════════════════════════════════════════════
+// POST-PROCESSING UI (Setting 6)
+//═══════════════════════════════════════════════════════════════
+
+function setupPostFXUI() {
+  const rm = rendererManager; // shorthand
+
+  // Helper: link slider <-> number input
+  const link = (sliderId, inputId, callback) => {
+    const s = document.getElementById(sliderId);
+    const i = document.getElementById(inputId);
+    if (!s || !i) return;
+    s.addEventListener('input', () => { i.value = s.value; callback(parseFloat(s.value)); });
+    i.addEventListener('input', () => {
+      const v = parseFloat(i.value);
+      if (!isNaN(v)) { s.value = v; callback(v); }
+    });
+  };
+
+  // ── Global post-FX toggle (Setting 5 "Enable Post Effects") ──
+  const globalToggle = document.getElementById('preview-toggle-postfx');
+  if (globalToggle) {
+    globalToggle.addEventListener('change', (e) => {
+      rm.setPostFXEnabled(e.target.checked);
+    });
+    // Default: off until user enables or picks a preset
+    rm.setPostFXEnabled(false);
+  }
+
+  // ── Preset select ─────────────────────────────────────────────
+  const presetSelect = document.getElementById('postfx-preset-select');
+  if (presetSelect) {
+    presetSelect.addEventListener('change', (e) => {
+      rm.applyPreset(e.target.value);
+      // Also sync the global toggle in Setting 5
+      if (globalToggle) globalToggle.checked = rm.postFXEnabled;
+    });
+  }
+
+  // ── Individual effect toggles ─────────────────────────────────
+  const bloomToggle = document.getElementById('post-toggle-bloom');
+  if (bloomToggle) {
+    bloomToggle.addEventListener('change', (e) => rm.setBloom(e.target.checked));
+  }
+
+  const vignetteToggle = document.getElementById('post-toggle-vignette');
+  if (vignetteToggle) {
+    vignetteToggle.addEventListener('change', (e) => rm.setVignette(e.target.checked));
+  }
+
+  const aoToggle = document.getElementById('post-toggle-ao');
+  if (aoToggle) {
+    aoToggle.addEventListener('change', (e) => rm.setSSAO(e.target.checked));
+  }
+
+  const motionBlurToggle = document.getElementById('post-toggle-motionblur');
+  if (motionBlurToggle) {
+    motionBlurToggle.addEventListener('change', (e) => rm.setMotionBlur(e.target.checked));
+  }
+
+  // ── Bloom controls ────────────────────────────────────────────
+  link('bloom-strength-slider', 'bloom-strength-input', v => rm.setBloomStrength(v));
+  link('bloom-radius-slider',   'bloom-radius-input',   v => rm.setBloomRadius(v));
+  link('bloom-threshold-slider','bloom-threshold-input',v => rm.setBloomThreshold(v));
+
+  // ── Vignette controls ─────────────────────────────────────────
+  link('vignette-intensity-slider', 'vignette-intensity-input', v => rm.setVignetteIntensity(v));
+  link('vignette-softness-slider',  'vignette-softness-input',  v => rm.setVignetteSoftness(v));
+
+  // ── AO controls ───────────────────────────────────────────────
+  link('ao-intensity-slider', 'ao-intensity-input', v => rm.setSSAOIntensity(v));
+  link('ao-radius-slider',    'ao-radius-input',    v => rm.setSSAORadius(v));
+
+  // ── Motion blur controls ──────────────────────────────────────
+  link('motionblur-strength-slider', 'motionblur-strength-input', v => rm.setMotionBlurStrength(v));
+
+  log('Post-processing UI ready.');
+}
 
 //═══════════════════════════════════════════════════════════════
 // ANIMATION LOOP
@@ -574,24 +631,24 @@ function animate() {
   cameraManager.update();
   rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
 }
-
 animate();
 
 //═══════════════════════════════════════════════════════════════
 // INITIAL SETUP
 //═══════════════════════════════════════════════════════════════
 
-// Update model list
 updateModelList();
-
-// Update scene list
 updateSceneList();
+updateMaterialPresetList();
+setupCameraUI();
+setupPostFXUI();
 
-// Load first model
+// Apply initial renderer tone mapping
+rendererManager.getRenderer().toneMapping = THREE.ACESFilmicToneMapping;
+rendererManager.getRenderer().toneMappingExposure = 1.0;
+
 const firstModel = Object.keys(MODEL_PATHS).find(k => k !== 'BASE_PATH');
 if (firstModel) {
-  const displayName = firstModel.split('_')
-    .map(word => word.charAt(0) + word.slice(1).toLowerCase())
-    .join(' ');
-  setTimeout(() => loadModel(displayName), 100);
+  const name = firstModel.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+  setTimeout(() => loadModel(name), 100);
 }
