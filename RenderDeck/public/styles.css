@@ -327,7 +327,7 @@ hr {
 
   background: #1a1a1a;      /* unchecked fill */
   border: 1px solid #444;   /* unchecked border */
-  border-radius: 8px;       /* KEEP your radius */
+  border-radius: 8px;       
 
   display: inline-grid;
   place-content: center;
@@ -338,16 +338,15 @@ hr {
     transform 0.08s ease;
 }
 
-/* INNER ENABLED INDICATOR (this is what changes size) */
 .toggle-row input[type="checkbox"]::after {
   content: "";
-  width: 10px;              /* â† ENABLED SIZE (change this freely) */
+  width: 10px;              
   height: 10px;
 
-  background: #e9e9e9;      /* KEEP your enabled color */
-  border-radius: 6px;       /* slightly smaller than outer */
+  background: #e9e9e9;      
+  border-radius: 6px;       
 
-  transform: scale(0);      /* hidden when unchecked */
+  transform: scale(0);      
   transition: transform 0.12s ease;
 }
 
@@ -389,7 +388,6 @@ hr {
   border-color: #444;
 }
 
-/* OPTIONAL: RADIO SUPPORT (same behavior, circular) ------------ */
 .toggle-row input[type="radio"] {
   -webkit-appearance: none;
   appearance: none;
@@ -449,8 +447,7 @@ hr {
   cursor: not-allowed;
 }
 
-/* SLIDERS STYLE ------------------------------------------ */
-/* ALIGN LABEL + VALUE FIELD (REPLACES slider-readout usage) ------------------ */
+
 .control-row{
   display: flex;
   align-items: center;
@@ -524,10 +521,10 @@ hr {
   appearance: none;
 
   width: 100%;
-  box-sizing: border-box;   /* <-- key fix */
+  box-sizing: border-box;   
 
   height: 14px;
-  padding: 0 4px;           /* half your 8px thumb */
+  padding: 0 4px;          
   margin: 0 0 6px 0;
 
   background: transparent;
@@ -539,24 +536,24 @@ hr {
   height: 3px;                 /* thinner line */
   background: #777;            /* <-- LIGHT GREY LINE */
   border-radius: 2px;
-  border: none;                /* cleaner, no dark outline */
+  border: none;                
 }
 
 /* THUMB (THE CIRCLE) */
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none;
 
-  width: 10px;                  /* <-- SMALLER CIRCLE */
+  width: 10px;                  
   height: 10px;
   border-radius: 50%;
 
   background: #e0e0e0;
   border: 1px solid #111;
 
-  margin-top: -2.5px;          /* centers on 3px track */
+  margin-top: -2.5px;         
 
   box-shadow:
-    0 0 0 1px #000;             /* crisp edge, no glow */
+    0 0 0 1px #000;             
 
   transition:
     background-color 0.15s ease,
@@ -583,9 +580,6 @@ hr {
   opacity: 0.4;
   cursor: not-allowed;
 }
-
-/* SLIDERS STYLE (FireFox WebKit) ------------------------------------------ */
-/* TRACK (THE LINE) */
 .slider::-moz-range-track {
   height: 3px;
   background: #777;     /* light grey line */
@@ -619,18 +613,12 @@ hr {
   transform: scale(1.2);
 }
 
-/* In Firefox the default â€œfilled lower trackâ€ can show as blue.
-   This forces it to match your grey line. */
 .slider::-moz-range-progress {
   height: 3px;
   background: #777;
   border-radius: 2px;
 }
 
-
-/* ============================================================ */
-/* TEXTURE EDITOR STYLES - Integrated with existing design     */
-/* ============================================================ */
 
 /* Model name display in header */
 .model-name-display {
@@ -843,10 +831,9 @@ hr {
   margin: 0;
 
   border: 1px solid #444;
-  border-radius: 4px;              /* ← match your inputs */
+  border-radius: 4px;            
   cursor: pointer;
 
-  /* match your UI gradient language */
   background:
     linear-gradient(
       to bottom,
@@ -877,9 +864,6 @@ hr {
   outline:none;
   border-color:#888;
 }
-/* ================================================================ */
-/* RENDERDECK ADDITIONS                                             */
-/* ================================================================ */
 
 /* 16:9 Scene Viewport */
 #scene-view-placeholder,
