@@ -16,7 +16,6 @@ export class UVEditor {
       maxImageDimension: 8192
     });
 
-    // State
     this.activeMesh = null;
     this.activeModelName = null;
     this.customModelName = null;
@@ -26,17 +25,14 @@ export class UVEditor {
     this.selectedImageId = null;
     this.currentMaterialPreset = 'Wood';
 
-    // High-res composite canvas (offscreen)
     this.textureCanvas = document.createElement('canvas');
     this.textureCanvas.width = 2048;
     this.textureCanvas.height = 2048;
     this.textureCtx = this.textureCanvas.getContext('2d');
 
-    // Preview canvas lives in Tab 2 HTML (#design-preview-canvas)
     this.uvCanvas = null;
     this.uvCtx = null;
 
-    // Drag state on preview canvas
     this.isDragging = false;
     this.dragOffset = { x: 0, y: 0 };
 
@@ -144,8 +140,14 @@ export class UVEditor {
     set('design-rotation-slider', 'design-rotation-input', img.rotation);
   }
 
-  // ─── Open editor for a mesh ───────────────────────────────────
+  // ─── Open editor for a mesh (called when model loads) ─────────
+  // This sets up the editor for a model - NO prompting for names here
   async open(mesh, originalModelName, currentMaterialPreset = 'Wood') {
+    // If we're already editing this same model, don't reset anything
+    if (this.activeMesh === mesh && this.activeModelName === originalModelName) {
+      return;
+    }
+
     this.activeMesh = mesh;
     this.currentMaterialPreset = currentMaterialPreset;
 
@@ -153,6 +155,7 @@ export class UVEditor {
     const isCustom = existingCustom?.type === 'custom';
 
     if (isCustom) {
+      // Loading an existing custom model - restore its overlays
       this.activeModelName = existingCustom.basedOn;
       this.customModelName = originalModelName;
       this.currentMaterialPreset = existingCustom.materialPreset || currentMaterialPreset;
@@ -179,11 +182,9 @@ export class UVEditor {
         })));
       }
     } else {
-      const defaultName = `${originalModelName} (Custom)`;
-      const customName = prompt('Enter a name for your custom model:', defaultName);
-      if (!customName) { this.log('Custom model creation cancelled'); return; }
+
       this.activeModelName = originalModelName;
-      this.customModelName = customName;
+      this.customModelName = null; // Will be set on save
       this.overlayImages = [];
       this.nextImageId = 1;
     }
@@ -195,7 +196,7 @@ export class UVEditor {
 
     this._updateLayersList();
     this._renderPreview();
-    this.log(`Design Editor active for: ${this.customModelName}`);
+    this.log(`Design Editor active for: ${this.customModelName || this.activeModelName}`);
   }
 
   // ─── Keep old show() as alias for backward compat ────────────
@@ -389,16 +390,26 @@ export class UVEditor {
       ctx.restore();
     });
 
-    // If a live CanvasTexture is already applied to the mesh,
-    // mark it dirty so Three.js re-uploads to GPU on next frame.
+
     if (this.liveCanvasTexture) {
       this.liveCanvasTexture.needsUpdate = true;
     }
   }
 
-  // ─── Apply texture to 3D model ────────────────────────────────
+
   applyTextureToModel() {
     if (!this.activeMesh) { this.log('No model loaded', true); return; }
+
+    // Make sure we have the base texture from the current material
+    if (!this.baseTexture && this.activeMesh.material?.map) {
+      this.baseTexture = this.activeMesh.material.map;
+    }
+
+    // If no overlays, no need to create composite - just keep original
+    if (this.overlayImages.length === 0) {
+      this.log('No overlays to apply');
+      return;
+    }
 
     // Dispose any previously-applied live canvas texture (not the original base)
     if (this.liveCanvasTexture) {
@@ -411,26 +422,40 @@ export class UVEditor {
       this.activeMesh.material.map.dispose();
     }
 
-    // Create a new CanvasTexture backed by this.textureCanvas.
-    // Because it references the same canvas, every _renderComposite()
-    // call will update the pixel data and we just need needsUpdate = true.
+    // Render the composite (draws base texture + overlays)
+    this._renderComposite();
+
+    // Create a new CanvasTexture
     const texture = new THREE.CanvasTexture(this.textureCanvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
+    
+    // Copy encoding/colorSpace from base texture to match exactly
+    if (this.baseTexture) {
+      if (this.baseTexture.colorSpace !== undefined) {
+        texture.colorSpace = this.baseTexture.colorSpace;
+      }
+      if (this.baseTexture.encoding !== undefined) {
+        texture.encoding = this.baseTexture.encoding;
+      }
+      texture.flipY = this.baseTexture.flipY;
+      texture.wrapS = this.baseTexture.wrapS;
+      texture.wrapT = this.baseTexture.wrapT;
+      texture.magFilter = this.baseTexture.magFilter;
+      texture.minFilter = this.baseTexture.minFilter;
+      texture.anisotropy = this.baseTexture.anisotropy;
+    }
     texture.needsUpdate = true;
 
-    this.liveCanvasTexture = texture; // keep reference so _renderComposite can flag dirty
+    this.liveCanvasTexture = texture;
 
     if (this.activeMesh.material) {
       this.activeMesh.material.map = texture;
       this.activeMesh.material.needsUpdate = true;
     }
 
-    // Render composite now so the texture is populated
-    this._renderComposite();
     this.log('✓ Design applied to model — drag images to reposition');
   }
 
-  // ─── Reset ────────────────────────────────────────────────────
+
   resetTexture() {
     if (!confirm('Reset all designs? This cannot be undone.')) return;
     this.overlayImages = [];
@@ -440,19 +465,25 @@ export class UVEditor {
     this.log('Design reset');
   }
 
-  // ─── Save as custom model ─────────────────────────────────────
-  async saveAsCustomModel() {
-    if (!this.customModelName) { this.log('No model name set', true); return; }
 
-    // Extract ALL physical material properties using MaterialManager
-    // (covers color, metalness, roughness, clearcoat, transmission, IOR,
-    //  sheen, emissive, specular, attenuation, envMapIntensity, etc.)
+  async saveAsCustomModel() {
+    if (!this.customModelName) {
+      const defaultName = `${this.activeModelName} (Custom)`;
+      const customName = prompt('Enter a name for your custom model:', defaultName);
+      if (!customName) { 
+        this.log('Save cancelled'); 
+        return; 
+      }
+      this.customModelName = customName;
+    }
+
+
     let materialProperties = {};
     if (this.activeMesh?.material) {
       if (this.materialManager) {
         materialProperties = this.materialManager.extractProperties(this.activeMesh.material);
       } else {
-        // Fallback: manual extraction of the full physical property set
+
         const m = this.activeMesh.material;
         materialProperties = {
           color: m.color ? '#' + m.color.getHexString() : '#ffffff',
@@ -501,10 +532,24 @@ export class UVEditor {
       materialPreset: this.currentMaterialPreset
     });
 
-    // Apply composite texture to preview
     this._renderComposite();
     const texture = new THREE.CanvasTexture(this.textureCanvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
+    
+    if (THREE.SRGBColorSpace) {
+      texture.colorSpace = THREE.SRGBColorSpace;
+    }
+    if (THREE.sRGBEncoding) {
+      texture.encoding = THREE.sRGBEncoding;
+    }
+    
+    if (this.baseTexture) {
+      texture.flipY = this.baseTexture.flipY;
+      texture.wrapS = this.baseTexture.wrapS;
+      texture.wrapT = this.baseTexture.wrapT;
+      texture.magFilter = this.baseTexture.magFilter;
+      texture.minFilter = this.baseTexture.minFilter;
+      texture.anisotropy = this.baseTexture.anisotropy;
+    }
     texture.needsUpdate = true;
     if (this.activeMesh?.material) {
       if (this.activeMesh.material.map && this.activeMesh.material.map !== this.baseTexture) {
@@ -519,7 +564,6 @@ export class UVEditor {
     window.switchToModel?.(this.customModelName);
   }
 
-  // ─── Canvas mouse interactions ────────────────────────────────
   _onMouseDown(e) {
     if (!this.uvCanvas) return;
     const rect = this.uvCanvas.getBoundingClientRect();
