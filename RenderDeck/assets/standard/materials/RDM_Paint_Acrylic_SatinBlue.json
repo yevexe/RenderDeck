@@ -1,0 +1,15 @@
+{
+  "id": "paint.acrylic.satin.blue",
+  "displayName": "Satin Paint (Blue)",
+  "category": "Paint",
+  "workflow": "MeshPhysicalMaterial",
+  "params": {
+    "color": "#2b5aa0",
+    "metalness": 0.0,
+    "roughness": 0.42,
+    "ior": 1.5,
+    "clearcoat": 0.35,
+    "clearcoatRoughness": 0.18
+  },
+  "notes": "Uniform coated paint; satin finish works well without flake textures."
+}
