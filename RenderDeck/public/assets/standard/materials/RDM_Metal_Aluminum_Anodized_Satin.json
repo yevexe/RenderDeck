@@ -1,0 +1,14 @@
+{
+  "id": "metal.aluminum.anodized.satin",
+  "displayName": "Anodized Aluminum (Satin)",
+  "category": "Metal",
+  "workflow": "MeshPhysicalMaterial",
+  "params": {
+    "color": "#b8bcc2",
+    "metalness": 1.0,
+    "roughness": 0.35,
+    "ior": 1.5,
+    "clearcoat": 0.0
+  },
+  "notes": "Uniform satin metal; avoids 'brushed' cues that typically need anisotropy/textures."
+}
