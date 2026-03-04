@@ -9,7 +9,7 @@ export const CONFIG = {
     PREVIEW_SIZE: 512,
     MAX_SIZE: 4096,
     MIN_SIZE: 512,
-    ENCODING: 'sRGBEncoding'
+    COLOR_SPACE: 'SRGBColorSpace'
   },
 
   // Material Defaults
@@ -37,7 +37,7 @@ export const CONFIG = {
   // File Upload Limits
   UPLOAD: {
     MAX_IMAGE_SIZE: 20 * 1024 * 1024, // 20MB
-    MAX_MODEL_SIZE: 50 * 1024 * 1024, // 50MB
+    MAX_MODEL_SIZE: 200 * 1024 * 1024, // 200MB
     MAX_IMAGE_DIMENSION: 8192,
     ALLOWED_IMAGE_FORMATS: ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
     ALLOWED_MODEL_FORMATS: ['.obj', '.mtl']
@@ -88,7 +88,7 @@ export const CONFIG = {
   }
 };
 
-// Feature Flags (turn features on/off easily)
+// Feature Flags
 export const FEATURES = {
   ENABLE_DEBUG_LOGGING: true,
   ENABLE_CUSTOM_MODELS: true,
@@ -98,26 +98,72 @@ export const FEATURES = {
   ENABLE_LAYER_ORDERING: false
 };
 
-// Model Registry Paths
-export const MODEL_PATHS = {
-  BASE_PATH: './models/',
-  PLAIN_MUG: {
-    folder: 'plain_mug',
-    obj: 'mug.obj',
-    mtl: null  
+// Standard 3D Objects
+// label must stay stable — IndexedDB custom models store basedOn: label
+export const STANDARD_OBJECTS = [
+  {
+    id: 'plain_mug',
+    label: 'Plain Mug',
+    objPath: './assets/standard/objects/RDO_Standard_Mug.obj',
+    mtlPath: null
   },
-  SIMPLE_PEN: {
-    folder: 'simple_pen',
-    obj: 'pen.obj',
-    mtl: 'pen.mtl'  
-  }
-};
+  {
+    id: 'simple_pen',
+    label: 'Simple Pen',
+    objPath: './assets/standard/objects/RDO_Standard_Pen.obj',
+    mtlPath: './assets/standard/materials/RDM_Standard_Pen.mtl'
+  },
+];
 
-// Scene Environment Paths
-export const SCENE_PATHS = {
-  BASE_PATH: './scenes/',
-  ENVIRONMENTS: {
-    'Studio Kominka': 'studio_kominka_02_2k.hdr',
-    'Lebombo': 'lebombo_2k.hdr'
-  }
-};
+// Standard HDR Environments
+export const STANDARD_ENVIRONMENTS = [
+  {
+    id: 'studio_kominka',
+    label: 'Studio Kominka',
+    path: './assets/standard/environments/RDE_StudioKominka_2k.hdr'
+  },
+  {
+    id: 'lebombo',
+    label: 'Lebombo',
+    path: './assets/standard/environments/RDE_Lebombo_2K.hdr'
+  },
+];
+
+// Standard Material Presets (JSON files)
+export const STANDARD_MATERIALS = [
+  {
+    id: 'RDM_Ceramic_Porcelain_GlossyWhite',
+    label: 'Ceramic — Porcelain Glossy White',
+    path: './assets/standard/materials/RDM_Ceramic_Porcelain_GlossyWhite.json'
+  },
+  {
+    id: 'RDM_Glass_Clear_IOR150',
+    label: 'Glass — Clear (IOR 1.50)',
+    path: './assets/standard/materials/RDM_Glass_Clear_IOR150.json'
+  },
+  {
+    id: 'RDM_Metal_Aluminum_Anodized_Satin',
+    label: 'Metal — Aluminum Anodized Satin',
+    path: './assets/standard/materials/RDM_Metal_Aluminum_Anodized_Satin.json'
+  },
+  {
+    id: 'RDM_Metal_Chrome_Mirror',
+    label: 'Metal — Chrome Mirror',
+    path: './assets/standard/materials/RDM_Metal_Chrome_Mirror.json'
+  },
+  {
+    id: 'RDM_Metal_Gold_Polished',
+    label: 'Metal — Gold Polished',
+    path: './assets/standard/materials/RDM_Metal_Gold_Polished.json'
+  },
+  {
+    id: 'RDM_Paint_Acrylic_SatinBlue',
+    label: 'Paint — Acrylic Satin Blue',
+    path: './assets/standard/materials/RDM_Paint_Acrylic_SatinBlue.json'
+  },
+  {
+    id: 'RDM_Rubber_Silicone_MatteBlack',
+    label: 'Rubber — Silicone Matte Black',
+    path: './assets/standard/materials/RDM_Rubber_Silicone_MatteBlack.json'
+  },
+];

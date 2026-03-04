@@ -12,14 +12,19 @@ import {
 
 export class MaterialManager {
   constructor() {
-    this.presets = this.initializePresets();
+    // JSON-based presets loaded from asset files — shown in UI dropdown
+    this.presets = {};
+    this._jsonPresetNames = [];
+
+    // Legacy procedural presets — not shown in UI but used as fallback
+    // (custom models may reference old preset names like 'Wood')
+    this._legacyPresets = this._initializeLegacyPresets();
+
     this.cache = new Map();
   }
 
-  /**
-   * Initialize all material presets using MeshPhysicalMaterial
-   */
-  initializePresets() {
+  /** Legacy procedural presets kept for backward compatibility. */
+  _initializeLegacyPresets() {
     return {
       Wood: () => this.createMaterial('Wood', {
         map: createWoodTexture(),
@@ -57,6 +62,32 @@ export class MaterialManager {
   }
 
   /**
+   * Fetch and register JSON material presets from the STANDARD_MATERIALS config array.
+   * Call once after construction (async). Replaces the UI preset list.
+   * @param {Array} standardMaterials - from config.js STANDARD_MATERIALS
+   */
+  async loadPresetsFromManifest(standardMaterials) {
+    this.presets = {};
+    this._jsonPresetNames = [];
+    for (const mat of standardMaterials) {
+      if (!mat.path || !mat.label) continue;
+      if (!mat.path.endsWith('.json')) continue; // skip MTL entries
+      try {
+        const res = await fetch(`./${mat.path}`);
+        if (!res.ok) { console.warn(`MaterialManager: HTTP ${res.status} for ${mat.label}`); continue; }
+        const json = await res.json();
+        const params = json.params || {};
+        const label = mat.label;
+        // Factory: each getPreset() call returns a fresh material instance
+        this.presets[label] = () => this.createMaterial(label, params);
+        this._jsonPresetNames.push(label);
+      } catch (e) {
+        console.warn(`MaterialManager: failed to load preset "${mat.label}"`, e);
+      }
+    }
+  }
+
+  /**
    * Create a MeshPhysicalMaterial with full defaults
    */
   createMaterial(name, properties) {
@@ -85,19 +116,22 @@ export class MaterialManager {
     });
   }
 
-  /**
-   * Get a material preset by name
-   */
+  /** Get a material preset by name. Falls back to legacy presets (Wood/Metal/...) then to first JSON preset. */
   getPreset(name) {
-    if (!this.presets[name]) {
-      console.warn(`Material preset "${name}" not found, using Wood`);
-      return this.presets.Wood();
-    }
-    return this.presets[name]();
+    if (this.presets[name]) return this.presets[name]();
+    if (this._legacyPresets[name]) return this._legacyPresets[name]();
+    // Last resort: first JSON preset or legacy Wood
+    const first = this._jsonPresetNames[0];
+    if (first) { console.warn(`Preset "${name}" not found, using "${first}"`); return this.presets[first](); }
+    console.warn(`Preset "${name}" not found, using Wood`);
+    return this._legacyPresets.Wood();
   }
 
+  /** Returns JSON-loaded preset names if available, else legacy names. */
   getPresetNames() {
-    return Object.keys(this.presets);
+    return this._jsonPresetNames.length > 0
+      ? [...this._jsonPresetNames]
+      : Object.keys(this._legacyPresets);
   }
 
   addPreset(name, generator) {

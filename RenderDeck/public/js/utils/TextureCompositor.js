@@ -42,7 +42,7 @@ export class TextureCompositor {
         // If no overlays, return immediately
         if (!overlayImages || overlayImages.length === 0) {
           const texture = new THREE.CanvasTexture(canvas);
-          texture.encoding = THREE[CONFIG.TEXTURE.ENCODING];
+          texture.colorSpace = THREE[CONFIG.TEXTURE.COLOR_SPACE] ?? THREE.SRGBColorSpace;
           texture.needsUpdate = true;
           resolve(texture);
           return;
@@ -90,7 +90,7 @@ export class TextureCompositor {
             
             // Create texture
             const texture = new THREE.CanvasTexture(canvas);
-            texture.encoding = THREE[CONFIG.TEXTURE.ENCODING];
+            texture.colorSpace = THREE[CONFIG.TEXTURE.COLOR_SPACE] ?? THREE.SRGBColorSpace;
             texture.needsUpdate = true;
             
             resolve(texture);
