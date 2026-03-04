@@ -8,9 +8,9 @@ import * as THREE from 'three';
  * @param {THREE.Object3D} object - Object to frame
  * @param {CameraManager} cameraManager - Camera manager instance
  */
-export function centerAndFrameModel(object, cameraManager) {
+export function centerAndFrameModel(object, cameraManager, options = {}) {
   if (!object || !cameraManager) return;
-  cameraManager.frameObject(object);
+  cameraManager.frameObject(object, options);
 }
 
 /**

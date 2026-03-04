@@ -119,6 +119,7 @@ export class ControlsManager {
 
     this.setupEventListeners();
     this.initColorSwatches();
+    this._setupChannelPickers();
   }
 
   // ─── Color swatch init ────────────────────────────────────────
@@ -207,6 +208,11 @@ export class ControlsManager {
     // ── Material preset ──────────────────────────────────────────
     if (el.materialSelect) {
       el.materialSelect.addEventListener('change', e => cb.onMaterialChange?.(e.target.value));
+    }
+
+    // ── Part selector (for multi-mesh models)
+    if (el.objectPartSelect) {
+      el.objectPartSelect.addEventListener('change', e => cb.onPartChange?.(e.target.value));
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -334,6 +340,74 @@ export class ControlsManager {
     }
   }
 
+  // ─── Channel texture pickers ─────────────────────────────────
+  // Dynamically inserts a 22×22 canvas thumbnail next to each channel's first control.
+  // Click opens a file picker; right-click clears the texture.
+  _setupChannelPickers() {
+    // [mapKey, insertBeforeElementId]
+    const CHANNELS = [
+      ['map',              'basecolor-picker'],
+      ['specularColorMap', 'speccolor-picker'],
+      ['clearcoatMap',     'clearcoat-input'],
+      ['alphaMap',         'opacity-input'],
+      ['transmissionMap',  'transmission-input'],
+      ['sheenColorMap',    'sheencolor-picker'],
+      ['emissiveMap',      'emissivecolor-picker'],
+    ];
+
+    CHANNELS.forEach(([mapKey, refId]) => {
+      const refEl = document.getElementById(refId);
+      if (!refEl || !refEl.parentElement) return;
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = '.png,.jpg,.jpeg,.webp';
+      fileInput.style.display = 'none';
+      document.body.appendChild(fileInput);
+
+      const thumb = document.createElement('canvas');
+      thumb.className = 'channel-tex-thumb';
+      thumb.width = 22; thumb.height = 22;
+      thumb.title = 'Click: upload texture  •  Right-click: clear';
+
+      thumb.addEventListener('click', () => fileInput.click());
+      thumb.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        this.callbacks.onChannelTextureClear?.(mapKey);
+      });
+      fileInput.addEventListener('change', e => {
+        if (e.target.files[0]) this.callbacks.onChannelTextureUpload?.(mapKey, e.target.files[0]);
+        e.target.value = '';
+      });
+
+      refEl.parentElement.insertBefore(thumb, refEl);
+      this.elements[`texThumb_${mapKey}`] = thumb;
+
+      // Initial empty state
+      this._drawChannelThumb(thumb, null);
+    });
+  }
+
+  /** Draw a texture preview into a channel thumbnail canvas, or show empty state. */
+  _drawChannelThumb(canvas, texture) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (texture?.image) {
+      ctx.drawImage(texture.image, 0, 0, canvas.width, canvas.height);
+      canvas.classList.add('has-texture');
+    } else {
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+      const m = canvas.width / 2;
+      ctx.beginPath();
+      ctx.moveTo(m, 4); ctx.lineTo(m, canvas.height - 4);
+      ctx.moveTo(4, m); ctx.lineTo(canvas.width - 4, m);
+      ctx.stroke();
+      canvas.classList.remove('has-texture');
+    }
+  }
+
   // ─── Public methods ───────────────────────────────────────────
 
   /**
@@ -343,10 +417,18 @@ export class ControlsManager {
     [this.elements.objectSelect, this.elements.modelSelect,
      this.elements.objectSelectMaterialTab].forEach(sel => {
       if (!sel) return;
-      // Keep any placeholder disabled options
-      const placeholders = Array.from(sel.options).filter(o => o.disabled);
-      sel.innerHTML = '';
-      placeholders.forEach(p => sel.appendChild(p));
+      sel.innerHTML = ''; // always rebuild from scratch
+
+      // if there are no models at all, show a single placeholder option
+      if (!categories.builtin?.length && !categories.custom?.length && !categories.uploaded?.length) {
+        const o = document.createElement('option');
+        o.value = '';
+        o.textContent = '-- no models available --';
+        o.disabled = true;
+        o.selected = true;
+        sel.appendChild(o);
+        return;
+      }
 
       if (categories.builtin?.length) {
         const g = document.createElement('optgroup');
@@ -415,6 +497,37 @@ export class ControlsManager {
   }
 
   /**
+   * Populate the object part dropdown used when a model contains multiple meshes.
+   * @param {string[]} partNames
+   */
+  updatePartSelect(partNames) {
+    const sel = this.elements.objectPartSelect;
+    if (!sel) return;
+    sel.innerHTML = '';
+
+    if (!partNames || partNames.length <= 1) {
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = '-- single mesh --';
+      o.disabled = true;
+      o.selected = true;
+      sel.appendChild(o);
+      sel.disabled = true;
+      return;
+    }
+
+    sel.disabled = false;
+    partNames.forEach(name => {
+      const o = document.createElement('option');
+      o.value = name;
+      o.textContent = name;
+      sel.appendChild(o);
+    });
+    // leave first part selected by default
+    sel.selectedIndex = 0;
+  }
+
+  /**
    * Sync all Setting 3 controls to reflect the current material state.
    * Call this whenever a new model is loaded or a preset is applied.
    */
@@ -451,6 +564,13 @@ export class ControlsManager {
     setColor(el.emissivecolorPicker, el.emissiveHex, el.emissiveSwatch, material.emissive);
     set(el.emissiveintSlider, el.emissiveintInput, material.emissiveIntensity);
     set(el.envintSlider, el.envintInput, material.envMapIntensity);
+
+    // Update channel texture thumbnails
+    const CHANNEL_KEYS = ['map', 'specularColorMap', 'clearcoatMap', 'alphaMap', 'transmissionMap', 'sheenColorMap', 'emissiveMap'];
+    CHANNEL_KEYS.forEach(ch => {
+      const thumb = el[`texThumb_${ch}`];
+      if (thumb) this._drawChannelThumb(thumb, material[ch] ?? null);
+    });
   }
 
   setEnabled(elementName, enabled) {

@@ -17,7 +17,7 @@ function createTextureFromCanvas(drawFn, size = 256) {
   const ctx = canvas.getContext('2d');
   drawFn(ctx, size);
   const tex = new THREE.CanvasTexture(canvas);
-  tex.encoding = THREE[CONFIG.TEXTURE.ENCODING];
+  tex.colorSpace = THREE[CONFIG.TEXTURE.COLOR_SPACE] ?? THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   return tex;
 }

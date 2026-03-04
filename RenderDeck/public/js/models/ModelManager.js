@@ -4,11 +4,10 @@
 
 import { ModelVerifier } from './ModelVerifier.js';
 import { CustomModelStorage } from '../storage/CustomModelStorage.js';
-import { MODEL_PATHS } from '../config.js';
 
 export class ModelManager {
   constructor(log) {
-    this.models = new Map(); // Store models: name -> {folder, obj, mtl, files}
+    this.models = new Map(); // Store models: name -> {objPath, mtlPath, files, ...}
     this.verifier = new ModelVerifier();
     this.storage = new CustomModelStorage(log);
     this.nextModelId = 1;
@@ -32,9 +31,8 @@ export class ModelManager {
   registerModel(name, config) {
     this.models.set(name, {
       type: 'registry',
-      folder: config.folder,
-      obj: config.obj,
-      mtl: config.mtl,
+      objPath: config.objPath,
+      mtlPath: config.mtlPath || null,
       source: 'built-in'
     });
     return true;
@@ -63,7 +61,28 @@ export class ModelManager {
       return result;
     }
 
-    // Generate a name for the model
+    // ── GLB path ──────────────────────────────────────────────────
+    if (verification.files.glb) {
+      const glbFile = verification.files.glb;
+      const modelName = customName || this.generateModelName(glbFile.name);
+      if (this.models.has(modelName)) {
+        result.errors.push(`A model named "${modelName}" already exists. Please rename.`);
+        return result;
+      }
+      this.models.set(modelName, {
+        type: 'uploaded-glb',
+        name: modelName,
+        objectURLs: { glb: URL.createObjectURL(glbFile) },
+        source: 'user-uploaded',
+        uploadDate: new Date()
+      });
+      result.success = true;
+      result.name = modelName;
+      result.warnings = verification.warnings;
+      return result;
+    }
+
+    // ── OBJ path ──────────────────────────────────────────────────
     const modelName = customName || this.generateModelName(verification.files.obj.name);
 
     // Check for duplicate names
@@ -89,7 +108,7 @@ export class ModelManager {
 
     // Create object URLs for the files (so Three.js can load them)
     modelData.objectURLs.obj = URL.createObjectURL(verification.files.obj);
-    
+
     if (verification.files.mtl) {
       // Need to rewrite MTL content to use blob URLs for textures
       modelData.objectURLs.mtl = await this.createMTLWithBlobURLs(
@@ -179,8 +198,9 @@ export class ModelManager {
       builtin: Array.from(this.models.entries())
         .filter(([_, model]) => model.type === 'registry')
         .map(([name, _]) => name),
+      // include both regular OBJ uploads and GLB uploads in the "uploaded" bucket
       uploaded: Array.from(this.models.entries())
-        .filter(([_, model]) => model.type === 'uploaded')
+        .filter(([_, model]) => model.type === 'uploaded' || model.type === 'uploaded-glb')
         .map(([name, _]) => name),
       custom: customNames
     };
@@ -200,13 +220,13 @@ export class ModelManager {
     const model = this.models.get(name);
     if (!model) return false;
 
-    // Cleanup blob URLs if uploaded model
+    // Cleanup blob URLs
     if (model.type === 'uploaded' && model.objectURLs) {
       if (model.objectURLs.obj) URL.revokeObjectURL(model.objectURLs.obj);
       if (model.objectURLs.mtl) URL.revokeObjectURL(model.objectURLs.mtl);
-      Object.values(model.objectURLs.textures || {}).forEach(url => {
-        URL.revokeObjectURL(url);
-      });
+      Object.values(model.objectURLs.textures || {}).forEach(url => URL.revokeObjectURL(url));
+    } else if (model.type === 'uploaded-glb' && model.objectURLs?.glb) {
+      URL.revokeObjectURL(model.objectURLs.glb);
     }
 
     this.models.delete(name);
@@ -241,7 +261,14 @@ export class ModelManager {
         name,
         type: 'Built-in',
         source: model.source,
-        hasTextures: !!model.mtl
+        hasTextures: !!model.mtlPath
+      };
+    } else if (model.type === 'uploaded-glb') {
+      return {
+        name,
+        type: 'User Upload (GLB)',
+        source: model.source,
+        uploadDate: model.uploadDate
       };
     } else {
       return {
@@ -307,15 +334,14 @@ export class ModelManager {
     if (!model) return null;
 
     if (model.type === 'registry') {
-      // Traditional path-based loading
-      return {
-        type: 'path',
-        basePath: `${MODEL_PATHS.BASE_PATH}${model.folder}/`,
-        obj: model.obj,
-        mtl: model.mtl
-      };
+      if (model.objPath?.endsWith('.glb')) {
+        return { type: 'glb-path', obj: model.objPath };
+      }
+      return { type: 'path', obj: model.objPath, mtl: model.mtlPath };
+    } else if (model.type === 'uploaded-glb') {
+      return { type: 'glb-blob', obj: model.objectURLs.glb };
     } else {
-      // Blob URL-based loading for uploaded files
+      // Blob URL-based loading for uploaded OBJ files
       return {
         type: 'blob',
         obj: model.objectURLs.obj,
@@ -335,9 +361,8 @@ export class ModelManager {
         list.push({
           name,
           type: 'registry',
-          folder: model.folder,
-          obj: model.obj,
-          mtl: model.mtl
+          objPath: model.objPath,
+          mtlPath: model.mtlPath
         });
       }
       // Note: Uploaded models can't be exported (they're runtime only)
@@ -352,9 +377,8 @@ export class ModelManager {
     list.forEach(item => {
       if (item.type === 'registry') {
         this.registerModel(item.name, {
-          folder: item.folder,
-          obj: item.obj,
-          mtl: item.mtl
+          objPath: item.objPath,
+          mtlPath: item.mtlPath
         });
       }
     });

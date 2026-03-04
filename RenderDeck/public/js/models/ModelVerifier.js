@@ -12,7 +12,7 @@ export class ModelVerifier {
         texture: ['.png', '.jpg', '.jpeg', '.svg', '.webp', '.bmp', '.gif']
       },
       maxFileSize: {
-        model: 50 * 1024 * 1024,      // 50MB for OBJ files
+        model: 200 * 1024 * 1024,      // 200MB for OBJ/GLB files (increased)
         material: 1 * 1024 * 1024,     // 1MB for MTL files
         texture: 20 * 1024 * 1024      // 20MB for textures (increased!)
       },
@@ -36,6 +36,7 @@ export class ModelVerifier {
       errors: [],
       warnings: [],
       files: {
+        glb: null,
         obj: null,
         mtl: null,
         textures: []
@@ -52,14 +53,33 @@ export class ModelVerifier {
       return results;
     }
 
-    // Separate files by type
+    // ── GLB path: single self-contained file ──────────────────────
+    const glbFiles = fileArray.filter(f => this.getFileExtension(f.name) === '.glb');
+    if (glbFiles.length > 0) {
+      if (glbFiles.length > 1) {
+        results.valid = false;
+        results.errors.push(`Multiple GLB files found (${glbFiles.length}). Please provide only one.`);
+        return results;
+      }
+      const glbValidation = await this.validateGLBFile(glbFiles[0]);
+      results.warnings.push(...glbValidation.warnings);
+      if (!glbValidation.valid) {
+        results.valid = false;
+        results.errors.push(...glbValidation.errors);
+      } else {
+        results.files.glb = glbFiles[0];
+        results.metadata.glbInfo = glbValidation.metadata;
+      }
+      return results;
+    }
+
+    // ── OBJ path ──────────────────────────────────────────────────
     const objFiles = [];
     const mtlFiles = [];
     const textureFiles = [];
 
     fileArray.forEach(file => {
       const ext = this.getFileExtension(file.name);
-      
       if (this.config.allowedExtensions.model.includes(ext)) {
         objFiles.push(file);
       } else if (this.config.allowedExtensions.material.includes(ext)) {
@@ -72,7 +92,7 @@ export class ModelVerifier {
     // Validate OBJ (required)
     if (objFiles.length === 0) {
       results.valid = false;
-      results.errors.push('No OBJ file found');
+      results.errors.push('No OBJ or GLB file found');
     } else if (objFiles.length > 1) {
       results.valid = false;
       results.errors.push(`Multiple OBJ files found (${objFiles.length}). Please provide only one.`);
@@ -92,7 +112,6 @@ export class ModelVerifier {
     if (mtlFiles.length > 1) {
       results.warnings.push(`Multiple MTL files found (${mtlFiles.length}). Using: ${mtlFiles[0].name}`);
     }
-    
     if (mtlFiles.length > 0) {
       const mtlValidation = await this.validateMTLFile(mtlFiles[0]);
       if (mtlValidation.valid) {
@@ -118,9 +137,7 @@ export class ModelVerifier {
     // Cross-validation: Check if MTL references match provided textures
     if (results.files.mtl && results.metadata.mtlInfo?.referencedTextures) {
       const providedTextureNames = results.files.textures.map(f => f.name);
-      const referencedTextures = results.metadata.mtlInfo.referencedTextures;
-      
-      referencedTextures.forEach(refTexture => {
+      results.metadata.mtlInfo.referencedTextures.forEach(refTexture => {
         if (!providedTextureNames.includes(refTexture)) {
           results.warnings.push(`MTL references texture "${refTexture}" which was not provided`);
         }
@@ -128,6 +145,47 @@ export class ModelVerifier {
     }
 
     return results;
+  }
+
+  // ─────────────────────────────────────────────
+  // Validate a single GLB file
+  // ─────────────────────────────────────────────
+  async validateGLBFile(file) {
+    const result = { valid: true, errors: [], warnings: [], metadata: {} };
+
+    if (this.getFileExtension(file.name) !== '.glb') {
+      result.valid = false;
+      result.errors.push(`Invalid file extension: expected .glb`);
+      return result;
+    }
+
+    if (file.size > this.config.maxFileSize.model) {
+      result.valid = false;
+      result.errors.push(`File too large: ${this.formatBytes(file.size)}. Max: ${this.formatBytes(this.config.maxFileSize.model)}`);
+      return result;
+    }
+
+    // Check GLB magic bytes: first 4 bytes must be 'glTF' (0x46546C67 little-endian)
+    try {
+      const header = await file.slice(0, 12).arrayBuffer();
+      const view = new DataView(header);
+      const magic = view.getUint32(0, true);
+      if (magic !== 0x46546C67) {
+        result.valid = false;
+        result.errors.push('Not a valid GLB file (incorrect magic bytes)');
+        return result;
+      }
+      const version = view.getUint32(4, true);
+      if (version !== 2) {
+        result.warnings.push(`GLB version ${version} detected — only version 2 is supported`);
+      }
+      result.metadata = { version, size: file.size };
+    } catch (error) {
+      result.valid = false;
+      result.errors.push(`Failed to read GLB header: ${error.message}`);
+    }
+
+    return result;
   }
 
   // ─────────────────────────────────────────────
@@ -334,14 +392,20 @@ export class ModelVerifier {
 
     // Files found
     report += 'Files:\n';
-    if (verification.files.obj) {
+    if (verification.files.glb) {
+      report += `  ✅ GLB: ${verification.files.glb.name}\n`;
+      if (verification.metadata.glbInfo) {
+        report += `     - Version: ${verification.metadata.glbInfo.version}\n`;
+        report += `     - Size: ${this.formatBytes(verification.metadata.glbInfo.size)}\n`;
+      }
+    } else if (verification.files.obj) {
       report += `  ✅ OBJ: ${verification.files.obj.name}\n`;
       if (verification.metadata.objInfo) {
         report += `     - Vertices: ${verification.metadata.objInfo.vertexCount.toLocaleString()}\n`;
         report += `     - Faces: ${verification.metadata.objInfo.faceCount.toLocaleString()}\n`;
       }
     } else {
-      report += '  ❌ OBJ: Not found\n';
+      report += '  ❌ OBJ or GLB: Not found\n';
     }
 
     if (verification.files.mtl) {
