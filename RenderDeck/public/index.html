@@ -7,8 +7,8 @@
   <link rel="stylesheet" href="styles.css" />
   <script type="importmap">{
     "imports": {
-      "three": "https://unpkg.com/three@0.175.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.175.0/examples/jsm/"
+      "three": "https://unpkg.com/three@0.183.2/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.183.2/examples/jsm/"
     }
   }</script>
 </head>
@@ -29,8 +29,17 @@
             <p class="drop-hint-small">or use Tab 1 to select a model</p>
           </div>
         </div>
-        <div>
-          <b>shortcuts: UP/DOWN/LEFT/RIGHT, E, Q, R</b>
+        <div class="design-shortcuts">
+          <span class="sc-label">Design:</span>
+          <div class="sc-row">
+            <div class="sc-item"><button id="sc-up"      class="sc-btn" title="Move Up (↑)">↑</button><span class="sc-item-label">Up</span></div>
+            <div class="sc-item"><button id="sc-down"    class="sc-btn" title="Move Down (↓)">↓</button><span class="sc-item-label">Down</span></div>
+            <div class="sc-item"><button id="sc-left"    class="sc-btn" title="Move Left (←)">←</button><span class="sc-item-label">Left</span></div>
+            <div class="sc-item"><button id="sc-right"   class="sc-btn" title="Move Right (→)">→</button><span class="sc-item-label">Right</span></div>
+            <div class="sc-item"><button id="sc-rot-ccw" class="sc-btn" title="Rotate CCW (Q)">↺</button><span class="sc-item-label">Q</span></div>
+            <div class="sc-item"><button id="sc-rot-cw"  class="sc-btn" title="Rotate CW (E)">↻</button><span class="sc-item-label">E</span></div>
+            <div class="sc-item"><button id="sc-reset"   class="sc-btn" title="Reset Transform (R)">⟲</button><span class="sc-item-label">R</span></div>
+          </div>
         </div>
       </div>
 
@@ -41,16 +50,63 @@
 
           <!-- Tab links -->
           <div class="tab">
-            <button class="tablinks active" onclick="openSetting(event, 'Setting1')">1</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting2')">2</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting3')">3</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting4')">4</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting5')">5</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting6')">6</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting7')">7</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting8')">8</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting9')">9</button>
-            <button class="tablinks" onclick="openSetting(event, 'Setting10')">10</button>
+            <div class="tab">
+              <!-- 1: Scene Setup -->
+              <button class="tablinks active" onclick="openSetting(event, 'Setting1')" aria-label="Scene Set-Up"
+                title="Scene Set-Up">
+                <img src="https://renderdeck-eosin.vercel.app/icons/icon_dom_sceneSetup.svg" alt="" class="tab-icon">
+              </button>
+
+              <!-- 2: Design Editor -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting2')" aria-label="Design Editor"
+                title="Design Editor">
+                <img src="icons/icon_dom_designEditor.svg" alt="" class="tab-icon">
+              </button>
+
+              <!-- 3: Materials -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting3')" aria-label="Materials"
+                title="Materials">
+                <img src="icons/icon_dom_materialEditor.svg" alt="" class="tab-icon">
+              </button>
+
+              <!-- 4: Camera -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting4')" aria-label="Camera" title="Camera">
+                <img src="icons/icon_dom_cameraSettings.svg" alt="" class="tab-icon">
+              </button>
+
+              <!-- 5: Preview Quality -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting5')" aria-label="Preview Quality"
+                title="Preview Quality">
+                <img src="icons/icon_dom_previewQuality.svg" alt="" class="tab-icon">
+              </button>
+
+              <!-- 6: Post-Processing -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting6')" aria-label="Post-Processing"
+                title="Post-Processing">
+                <img src="icons/icon_dom_postprocessing.svg" alt="" class="tab-icon">
+              </button>
+
+              <!-- 7: Rendering -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting7')" aria-label="Rendering"
+                title="Rendering">
+                <img src="icons/icon_dom_rendering.svg" alt="" class="tab-icon">
+              </button>
+
+              <!-- 8: Export & Project -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting8')" aria-label="Export &amp; Project"
+                title="Export &amp; Project">
+                <span class="tab-fallback">8</span>
+              </button>
+
+              <!-- 9: Debug -->
+              <button class="tablinks" onclick="openSetting(event, 'Setting9')" aria-label="Debug" title="Debug">
+                <span class="tab-fallback">9</span>
+              </button>
+              <button class="tablinks" onclick="openSetting(event, 'Setting10')" aria-label="Setting 10"
+                title="Setting 10">
+                <span class="tab-fallback">10</span>
+              </button>
+            </div>
           </div>
 
           <!-- ===== Setting 1: Scene Set-Up ===== -->
@@ -61,15 +117,13 @@
             <h4>Object <span class="dot dot-positive" id="import-object-status-dot"></span></h4>
             <h5>Select an Object</h5>
             <select id="object-select" class="dropdown">
-              <option value="" disabled selected>--- Standard Objects ---</option>
-              <!-- populated by JS -->
-              <option value="" disabled>--- User Objects ---</option>
+              <!-- populated by JS with optgroups; no static placeholders needed -->
             </select>
 
             <!-- Upload / manage models -->
-            <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj)</label>
-            <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg" multiple style="display:none;">
-            <p class="upload-hint">.obj + optional .mtl and textures, or drag &amp; drop onto preview</p>
+            <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj or .glb)</label>
+            <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg,.glb" multiple style="display:none;">
+            <p class="upload-hint">.glb (standalone), or .obj + optional .mtl and textures — drag &amp; drop onto preview</p>
 
             <button class="button-medium" id="export-btn">&#128190; Export Custom Model</button>
             <button class="button-medium" id="import-btn">&#128229; Import Custom Model</button>
@@ -79,12 +133,28 @@
             <select id="model-select" style="display:none;"></select>
 
             <h4>Background <span class="dot dot-negative" id="import-background-status-dot"></span></h4>
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="env-bg-toggle" checked>
+                <span>Show environment as background</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="gradient-bg-toggle">
+                <span>Enable gradient/solid background</span>
+              </label>
+            </div>
+            <h5>Background Preset</h5>
             <select id="background-select" class="dropdown">
-              <option value="" disabled selected>--- Standard Backgrounds ---</option>
+              <option value="" disabled selected>--- Choose Background ---</option>
+              <option value="grad_studio">Studio Dark (Blue-Navy)</option>
+              <option value="grad_sunset">Warm Sunset</option>
+              <option value="grad_ocean">Deep Ocean</option>
+              <option value="grad_forest">Forest</option>
+              <option value="grad_dark">Near Black</option>
+              <option value="grad_white">Near White</option>
               <option value="solid_black">Solid Black</option>
               <option value="solid_white">Solid White</option>
               <option value="solid_gray">Solid Gray</option>
-              <option value="" disabled>--- User Backgrounds ---</option>
             </select>
 
             <h4>Environmental Lighting <span class="dot dot-neutral" id="import-environment-status-dot"></span></h4>
@@ -100,10 +170,31 @@
             <h3>Design Editor</h3>
             <hr>
 
+            <!-- Part Select -->
+            <h4>Select Part</h4>
+            <select id="design-part-select" class="dropdown">
+              <option value="">— No parts —</option>
+            </select>
+
             <!-- Design Canvas Preview -->
             <div class="design-canvas-container">
               <canvas id="design-preview-canvas" width="512" height="512"></canvas>
               <p class="design-hint">Design Preview — Drag images to position</p>
+            </div>
+
+            <!-- Canvas Tools -->
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 6px;">
+              <button class="button-medium" id="flip-h-btn">Flip H</button>
+              <button class="button-medium" id="flip-v-btn">Flip V</button>
+              <button class="button-medium" id="check-uv-btn">Check UV</button>
+              <button class="button-medium" id="preview-uv-btn">Preview UV</button>
+              <button class="button-medium" id="wrap-uv-btn">Wrap</button>
+            </div>
+            <div class="toggle-list" style="margin-bottom:8px;">
+              <label class="toggle-row">
+                <input type="checkbox" id="lock-aspect-ratio" checked>
+                <span>Lock aspect ratio</span>
+              </label>
             </div>
 
             <!-- Image Upload -->
@@ -130,31 +221,36 @@
 
             <div class="control-row">
               <h5 class="control-label">Position X</h5>
-              <input id="design-posx-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="-1" max="1" value="0.00">
+              <input id="design-posx-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="-1"
+                max="1" value="0.00">
             </div>
             <input id="design-posx-slider" class="slider" type="range" min="-1" max="1" step="0.01" value="0.00">
 
             <div class="control-row">
               <h5 class="control-label">Position Y</h5>
-              <input id="design-posy-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="-1" max="1" value="0.00">
+              <input id="design-posy-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="-1"
+                max="1" value="0.00">
             </div>
             <input id="design-posy-slider" class="slider" type="range" min="-1" max="1" step="0.01" value="0.00">
 
             <div class="control-row">
               <h5 class="control-label">Width</h5>
-              <input id="design-width-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01" max="2" value="0.50">
+              <input id="design-width-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0.01" max="2" value="0.50">
             </div>
             <input id="design-width-slider" class="slider" type="range" min="0.01" max="2" step="0.01" value="0.50">
 
             <div class="control-row">
               <h5 class="control-label">Height</h5>
-              <input id="design-height-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01" max="2" value="0.50">
+              <input id="design-height-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0.01" max="2" value="0.50">
             </div>
             <input id="design-height-slider" class="slider" type="range" min="0.01" max="2" step="0.01" value="0.50">
 
             <div class="control-row">
               <h5 class="control-label">Rotation (deg)</h5>
-              <input id="design-rotation-input" class="value-input" type="number" inputmode="decimal" step="1" min="0" max="360" value="0">
+              <input id="design-rotation-input" class="value-input" type="number" inputmode="decimal" step="1" min="0"
+                max="360" value="0">
             </div>
             <input id="design-rotation-slider" class="slider" type="range" min="0" max="360" step="1" value="0">
           </div>
@@ -195,19 +291,22 @@
               <input id="basecolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
                 <span class="color-swatch" id="basecolor-swatch"></span>
-                <input id="basecolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7" spellcheck="false">
+                <input id="basecolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
+                  spellcheck="false">
               </div>
             </div>
 
             <div class="control-row">
               <h5 class="control-label">Metalness</h5>
-              <input id="metalness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+              <input id="metalness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="0.00">
             </div>
             <input id="metalness-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
 
             <div class="control-row">
               <h5 class="control-label">Roughness</h5>
-              <input id="roughness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.50">
+              <input id="roughness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="0.50">
             </div>
             <input id="roughness-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.50">
 
@@ -225,13 +324,15 @@
               <input id="speccolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
                 <span class="color-swatch" id="speccolor-swatch"></span>
-                <input id="speccolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7" spellcheck="false">
+                <input id="speccolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
+                  spellcheck="false">
               </div>
             </div>
 
             <div class="control-row">
               <h5 class="control-label">Specular Intensity</h5>
-              <input id="specint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="1.00">
+              <input id="specint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="1.00">
             </div>
             <input id="specint-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
 
@@ -246,13 +347,15 @@
 
             <div class="control-row">
               <h5 class="control-label">Clearcoat</h5>
-              <input id="clearcoat-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+              <input id="clearcoat-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="0.00">
             </div>
             <input id="clearcoat-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
 
             <div class="control-row">
               <h5 class="control-label">Clearcoat Roughness</h5>
-              <input id="clearcoatrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.10">
+              <input id="clearcoatrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="0.10">
             </div>
             <input id="clearcoatrough-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.10">
 
@@ -267,7 +370,8 @@
 
             <div class="control-row">
               <h5 class="control-label">Opacity</h5>
-              <input id="opacity-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="1.00">
+              <input id="opacity-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="1.00">
             </div>
             <input id="opacity-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
 
@@ -282,19 +386,22 @@
 
             <div class="control-row">
               <h5 class="control-label">Transmission</h5>
-              <input id="transmission-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+              <input id="transmission-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="0.00">
             </div>
             <input id="transmission-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
 
             <div class="control-row">
               <h5 class="control-label">IOR</h5>
-              <input id="ior-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="1.0" max="2.5" value="1.50">
+              <input id="ior-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="1.0"
+                max="2.5" value="1.50">
             </div>
             <input id="ior-slider" class="slider" type="range" min="1.0" max="2.5" step="0.01" value="1.50">
 
             <div class="control-row">
               <h5 class="control-label">Thickness</h5>
-              <input id="thickness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="5" value="0.00">
+              <input id="thickness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="5" value="0.00">
             </div>
             <input id="thickness-slider" class="slider" type="range" min="0" max="5" step="0.01" value="0.00">
 
@@ -307,7 +414,8 @@
 
             <div class="control-row">
               <h5 class="control-label">Attenuation Distance</h5>
-              <input id="attdist-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0" max="100" value="0.00">
+              <input id="attdist-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0"
+                max="100" value="0.00">
             </div>
             <input id="attdist-slider" class="slider" type="range" min="0" max="100" step="0.1" value="0.00">
 
@@ -316,7 +424,8 @@
               <input id="attcolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
                 <span class="color-swatch" id="attcolor-swatch"></span>
-                <input id="attcolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7" spellcheck="false">
+                <input id="attcolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
+                  spellcheck="false">
               </div>
             </div>
 
@@ -334,13 +443,15 @@
               <input id="sheencolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
                 <span class="color-swatch" id="sheencolor-swatch"></span>
-                <input id="sheencolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7" spellcheck="false">
+                <input id="sheencolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
+                  spellcheck="false">
               </div>
             </div>
 
             <div class="control-row">
               <h5 class="control-label">Sheen Roughness</h5>
-              <input id="sheenrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="1.00">
+              <input id="sheenrough-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="1.00">
             </div>
             <input id="sheenrough-slider" class="slider" type="range" min="0" max="1" step="0.01" value="1.00">
 
@@ -358,13 +469,15 @@
               <input id="emissivecolor-picker" type="color" class="colorPicker" value="#000000">
               <div class="color-field">
                 <span class="color-swatch" id="emissive-swatch"></span>
-                <input id="emissive-hex" class="value-input value-input-hex" type="text" value="#000000" maxlength="7" spellcheck="false">
+                <input id="emissive-hex" class="value-input value-input-hex" type="text" value="#000000" maxlength="7"
+                  spellcheck="false">
               </div>
             </div>
 
             <div class="control-row">
               <h5 class="control-label">Emissive Intensity</h5>
-              <input id="emissiveint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="50" value="0.00">
+              <input id="emissiveint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="50" value="0.00">
             </div>
             <input id="emissiveint-slider" class="slider" type="range" min="0" max="50" step="0.01" value="0.00">
 
@@ -372,7 +485,8 @@
             <h4>Environment</h4>
             <div class="control-row">
               <h5 class="control-label">Env Map Intensity</h5>
-              <input id="envint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="5" value="1.00">
+              <input id="envint-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="5"
+                value="1.00">
             </div>
             <input id="envint-slider" class="slider" type="range" min="0" max="5" step="0.01" value="1.00">
           </div>
@@ -391,51 +505,60 @@
             </select>
 
             <h5>Lens Preset (mm)</h5>
-            <select id="lens-mm-select" class="dropdown">
-              <option value="" disabled selected>--- Lens Focal Length ---</option>
-              <option value="18">18mm (Ultra Wide)</option>
-              <option value="24">24mm (Wide)</option>
-              <option value="35">35mm (Natural Wide)</option>
-              <option value="50" selected>50mm (Normal)</option>
-              <option value="85">85mm (Portrait)</option>
-            </select>
+            <div class="button-row" id="lens-mm-buttons" data-target-input="lens-mm-value">
+              <button class="button" type="button" data-value="18">18mm</button>
+              <button class="button" type="button" data-value="24">24mm</button>
+              <button class="button" type="button" data-value="35">35mm</button>
+              <button class="button" type="button" data-value="50">50mm</button>
+              <button class="button button-selected" type="button" data-value="85">85mm</button>
+            </div>
+            <input id="lens-mm-value" type="hidden" value="85">
+
+            <div class="control-row" style="margin-top:10px;">
+              <h5 class="control-label">Lens (mm)</h5>
+              <input id="lens-mm-input" class="value-input" type="number" inputmode="numeric" step="1" min="12" max="200" value="85">
+            </div>
+            <input id="lens-mm-slider" class="slider" type="range" min="12" max="200" step="1" value="85">
 
             <h5>Film / Sensor Gauge</h5>
-            <select id="film-gauge-select" class="dropdown">
-              <option value="" disabled selected>--- Sensor Size Preset ---</option>
-              <option value="fullframe" selected>35mm Full Frame (36×24mm)</option>
-              <option value="aps-c">APS-C (≈24×16mm)</option>
-              <option value="mft">Micro Four Thirds (≈17.3×13mm)</option>
-            </select>
+            <div class="button-row" id="film-gauge-buttons" data-target-input="film-gauge-value">
+              <button class="button button-selected" type="button" data-value="fullframe">Full Frame</button>
+              <button class="button" type="button" data-value="aps-c">APS-C</button>
+              <button class="button" type="button" data-value="mft">Micro 4/3</button>
+            </div>
+            <input id="film-gauge-value" type="hidden" value="fullframe">
 
             <h4>Framing Safety</h4>
 
             <div class="control-row">
               <h5 class="control-label">Near Clip</h5>
-              <input id="near-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01" max="5.0" value="0.10">
+              <input id="near-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0.01"
+                max="5.0" value="0.10">
             </div>
             <input id="near-slider" type="range" min="0.01" max="5.0" step="0.01" value="0.1" class="slider">
 
             <div class="control-row">
               <h5 class="control-label">Far Clip</h5>
-              <input id="far-input" class="value-input" type="number" inputmode="numeric" step="10" min="10" max="5000" value="2000">
+              <input id="far-input" class="value-input" type="number" inputmode="numeric" step="10" min="10" max="5000"
+                value="2000">
             </div>
             <input id="far-slider" type="range" min="10" max="5000" step="10" value="2000" class="slider">
 
             <h4>Camera Look</h4>
 
             <h5>Tone Mapping</h5>
-            <select id="tone-mapping-select" class="dropdown">
-              <option value="" disabled selected>--- Color Response ---</option>
-              <option value="none">Off</option>
-              <option value="aces" selected>ACES Filmic</option>
-              <option value="reinhard">Reinhard</option>
-              <option value="cineon">Cineon</option>
-            </select>
+            <div class="button-row" id="tone-mapping-buttons" data-target-input="tone-mapping-value">
+              <button class="button" type="button" data-value="none">Off</button>
+              <button class="button button-selected" type="button" data-value="aces">ACES</button>
+              <button class="button" type="button" data-value="reinhard">Reinhard</button>
+              <button class="button" type="button" data-value="cineon">Cineon</button>
+            </div>
+            <input id="tone-mapping-value" type="hidden" value="aces">
 
             <div class="control-row">
               <h5 class="control-label">Exposure</h5>
-              <input id="exposure-input" class="value-input" type="number" inputmode="decimal" step="0.05" min="0.1" max="2.5" value="1.00">
+              <input id="exposure-input" class="value-input" type="number" inputmode="decimal" step="0.05" min="0.1"
+                max="2.5" value="1.00">
             </div>
             <input id="exposure-slider" type="range" min="0.1" max="2.5" step="0.05" value="1.0" class="slider">
 
@@ -449,13 +572,15 @@
 
             <div class="control-row">
               <h5 class="control-label">DOF Focus Distance</h5>
-              <input id="cam-dof-focus-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0.1" max="50" value="5.0">
+              <input id="cam-dof-focus-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0.1"
+                max="50" value="5.0">
             </div>
             <input id="cam-dof-focus-slider" type="range" min="0.1" max="50" step="0.1" value="5" class="slider">
 
             <div class="control-row">
               <h5 class="control-label">DOF Strength (Aperture)</h5>
-              <input id="cam-dof-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.25">
+              <input id="cam-dof-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0" max="1" value="0.25">
             </div>
             <input id="cam-dof-strength-slider" type="range" min="0" max="1" step="0.01" value="0.25" class="slider">
           </div>
@@ -483,44 +608,49 @@
             </select>
 
             <h5>Render Scale</h5>
-            <select id="render-scale-select" class="dropdown">
-              <option value="1.0" selected>100% (Full)</option>
-              <option value="0.75">75%</option>
-              <option value="0.5">50% (Half)</option>
-              <option value="0.25">25% (Quarter)</option>
-            </select>
+            <div class="button-row" id="render-scale-buttons" data-target-input="render-scale-value">
+              <button class="button" type="button" data-value="0.25">25%</button>
+              <button class="button" type="button" data-value="0.5">50%</button>
+              <button class="button" type="button" data-value="0.75">75%</button>
+              <button class="button button-selected" type="button" data-value="1.0">100%</button>
+            </div>
+            <input id="render-scale-value" type="hidden" value="1.0">
 
             <h5>Max DPR (Retina Cap)</h5>
-            <select id="max-dpr-select" class="dropdown">
-              <option value="auto">Auto (Device DPR)</option>
-              <option value="1" selected>1.0 (Fast)</option>
-              <option value="1.5">1.5</option>
-              <option value="2">2.0 (Sharp)</option>
-            </select>
+            <div class="button-row" id="max-dpr-buttons" data-target-input="max-dpr-value">
+              <button class="button" type="button" data-value="auto">Auto</button>
+              <button class="button button-selected" type="button" data-value="1">1.0</button>
+              <button class="button" type="button" data-value="1.5">1.5</button>
+              <button class="button" type="button" data-value="2">2.0</button>
+            </div>
+            <input id="max-dpr-value" type="hidden" value="1">
 
             <h4>Quality</h4>
             <h5>Anti-Aliasing</h5>
-            <select id="aa-mode-select" class="dropdown">
-              <option value="off">Off</option>
-              <option value="msaa" selected>MSAA (renderer)</option>
-              <option value="fxaa">FXAA (post)</option>
-            </select>
+            <div class="button-row" id="aa-mode-buttons" data-target-input="aa-mode-value">
+              <button class="button" type="button" data-value="off">Off</button>
+              <button class="button button-selected" type="button" data-value="msaa">MSAA</button>
+              <button class="button" type="button" data-value="fxaa">FXAA</button>
+            </div>
+            <input id="aa-mode-value" type="hidden" value="msaa">
 
             <h5>Shadow Quality</h5>
-            <select id="shadow-quality-select" class="dropdown">
-              <option value="off">Off</option>
-              <option value="low">Low (512)</option>
-              <option value="medium">Medium (1024)</option>
-              <option value="high" selected>High (2048)</option>
-              <option value="ultra">Ultra (4096)</option>
-            </select>
+            <div class="button-row" id="shadow-quality-buttons" data-target-input="shadow-quality-value">
+              <button class="button" type="button" data-value="off">Off</button>
+              <button class="button" type="button" data-value="low">Low (512)</button>
+              <button class="button" type="button" data-value="medium">Med (1024)</button>
+              <button class="button button-selected" type="button" data-value="high">High (2048)</button>
+              <button class="button" type="button" data-value="ultra">Ultra (4096)</button>
+            </div>
+            <input id="shadow-quality-value" type="hidden" value="high">
 
             <h5>Texture Filtering</h5>
-            <select id="texture-filtering-select" class="dropdown">
-              <option value="low">Low (Aniso 1)</option>
-              <option value="medium">Medium (Aniso 8)</option>
-              <option value="high" selected>High (Aniso 16)</option>
-            </select>
+            <div class="button-row" id="texture-filtering-buttons" data-target-input="texture-filtering-value">
+              <button class="button" type="button" data-value="low">Low (Aniso 1)</button>
+              <button class="button" type="button" data-value="medium">Med (Aniso 8)</button>
+              <button class="button button-selected" type="button" data-value="high">High (Aniso 16)</button>
+            </div>
+            <input id="texture-filtering-value" type="hidden" value="high">
 
             <h4>Pipeline &amp; Helpers</h4>
             <div class="toggle-list">
@@ -552,71 +682,73 @@
             <h3>Post-Processing</h3>
             <hr>
 
-            <h4>Preset</h4>
-            <select id="postfx-preset-select" class="dropdown">
-              <option value="off">Off</option>
-              <option value="basic">Basic (Tone + Mild Bloom)</option>
-              <option value="pretty" selected>Pretty (Bloom + AO + DOF)</option>
-              <option value="cinema">Cinema (Bloom + Vignette + DOF)</option>
-            </select>
-
             <h4>Effects</h4>
             <div class="toggle-list">
               <label class="toggle-row"><input type="checkbox" id="post-toggle-bloom"><span>Bloom</span></label>
               <label class="toggle-row"><input type="checkbox" id="post-toggle-vignette"><span>Vignette</span></label>
-              <label class="toggle-row"><input type="checkbox" id="post-toggle-ao"><span>Ambient Occlusion (AO)</span></label>
-              <label class="toggle-row"><input type="checkbox" id="post-toggle-motionblur"><span>Motion Blur</span></label>
+              <label class="toggle-row"><input type="checkbox" id="post-toggle-ao"><span>Ambient Occlusion
+                  (AO)</span></label>
+              <label class="toggle-row"><input type="checkbox" id="post-toggle-motionblur"><span>Motion
+                  Blur</span></label>
             </div>
 
             <h4>Bloom Controls</h4>
             <div class="control-row">
               <h5 class="control-label">Bloom Strength</h5>
-              <input id="bloom-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="2" value="0.35">
+              <input id="bloom-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="2" value="0.35">
             </div>
             <input id="bloom-strength-slider" type="range" min="0" max="2" step="0.01" value="0.35" class="slider">
 
             <div class="control-row">
               <h5 class="control-label">Bloom Radius</h5>
-              <input id="bloom-radius-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.20">
+              <input id="bloom-radius-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0"
+                max="1" value="0.20">
             </div>
             <input id="bloom-radius-slider" type="range" min="0" max="1" step="0.01" value="0.2" class="slider">
 
             <div class="control-row">
               <h5 class="control-label">Bloom Threshold</h5>
-              <input id="bloom-threshold-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.85">
+              <input id="bloom-threshold-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0" max="1" value="0.85">
             </div>
             <input id="bloom-threshold-slider" type="range" min="0" max="1" step="0.01" value="0.85" class="slider">
 
             <h4>Vignette Controls</h4>
             <div class="control-row">
               <h5 class="control-label">Vignette Intensity</h5>
-              <input id="vignette-intensity-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.25">
+              <input id="vignette-intensity-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0" max="1" value="0.25">
             </div>
             <input id="vignette-intensity-slider" type="range" min="0" max="1" step="0.01" value="0.25" class="slider">
 
             <div class="control-row">
               <h5 class="control-label">Vignette Softness</h5>
-              <input id="vignette-softness-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.60">
+              <input id="vignette-softness-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0" max="1" value="0.60">
             </div>
             <input id="vignette-softness-slider" type="range" min="0" max="1" step="0.01" value="0.6" class="slider">
 
             <h4>AO Controls</h4>
             <div class="control-row">
               <h5 class="control-label">AO Intensity</h5>
-              <input id="ao-intensity-input" class="value-input" type="number" inputmode="decimal" step="0.05" min="0" max="3" value="1.00">
+              <input id="ao-intensity-input" class="value-input" type="number" inputmode="decimal" step="0.05" min="0"
+                max="3" value="1.00">
             </div>
             <input id="ao-intensity-slider" type="range" min="0" max="3" step="0.05" value="1.0" class="slider">
 
             <div class="control-row">
               <h5 class="control-label">AO Radius</h5>
-              <input id="ao-radius-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0" max="10" value="3.0">
+              <input id="ao-radius-input" class="value-input" type="number" inputmode="decimal" step="0.1" min="0"
+                max="10" value="3.0">
             </div>
             <input id="ao-radius-slider" type="range" min="0" max="10" step="0.1" value="3.0" class="slider">
 
             <h4>Motion Blur Controls</h4>
             <div class="control-row">
               <h5 class="control-label">Shutter Strength</h5>
-              <input id="motionblur-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.15">
+              <input id="motionblur-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01"
+                min="0" max="1" value="0.15">
             </div>
             <input id="motionblur-strength-slider" type="range" min="0" max="1" step="0.01" value="0.15" class="slider">
           </div>
@@ -628,20 +760,102 @@
             <p>Rendering controls will be here.</p>
           </div>
 
-          <!-- ===== Setting 8: Debug ===== -->
+          <!-- ===== Setting 8: Export & Project ===== -->
           <div id="Setting8" class="tabcontent">
+            <h3>Export &amp; Project</h3>
+            <hr>
+
+            <h4>Download &rarr; Image Render</h4>
+            <h5>Format</h5>
+            <div class="button-row">
+              <button class="button" id="export-jpg-btn">.jpg</button>
+              <button class="button" id="export-png-btn">.png</button>
+              <button class="button" id="export-webp-btn">.webp</button>
+              <button class="button" id="export-exr-btn">.exr</button>
+            </div>
+
+            <h5>Render Options</h5>
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="export-transparent-bg">
+                <span>Transparent Background</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-postfx" checked>
+                <span>Include Post-Processing</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-use-preview-res" checked>
+                <span>Use Selected Resolution</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-full-quality">
+                <span>Force Full Quality (Ignore Preview Scale)</span>
+              </label>
+            </div>
+
+            <hr>
+
+            <h4>Download &rarr; Model Package</h4>
+            <h5>Format</h5>
+            <div class="button-row">
+              <button class="button" id="export-glb-btn">.glb</button>
+              <button class="button" id="export-gltf-btn">.gltf</button>
+              <button class="button" id="export-obj-btn">.obj + .mtl</button>
+              <button class="button" id="export-zip-btn">.zip (All Assets)</button>
+            </div>
+
+            <h5>Package Options</h5>
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input type="checkbox" id="export-embed-textures" checked>
+                <span>Embed Textures</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-env">
+                <span>Include Environment HDR</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-material-json" checked>
+                <span>Include Material Presets (.json)</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="export-include-decals" checked>
+                <span>Include Design Textures</span>
+              </label>
+            </div>
+
+            <hr>
+
+            <h4>Project</h4>
+            <div class="button-row">
+              <button class="button" id="save-project-btn">Save Project</button>
+              <button class="button" id="download-project-btn">Download Project</button>
+              <button class="button" id="load-project-btn">Load Project</button>
+            </div>
+            <div class="toggle-list" style="margin-top:8px;">
+              <label class="toggle-row">
+                <input type="checkbox" id="project-include-images" checked>
+                <span>Include Uploaded Images in Project File</span>
+              </label>
+            </div>
+
+            <hr>
+
+            <h4>Project Thumbnail</h4>
+            <div class="button-row">
+              <button class="button" id="capture-thumbnail-btn">Capture Thumbnail</button>
+              <button class="button" id="download-thumbnail-btn">Download Thumbnail</button>
+            </div>
+          </div>
+
+          <!-- ===== Setting 9: Debug ===== -->
+          <div id="Setting9" class="tabcontent">
             <h3>Debug</h3>
             <hr>
             <div class="debug-panel">
               <p>Ready. Drag and drop OBJ files to add models.</p>
             </div>
-          </div>
-
-          <!-- ===== Setting 9 & 10: Placeholder ===== -->
-          <div id="Setting9" class="tabcontent">
-            <h3>Setting 9</h3>
-            <hr>
-            <p>Setting 9 controls will be here.</p>
           </div>
 
           <div id="Setting10" class="tabcontent">

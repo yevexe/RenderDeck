@@ -78,7 +78,12 @@ export class CameraManager {
    * Frame object in view (center and adjust distance)
    * @param {THREE.Object3D} object
    */
-  frameObject(object) {
+  /**
+   * Frame an object by moving the camera and setting controls target.
+   * @param {THREE.Object3D} object
+   * @param {{mode?: string}} [options]  // mode can be 'default' or 'corner'
+   */
+  frameObject(object, options = {}) {
     if (!object || !this.controls) return;
 
     const box = new THREE.Box3().setFromObject(object);
@@ -90,9 +95,20 @@ export class CameraManager {
     const fov = this.camera.fov * (Math.PI / 180);
     let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
     cameraZ *= 2; // Add some padding
-    
-    // Position camera
-    this.camera.position.set(center.x, center.y, center.z + cameraZ);
+
+    // Determine final position based on mode
+    if (options.mode === 'corner') {
+      // move camera to upper-right-back relative to center
+      this.camera.position.set(
+        center.x + cameraZ,
+        center.y + cameraZ,
+        center.z + cameraZ
+      );
+    } else {
+      // default: straight along +Z
+      this.camera.position.set(center.x, center.y, center.z + cameraZ);
+    }
+
     this.controls.target.copy(center);
     this.controls.update();
   }
