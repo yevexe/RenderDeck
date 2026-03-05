@@ -1146,3 +1146,75 @@ hr {
   cursor: crosshair;
   display: block;
 }
+
+/* ================================================================
+   PROPS SYSTEM
+   ================================================================ */
+
+.props-list {
+  margin-top: 5px;
+  margin-bottom: 10px;
+  padding: 8px;
+  background-color: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  min-height: 60px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.prop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  background-color: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.prop-item:hover { border-color: #666; background-color: #333; }
+.prop-item.selected { border-color: #4CAF50; background-color: #3a3a3a; }
+
+.prop-item-name { font-size: 14px; color: #fff; flex: 1; }
+.prop-item-coords { font-size: 11px; color: #888; margin-left: 8px; }
+
+.props-list::-webkit-scrollbar { width: 8px; }
+.props-list::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 4px; }
+.props-list::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+.props-list::-webkit-scrollbar-thumb:hover { background: #555; }
+
+.transform-toolbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: all;
+}
+
+.tf-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: rgba(26, 26, 26, 0.88);
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #aaa;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  backdrop-filter: blur(4px);
+}
+
+.tf-btn:hover { background: rgba(60, 60, 60, 0.92); border-color: #666; color: #fff; }
+.tf-btn--active { background: rgba(28, 68, 28, 0.92) !important; border-color: #4CAF50 !important; color: #4CAF50 !important; }
+
+.tf-sep { height: 1px; background: #444; margin: 2px 0; }

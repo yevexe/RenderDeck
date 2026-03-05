@@ -129,6 +129,21 @@ export const STANDARD_ENVIRONMENTS = [
   },
 ];
 
+// Prop Assets
+export const PROP_PATHS = {
+  BASE_PATH: 'props/',
+  GLASS_WAITING_ROOM_TABLE: {
+    file: 'glass_waiting_room_table.glb',
+    category: 'Furniture',
+    displayName: 'Glass Waiting Room Table'
+  },
+  LAPTOP: {
+    file: 'laptop.glb',
+    category: 'Electronics',
+    displayName: 'Laptop'
+  }
+};
+
 // Standard Material Presets (JSON files)
 export const STANDARD_MATERIALS = [
   {

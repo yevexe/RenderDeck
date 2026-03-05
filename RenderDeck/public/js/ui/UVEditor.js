@@ -51,6 +51,8 @@ export class UVEditor {
 
     this.isDragging = false;
     this.dragOffset = { x: 0, y: 0 };
+    this._rafPending = false;
+    this.sceneState = null; // set by main.js whenever scene/bg changes
 
     this._setupInlineUI();
   }
@@ -700,7 +702,8 @@ export class UVEditor {
       customName: this.customModelName,
       overlayImages: serializedImages,
       materialProperties,
-      materialPreset: this.currentMaterialPreset
+      materialPreset: this.currentMaterialPreset,
+      sceneState: this.sceneState || null,
     });
 
     this._renderComposite();
@@ -888,8 +891,14 @@ export class UVEditor {
     }
 
     this._syncSlidersFromImage(img);
-    this._renderPreview();
-    this._renderComposite();
+    if (!this._rafPending) {
+      this._rafPending = true;
+      requestAnimationFrame(() => {
+        this._rafPending = false;
+        this._renderPreview();
+        this._renderComposite();
+      });
+    }
   }
 
   // ─── Populate the part select in the Design Editor ────────────
