@@ -48,11 +48,15 @@ export class UVEditor {
 
     this.uvCanvas = null;
     this.uvCtx = null;
+    this._checkerCache = null; // cached checkerboard for fast preview redraws
 
     this.isDragging = false;
     this.dragOffset = { x: 0, y: 0 };
     this._rafPending = false;
     this.sceneState = null; // set by main.js whenever scene/bg changes
+
+    // History hook — set by main.js; called with (label) after any committed change
+    this.onCommit = null;
 
     this._setupInlineUI();
   }
@@ -94,9 +98,17 @@ export class UVEditor {
       this.uvCanvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
       this.uvCanvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
       this.uvCanvas.addEventListener('mouseup', () => {
+        if (this.isDragging) {
+          this._renderComposite();
+          this.onCommit?.(`${this._dragMode === 'rotate' ? 'Rotated' : this._dragMode === 'resize' ? 'Resized' : 'Moved'} overlay`);
+        }
         this.isDragging = false; this._dragMode = 'translate';
       });
       this.uvCanvas.addEventListener('mouseleave', () => {
+        if (this.isDragging) {
+          this._renderComposite();
+          this.onCommit?.('Moved overlay');
+        }
         this.isDragging = false; this._dragMode = 'translate';
         if (this.uvCanvas) this.uvCanvas.style.cursor = 'crosshair';
       });
@@ -118,11 +130,11 @@ export class UVEditor {
       });
 
       // Transformation sliders (Tab 2 IDs)
-      this._linkSlider('design-posx-slider', 'design-posx-input', v => this._setSelected('posX', v));
-      this._linkSlider('design-posy-slider', 'design-posy-input', v => this._setSelected('posY', v));
-      this._linkSlider('design-width-slider', 'design-width-input', v => this._setSelected('width', v));
-      this._linkSlider('design-height-slider', 'design-height-input', v => this._setSelected('height', v));
-      this._linkSlider('design-rotation-slider', 'design-rotation-input', v => this._setSelected('rotation', v));
+      this._linkSlider('design-posx-slider', 'design-posx-input', v => this._setSelected('posX', v), 'Position X');
+      this._linkSlider('design-posy-slider', 'design-posy-input', v => this._setSelected('posY', v), 'Position Y');
+      this._linkSlider('design-width-slider', 'design-width-input', v => this._setSelected('width', v), 'Width');
+      this._linkSlider('design-height-slider', 'design-height-input', v => this._setSelected('height', v), 'Height');
+      this._linkSlider('design-rotation-slider', 'design-rotation-input', v => this._setSelected('rotation', v), 'Rotation');
 
       // Part select
       const partSel = document.getElementById('design-part-select');
@@ -162,7 +174,7 @@ export class UVEditor {
   }
 
   // ─── Slider ↔ number input sync ──────────────────────────────
-  _linkSlider(sliderId, inputId, callback) {
+  _linkSlider(sliderId, inputId, callback, historyLabel = 'Transform change') {
     const slider = document.getElementById(sliderId);
     const input = document.getElementById(inputId);
     if (!slider || !input) return;
@@ -174,6 +186,9 @@ export class UVEditor {
       const v = parseFloat(input.value);
       if (!isNaN(v)) { slider.value = v; callback(v); }
     });
+    // Commit to history when user releases the slider or commits the number input
+    slider.addEventListener('change', () => this.onCommit?.(historyLabel));
+    input.addEventListener('change', () => this.onCommit?.(historyLabel));
   }
 
   // ─── Apply transformation to selected image ───────────────────
@@ -335,11 +350,9 @@ export class UVEditor {
         this.overlayImages.push(imageData);
         this._updateLayersList();
         this._renderPreview();
-        this.log(`Image added: ${file.name}`);
+        this.log(`Image added: ${file.name} — click "Apply to Model" to apply`);
 
-        // Auto-select and immediately apply to model
         this.selectImage(imageData.id);
-        this.applyTextureToModel();
       };
       img.src = e.target.result;
     };
@@ -363,6 +376,7 @@ export class UVEditor {
     this._updateLayersList();
     this._renderPreview();
     this._renderComposite();
+    this.onCommit?.('Deleted overlay');
     this.log('Image deleted');
   }
 
@@ -409,6 +423,20 @@ export class UVEditor {
   }
 
   // ─── UV Preview render ────────────────────────────────────────
+  _buildCheckerCache(w, h) {
+    const sq = 32;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const cx = c.getContext('2d');
+    for (let row = 0; row < h / sq; row++) {
+      for (let col = 0; col < w / sq; col++) {
+        cx.fillStyle = (row + col) % 2 === 0 ? '#2a2a2a' : '#333';
+        cx.fillRect(col * sq, row * sq, sq, sq);
+      }
+    }
+    return c;
+  }
+
   _renderPreview() {
     if (!this.uvCanvas || !this.uvCtx) return;
     const ctx = this.uvCtx;
@@ -416,14 +444,11 @@ export class UVEditor {
 
     ctx.clearRect(0, 0, w, h);
 
-    // Checkerboard background
-    const sq = 32;
-    for (let row = 0; row < h / sq; row++) {
-      for (let col = 0; col < w / sq; col++) {
-        ctx.fillStyle = (row + col) % 2 === 0 ? '#2a2a2a' : '#333';
-        ctx.fillRect(col * sq, row * sq, sq, sq);
-      }
+    // Checkerboard background — built once and reused
+    if (!this._checkerCache || this._checkerCache.width !== w || this._checkerCache.height !== h) {
+      this._checkerCache = this._buildCheckerCache(w, h);
     }
+    ctx.drawImage(this._checkerCache, 0, 0);
 
     // Base texture ghost
     if (this.baseTexture?.image) {
@@ -525,6 +550,7 @@ export class UVEditor {
 
     if (this.liveCanvasTexture) {
       this.liveCanvasTexture.needsUpdate = true;
+      window.markNeedsRender?.(4); // tell Three.js to pick up the texture upload
     }
   }
 
@@ -896,7 +922,10 @@ export class UVEditor {
       requestAnimationFrame(() => {
         this._rafPending = false;
         this._renderPreview();
-        this._renderComposite();
+        // Only run the expensive 2048×2048 composite during drag if the texture
+        // is already live on the model (user clicked Apply) — gives live model preview.
+        // Before Apply, composite runs cheaply on mouseup instead.
+        if (this.liveCanvasTexture) this._renderComposite();
       });
     }
   }
@@ -928,6 +957,7 @@ export class UVEditor {
     else img.flipV = !img.flipV;
     this._renderPreview();
     this._renderComposite();
+    this.onCommit?.(`Flipped ${axis === 'h' ? 'horizontal' : 'vertical'}`);
   }
 
   // ─── Deactivate Check UV (internal helper) ────────────────────
@@ -1022,6 +1052,42 @@ export class UVEditor {
     }
 
     ctx.restore();
+  }
+
+  // ─── History restore (called by main.js on undo/redo) ────────
+  // state = { overlayImages, selectedImageId } — no re-encoding, uses live image refs
+  restoreHistoryState(state) {
+    if (!state) return;
+    this.overlayImages = state.overlayImages.map(s => ({
+      ...s,
+      position: { ...s.position },
+      size: { ...s.size },
+    }));
+    this.selectedImageId = state.selectedImageId ?? null;
+    this._updateLayersList();
+    const sel = this.overlayImages.find(i => i.id === this.selectedImageId);
+    if (sel) this._syncSlidersFromImage(sel);
+    this._renderPreview();
+    this._renderComposite();
+  }
+
+  // ─── Snapshot the current overlay state for history ──────────
+  // Returns a plain object — no dataURL encoding, keeps HTMLImageElement refs.
+  snapshotOverlays() {
+    return {
+      overlayImages: this.overlayImages.map(img => ({
+        id: img.id,
+        name: img.name,
+        position: { ...img.position },
+        size: { ...img.size },
+        rotation: img.rotation,
+        aspectRatio: img.aspectRatio,
+        flipH: img.flipH,
+        flipV: img.flipV,
+        image: img.image, // live HTMLImageElement — no re-encoding needed
+      })),
+      selectedImageId: this.selectedImageId,
+    };
   }
 
   // --- Session persistence helpers (used by main.js autosave) ---

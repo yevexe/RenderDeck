@@ -54,8 +54,9 @@ export class CameraManager {
    */
   update() {
     if (this.controls) {
-      this.controls.update();
+      return this.controls.update(); // returns true if camera moved (used for demand rendering)
     }
+    return false;
   }
 
   /**
