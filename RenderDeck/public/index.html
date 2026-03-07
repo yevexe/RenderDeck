@@ -143,6 +143,16 @@
             <h3>Scene Set-Up</h3>
             <hr>
 
+            <div class="history-panel">
+              <div class="history-controls">
+                <button class="btn-history" id="scene-undo-btn" disabled>&#8617; Undo</button>
+                <button class="btn-history" id="scene-redo-btn" disabled>&#8618; Redo</button>
+              </div>
+              <div id="scene-history-list" class="history-list">
+                <p class="empty-message">No history yet</p>
+              </div>
+            </div>
+
             <h4>Object <span class="dot dot-positive" id="import-object-status-dot"></span></h4>
             <h5>Select an Object</h5>
             <select id="object-select" class="dropdown">
@@ -227,6 +237,16 @@
             <h3>Design Editor</h3>
             <hr>
 
+            <div class="history-panel">
+              <div class="history-controls">
+                <button class="btn-history" id="design-undo-btn" disabled>&#8617; Undo</button>
+                <button class="btn-history" id="design-redo-btn" disabled>&#8618; Redo</button>
+              </div>
+              <div id="design-history-list" class="history-list">
+                <p class="empty-message">No history yet</p>
+              </div>
+            </div>
+
             <!-- Part Select -->
             <h4>Select Part</h4>
             <select id="design-part-select" class="dropdown">
@@ -310,12 +330,23 @@
                 max="360" value="0">
             </div>
             <input id="design-rotation-slider" class="slider" type="range" min="0" max="360" step="1" value="0">
+
           </div>
 
           <!-- ===== Setting 3: Material (MeshPhysicalMaterial) ===== -->
           <div id="Setting3" class="tabcontent">
             <h3>Materials (MeshPhysicalMaterial)</h3>
             <hr>
+
+            <div class="history-panel">
+              <div class="history-controls">
+                <button class="btn-history" id="mat-undo-btn" disabled>&#8617; Undo</button>
+                <button class="btn-history" id="mat-redo-btn" disabled>&#8618; Redo</button>
+              </div>
+              <div id="mat-history-list" class="history-list">
+                <p class="empty-message">No history yet</p>
+              </div>
+            </div>
 
             <h5>Select an Object</h5>
             <select id="object-select-materialtab" class="dropdown">
@@ -546,6 +577,7 @@
                 value="1.00">
             </div>
             <input id="envint-slider" class="slider" type="range" min="0" max="5" step="0.01" value="1.00">
+
           </div>
 
           <!-- ===== Setting 4: Camera ===== -->

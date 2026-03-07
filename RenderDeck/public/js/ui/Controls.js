@@ -300,6 +300,34 @@ export class ControlsManager {
       v => cb.onMaterialPropertyChange?.('envMapIntensity', v));
 
     // ──────────────────────────────────────────────────────────────
+    // MATERIAL PROPERTY COMMIT — fires onMaterialPropertyCommit after slider release
+    // or color picker commit. Used for history snapshots (no live-preview impact).
+    {
+      const matSliders = [
+        el.metalnessSlider, el.roughnessSlider, el.specintSlider,
+        el.clearcoatSlider, el.clearcoatroughSlider, el.opacitySlider,
+        el.transmissionSlider, el.iorSlider, el.thicknessSlider,
+        el.attdistSlider, el.sheenroughSlider, el.emissiveintSlider, el.envintSlider,
+      ];
+      const matInputs = [
+        el.metalnessInput, el.roughnessInput, el.specintInput,
+        el.clearcoatroughInput, el.opacityInput, el.transmissionInput,
+        el.iorInput, el.thicknessInput, el.attdistInput, el.sheenroughInput,
+        el.emissiveintInput, el.envintInput,
+      ];
+      const matColors = [
+        el.basecolorPicker, el.speccolorPicker, el.attcolorPicker,
+        el.sheencolorPicker, el.emissivecolorPicker,
+      ];
+      const commit = () => cb.onMaterialPropertyCommit?.();
+      matSliders.forEach(s => s?.addEventListener('change', commit));
+      matInputs.forEach(i => i?.addEventListener('change', commit));
+      matColors.forEach(c => c?.addEventListener('change', commit));
+      // material preset select is already a commit point
+      if (el.materialSelect) el.materialSelect.addEventListener('change', commit);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // DESIGN EDITOR (Setting 2)
     // UVEditor._setupInlineUI() directly owns image upload, canvas drag,
     // and transform sliders. Controls.js only wires open + reset.

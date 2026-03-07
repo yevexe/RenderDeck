@@ -29,6 +29,7 @@ export class PropManager {
     this.customProps = new Map();
     this.mainModel = null;
     this._mainModelHelper = null;
+    this.onTransformCommit = null; // set by caller; receives (mode: 'translate'|'rotate'|'scale')
 
     this._setupTransformControls();
     this._setupEventListeners();
@@ -54,6 +55,7 @@ export class PropManager {
       if (!event.value) {
         this._gizmoWasActive = true;
         requestAnimationFrame(() => { this._gizmoWasActive = false; });
+        this.onTransformCommit?.(this.transformMode);
       }
     });
 
@@ -61,6 +63,7 @@ export class PropManager {
       if (this.selectedProp) {
         this._updatePropTransform(this.selectedProp);
       }
+      window.markNeedsRender?.(4);
     });
   }
 
@@ -393,6 +396,11 @@ export class PropManager {
     outline.material?.dispose();
   }
 
+  /** Returns true if there are any active outlines (used to skip updateOutlines when idle) */
+  hasOutlines() {
+    return !!(this.selectedProp?._outlineHelper || this._mainModelHelper);
+  }
+
   /** Call every frame from the animate loop to keep outlines tracking moving objects */
   updateOutlines() {
     const { dw, dh, linewidth } = this._outlineMetrics();
@@ -537,6 +545,30 @@ export class PropManager {
     }));
   }
 
+  getMainModelTransform() {
+    if (!this.mainModel) return null;
+    const p = this.mainModel.position;
+    const r = this.mainModel.rotation;
+    const s = this.mainModel.scale;
+    return {
+      position: { x: p.x, y: p.y, z: p.z },
+      rotation: { x: THREE.MathUtils.radToDeg(r.x), y: THREE.MathUtils.radToDeg(r.y), z: THREE.MathUtils.radToDeg(r.z) },
+      scale:    { x: s.x, y: s.y, z: s.z },
+    };
+  }
+
+  applyMainModelTransform(data) {
+    if (!this.mainModel || !data) return;
+    this.mainModel.position.set(data.position.x, data.position.y, data.position.z);
+    this.mainModel.rotation.set(
+      THREE.MathUtils.degToRad(data.rotation.x),
+      THREE.MathUtils.degToRad(data.rotation.y),
+      THREE.MathUtils.degToRad(data.rotation.z)
+    );
+    this.mainModel.scale.set(data.scale.x, data.scale.y, data.scale.z);
+    this.mainModel.updateMatrixWorld(true);
+  }
+
   async loadSceneData(propsData) {
     this.clearAllProps();
     for (const data of propsData) {
@@ -549,6 +581,7 @@ export class PropManager {
         );
         prop.object3D.scale.set(data.scale.x, data.scale.y, data.scale.z);
         this._updatePropTransform(prop);
+        window.markNeedsRender?.(4);
       }
     }
     this.deselectProp();

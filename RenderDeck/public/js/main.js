@@ -15,6 +15,9 @@ import { ModelManager } from './models/ModelManager.js';
 
 import { UVEditor } from './ui/UVEditor.js';
 import { ControlsManager } from './ui/Controls.js';
+import { SceneStateManager }    from './stateEditor/SceneState.js';
+import { DesignStateManager }   from './stateEditor/DesignState.js';
+import { MaterialStateManager } from './stateEditor/MaterialState.js';
 import * as IDBStorage from './storage/indexedDBStorage.js';
 
 // Utils
@@ -72,6 +75,49 @@ let currentGradientBg = '';     // key from GRADIENT_PRESETS
 
 const sceneStorage = new CustomSceneStorage();
 
+//═══════════════════════════════════════════════════════════════
+// STATE EDITORS — three independent undo/redo stacks
+//═══════════════════════════════════════════════════════════════
+
+const sceneState = new SceneStateManager({
+  propManager,
+  sceneManager,
+  loadScene,
+  applyBackground: () => applyBackground(),
+  markNeedsRender: (n) => markNeedsRender(n),
+  getEnv: () => ({ currentEnvironment, currentEnvTexture, showEnvBackground, gradientBgEnabled, currentGradientBg }),
+  setEnv: (updates) => {
+    if ('currentEnvironment' in updates) currentEnvironment = updates.currentEnvironment;
+    if ('currentEnvTexture'  in updates) currentEnvTexture  = updates.currentEnvTexture;
+    if ('showEnvBackground'  in updates) showEnvBackground  = updates.showEnvBackground;
+    if ('gradientBgEnabled'  in updates) gradientBgEnabled  = updates.gradientBgEnabled;
+    if ('currentGradientBg'  in updates) currentGradientBg  = updates.currentGradientBg;
+  },
+});
+
+const designState = new DesignStateManager({ uvEditor });
+
+const materialState = new MaterialStateManager({
+  materialManager,
+  getControls:     () => controls,
+  getActiveMesh:   () => activeMesh,
+  markNeedsRender: (n) => markNeedsRender(n),
+});
+
+function pushSceneHistory(label)  { sceneState.push(label); }
+
+function setupHistoryUI() {
+  sceneState.setupUI();
+  designState.setupUI();
+  materialState.setupUI();
+
+  // Save prop transform to scene history when user releases gizmo
+  const modeLabels = { translate: 'Moved prop', rotate: 'Rotated prop', scale: 'Scaled prop' };
+  propManager.onTransformCommit = (mode) => {
+    sceneState.push(modeLabels[mode] || 'Transformed prop');
+  };
+}
+
 const GRADIENT_PRESETS = {
   grad_studio:  'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
   grad_sunset:  'linear-gradient(135deg, #ff6b6b 0%, #feca57 50%, #ff9ff3 100%)',
@@ -105,6 +151,7 @@ function applyBackground() {
     }
   }
   syncSceneState();
+  markNeedsRender(4);
 }
 
 function syncSceneState() {
@@ -279,6 +326,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
     if (modelData.sceneState) {
       restoreSceneState(modelData.sceneState);
     }
+    markNeedsRender(60);
     if (onLoaded) onLoaded(object);
   },
   (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
@@ -328,6 +376,7 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       centerAndFrameModel(object, cameraManager, {mode: 'corner'});
       log(`${name} loaded.`);
       if (activeMesh) uvEditor.open(activeMesh, name, 'Wood');
+      markNeedsRender(60);
       if (onLoaded) onLoaded(object);
     },
     (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
@@ -377,6 +426,7 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       if (activeMesh) {
         uvEditor.open(activeMesh, name, 'Wood');
       }
+      markNeedsRender(60);
       if (onLoaded) onLoaded(object);
     },
     (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
@@ -710,11 +760,16 @@ const controls = new ControlsManager({
           }
         });
       }
+      pushSceneHistory(`Environment: ${name}`);
     });
   },
 
   onMaterialPropertyChange: (property, value) => {
     updateMaterialProperty(property, value);
+  },
+
+  onMaterialPropertyCommit: () => {
+    materialState.push('Material change');
   },
 
   onApplyDesign: () => {
@@ -822,8 +877,11 @@ controls.setVisible('objectPartSelect', false);
 // --- hover highlighting and click-to-select ---
 const canvas = rendererManager.getDomElement();
 canvas.addEventListener('pointermove', onPointerMove);
+canvas.addEventListener('pointermove', () => markNeedsRender(4), { passive: true });
+canvas.addEventListener('wheel', () => markNeedsRender(8), { passive: true });
 canvas.addEventListener('pointerleave', clearHighlight);
 canvas.addEventListener('click', onCanvasClick);
+canvas.addEventListener('pointerdown', () => markNeedsRender(4));
 
 function setHighlight(mesh) {
   if (!mesh || mesh === hoveredMesh) return;
@@ -1411,6 +1469,7 @@ function setupBackgroundUI() {
     envBgToggle.addEventListener('change', e => {
       showEnvBackground = e.target.checked;
       applyBackground();
+      pushSceneHistory(showEnvBackground ? 'Background: show env' : 'Background: hide env');
     });
   }
 
@@ -1421,6 +1480,7 @@ function setupBackgroundUI() {
     gradBgToggle.addEventListener('change', e => {
       gradientBgEnabled = e.target.checked;
       applyBackground();
+      pushSceneHistory(gradientBgEnabled ? 'Background: gradient on' : 'Background: gradient off');
     });
   }
 
@@ -1430,6 +1490,7 @@ function setupBackgroundUI() {
     bgSelect.addEventListener('change', e => {
       currentGradientBg = e.target.value;
       applyBackground();
+      pushSceneHistory(`Background: ${e.target.value || 'none'}`);
     });
   }
 }
@@ -1471,14 +1532,22 @@ function setupPropsUI() {
     const target = cameraManager.getControls().target;
     await propManager.addProp(propId, { x: target.x, y: target.y, z: target.z });
     propsSelect.value = '';
+    pushSceneHistory(`Added prop: ${propId}`);
   });
 
   deletePropBtn?.addEventListener('click', () => {
-    if (propManager.selectedProp) propManager.removeProp(propManager.selectedProp.id);
+    if (propManager.selectedProp) {
+      const id = propManager.selectedProp.id;
+      propManager.removeProp(id);
+      pushSceneHistory(`Removed prop: ${id}`);
+    }
   });
 
   clearPropsBtn?.addEventListener('click', () => {
-    if (confirm('Clear all props?')) propManager.clearAllProps();
+    if (confirm('Clear all props?')) {
+      propManager.clearAllProps();
+      pushSceneHistory('Cleared all props');
+    }
   });
 }
 
@@ -1706,11 +1775,29 @@ async function setupSceneSetupUI() {
 // ANIMATION LOOP
 //═══════════════════════════════════════════════════════════════
 
+// Demand rendering — only render when something changed.
+// markNeedsRender(frames) schedules N frames of rendering (default 4).
+// Camera movement/damping also triggers continuous rendering while active.
+let _renderBurst = 4;
+function markNeedsRender(frames = 4) {
+  if (frames > _renderBurst) _renderBurst = frames;
+}
+window.markNeedsRender = markNeedsRender; // expose for UVEditor + other modules
+
+// Any slider or dropdown change triggers a render burst (covers all material/bg/env changes)
+document.addEventListener('input',  () => markNeedsRender(4), { passive: true, capture: true });
+document.addEventListener('change', () => markNeedsRender(4), { passive: true, capture: true });
+
 function animate() {
   requestAnimationFrame(animate);
-  cameraManager.update();
-  propManager.updateOutlines();
-  rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
+  const cameraMoved = cameraManager.update(); // true while camera is moving/damping
+  if (cameraMoved && _renderBurst < 4) _renderBurst = 4;
+
+  if (_renderBurst > 0) {
+    if (propManager.hasOutlines()) propManager.updateOutlines();
+    rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
+    _renderBurst--;
+  }
 }
 animate();
 
@@ -1746,6 +1833,7 @@ async function initializeApp() {
   setupPropsUI();
   setupTransformToolbar();
   await setupSceneSetupUI();
+  setupHistoryUI();
 
   // Apply initial renderer tone mapping
   rendererManager.getRenderer().toneMapping = THREE.ACESFilmicToneMapping;
@@ -1755,6 +1843,13 @@ async function initializeApp() {
   if (!restored && STANDARD_OBJECTS.length > 0) {
     setTimeout(() => loadModel(STANDARD_OBJECTS[0].label), 100);
   }
+
+  // Record initial history states after everything is loaded
+  setTimeout(() => {
+    designState.init('Initial state');
+    materialState.init('Initial state');
+    sceneState.init('Initial state');
+  }, 500);
 }
 
 window.addEventListener('beforeunload', saveSessionState);
