@@ -48,6 +48,17 @@ export class HistoryManager {
   canUndo() { return this._index > 0; }
   canRedo() { return this._index < this._states.length - 1; }
 
+  /** Timestamp of the entry that would be undone next, or -Infinity if nothing to undo. */
+  peekUndoTimestamp() {
+    return this._index > 0 ? this._states[this._index].timestamp : -Infinity;
+  }
+
+  /** Timestamp of the entry that would be redone next, or -Infinity if nothing to redo. */
+  peekRedoTimestamp() {
+    const next = this._index + 1;
+    return next < this._states.length ? this._states[next].timestamp : -Infinity;
+  }
+
   /**
    * All history entries for display, most recent first.
    * Each entry: { label, timestamp, isCurrent, originalIndex }

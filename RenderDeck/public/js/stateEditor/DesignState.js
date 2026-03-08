@@ -52,22 +52,6 @@ export class DesignStateManager {
       this.push(label);
       this.updateUI();
     };
-
-    // Keyboard: Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
-    document.addEventListener('keydown', (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        const state = this.history.undo();
-        if (state) this.restore(state);
-        this.updateUI();
-      } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
-        e.preventDefault();
-        const state = this.history.redo();
-        if (state) this.restore(state);
-        this.updateUI();
-      }
-    });
   }
 
   updateUI() {

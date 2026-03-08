@@ -116,6 +116,34 @@ function setupHistoryUI() {
   propManager.onTransformCommit = (mode) => {
     sceneState.push(modeLabels[mode] || 'Transformed prop');
   };
+
+  // Unified Ctrl+Z / Ctrl+Shift+Z: undo/redo whichever stack has the most recent entry
+  const managers = [
+    { mgr: sceneState,    restore: (s) => sceneState.restore(s),    ui: () => sceneState.updateUI()    },
+    { mgr: designState,   restore: (s) => designState.restore(s),   ui: () => designState.updateUI()   },
+    { mgr: materialState, restore: (s) => materialState.restore(s), ui: () => materialState.updateUI() },
+  ];
+
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+
+    if (e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      const target = managers.reduce((best, m) =>
+        m.mgr.history.peekUndoTimestamp() > best.mgr.history.peekUndoTimestamp() ? m : best
+      );
+      const state = target.mgr.history.undo();
+      if (state) { target.restore(state); target.ui(); }
+
+    } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+      e.preventDefault();
+      const target = managers.reduce((best, m) =>
+        m.mgr.history.peekRedoTimestamp() > best.mgr.history.peekRedoTimestamp() ? m : best
+      );
+      const state = target.mgr.history.redo();
+      if (state) { target.restore(state); target.ui(); }
+    }
+  });
 }
 
 const GRADIENT_PRESETS = {
