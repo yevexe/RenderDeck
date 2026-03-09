@@ -54,11 +54,15 @@ export class CustomModelStorage {
         version: 2, // v2 = overlay-based, not baked
         overlayKeys: overlayKeys,
         overlayMetadata: modelData.overlayImages ? modelData.overlayImages.map(img => ({
-          name: img.name,
-          position: { ...img.position },
-          size: { ...img.size },
-          rotation: img.rotation,
-          aspectRatio: img.aspectRatio
+          name:        img.name,
+          type:        img.type     || 'image',
+          textData:    img.textData ? { ...img.textData } : null,
+          position:    { ...img.position },
+          size:        { ...img.size },
+          rotation:    img.rotation,
+          aspectRatio: img.aspectRatio,
+          flipH:       img.flipH ?? false,
+          flipV:       img.flipV ?? false
         })) : []
       };
 

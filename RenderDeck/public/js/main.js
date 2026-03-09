@@ -321,15 +321,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
         materialManager.applySavedProperties(child.material, modelData.materialProperties);
       }
 
-      if (child.material && modelData.overlayImages?.length > 0) {
-        TextureCompositor.createCompositeTexture(child.material.map, modelData.overlayImages)
-          .then(tex => {
-            if (child.material.map) child.material.map.dispose();
-            child.material.map = tex;
-            child.material.needsUpdate = true;
-          })
-          .catch(err => logError(`Composite failed: ${err.message}`));
-      }
+      // Composite texture is applied by uvEditor.open() after it loads the overlays.
     });
 
     sceneManager.add(object);
