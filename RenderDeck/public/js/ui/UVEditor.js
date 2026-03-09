@@ -58,6 +58,12 @@ export class UVEditor {
     // History hook — set by main.js; called with (label) after any committed change
     this.onCommit = null;
 
+    // Text tool state
+    this._editingTextId = null;
+
+    // Layer drag-reorder state
+    this._dragLayerId = null;
+
     this._setupInlineUI();
   }
 
@@ -100,7 +106,7 @@ export class UVEditor {
       this.uvCanvas.addEventListener('mouseup', () => {
         if (this.isDragging) {
           this._renderComposite();
-          this.onCommit?.(`${this._dragMode === 'rotate' ? 'Rotated' : this._dragMode === 'resize' ? 'Resized' : 'Moved'} overlay`);
+          this.onCommit?.(`${this._dragMode === 'rotate' ? 'Rotated' : this._dragMode.startsWith('resize') ? 'Resized' : 'Moved'} overlay`);
         }
         this.isDragging = false; this._dragMode = 'translate';
       });
@@ -164,6 +170,27 @@ export class UVEditor {
         this._lockAspectRatio = lockAspect.checked;
         lockAspect.addEventListener('change', e => { this._lockAspectRatio = e.target.checked; });
       }
+
+      // Text tool
+      const addTextBtn = document.getElementById('add-text-btn');
+      if (addTextBtn) addTextBtn.addEventListener('click', () => this._openTextPanel(null));
+
+      const textCreateBtn = document.getElementById('text-tool-create-btn');
+      if (textCreateBtn) textCreateBtn.addEventListener('click', () => this._onTextCreate());
+
+      const textCancelBtn = document.getElementById('text-tool-cancel-btn');
+      if (textCancelBtn) textCancelBtn.addEventListener('click', () => this._closeTextPanel());
+
+      // Sync text size slider ↔ input
+      const textSizeSlider = document.getElementById('text-tool-size-slider');
+      const textSizeInput  = document.getElementById('text-tool-size-input');
+      if (textSizeSlider && textSizeInput) {
+        textSizeSlider.addEventListener('input', () => { textSizeInput.value = textSizeSlider.value; });
+        textSizeInput.addEventListener('input', () => {
+          const v = parseInt(textSizeInput.value);
+          if (!isNaN(v)) textSizeSlider.value = v;
+        });
+      }
     };
 
     if (document.readyState === 'loading') {
@@ -206,14 +233,14 @@ export class UVEditor {
       case 'posY': img.position.y = (value + 1) / 2 * 100; break;
       case 'width':
         img.size.w = value * 50;
-        if (this._lockAspectRatio && img.aspectRatio) {
+        if (this._lockAspectRatio && img.aspectRatio && img.type !== 'text') {
           img.size.h = img.size.w / img.aspectRatio;
           _setSlider('design-height-slider', 'design-height-input', (img.size.h / 50).toFixed(2));
         }
         break;
       case 'height':
         img.size.h = value * 50;
-        if (this._lockAspectRatio && img.aspectRatio) {
+        if (this._lockAspectRatio && img.aspectRatio && img.type !== 'text') {
           img.size.w = img.size.h * img.aspectRatio;
           _setSlider('design-width-slider', 'design-width-input', (img.size.w / 50).toFixed(2));
         }
@@ -273,15 +300,17 @@ export class UVEditor {
           const img = new Image();
           img.onload = () => {
             this.overlayImages.push({
-              id: this.nextImageId++,
-              image: img,
-              name: saved.name,
-              position: { ...saved.position },
-              size: { ...saved.size },
-              rotation: saved.rotation,
+              id:          this.nextImageId++,
+              image:       img,
+              name:        saved.name,
+              type:        saved.type     || 'image',
+              textData:    saved.textData ? { ...saved.textData } : null,
+              position:    { ...saved.position },
+              size:        { ...saved.size },
+              rotation:    saved.rotation,
               aspectRatio: saved.aspectRatio,
-              flipH: saved.flipH ?? false,
-              flipV: saved.flipV ?? false
+              flipH:       saved.flipH ?? false,
+              flipV:       saved.flipV ?? false
             });
             res();
           };
@@ -297,9 +326,8 @@ export class UVEditor {
       this.nextImageId = 1;
     }
 
-    // Capture immutable base inputs for this edit session.
-    // baseTexture should represent the underlying source map, not the live composited map.
-    this.baseTexture = mesh.material?.map || null;
+    // Custom models use null base so the composite starts from material color only.
+    this.baseTexture = isCustom ? null : (mesh.material?.map || null);
     this._materialBaseColor = mesh.material?.color
       ? ('#' + mesh.material.color.getHexString())
       : '#ffffff';
@@ -310,6 +338,22 @@ export class UVEditor {
     this._updateLayersList();
     this._renderPreview();
     this.log(`Design Editor active for: ${this.customModelName || this.activeModelName}`);
+
+    // For custom models with overlays, apply the composite immediately so the
+    // designs are visible on the 3D model right after loading (correct layer order,
+    // flipH/flipV, and material color as the base layer).
+    if (isCustom && this.overlayImages.length > 0) {
+      this._renderComposite();
+      const texture = new THREE.CanvasTexture(this.textureCanvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      this.liveCanvasTexture = texture;
+      if (mesh.material) {
+        mesh.material.map = texture;
+        mesh.material.needsUpdate = true;
+      }
+      window.markNeedsRender?.(4);
+    }
 
     // Re-apply UV checker to the new mesh if it was active on the previous part
     if (wasCheckUVActive) this._toggleCheckUV();
@@ -392,22 +436,73 @@ export class UVEditor {
     this.overlayImages.forEach((img, i) => {
       const item = document.createElement('div');
       item.className = 'image-layer-item' + (img.id === this.selectedImageId ? ' selected' : '');
+      item.draggable = true;
 
-      // Thumbnail
+      // ── Drag-to-reorder ──────────────────────────────────────
+      item.addEventListener('dragstart', (e) => {
+        this._dragLayerId = img.id;
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => { item.style.opacity = '0.4'; }, 0);
+      });
+      item.addEventListener('dragend', () => {
+        item.style.opacity = '';
+        item.style.borderTop = '';
+        item.style.borderBottom = '';
+        this._dragLayerId = null;
+      });
+      item.addEventListener('dragover', (e) => {
+        if (this._dragLayerId === null || this._dragLayerId === img.id) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const before = e.clientY < item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2;
+        item.style.borderTop    = before ? '2px solid #4CAF50' : '';
+        item.style.borderBottom = before ? '' : '2px solid #4CAF50';
+      });
+      item.addEventListener('dragleave', () => {
+        item.style.borderTop = '';
+        item.style.borderBottom = '';
+      });
+      item.addEventListener('drop', (e) => {
+        e.preventDefault();
+        item.style.borderTop = '';
+        item.style.borderBottom = '';
+        if (this._dragLayerId === null || this._dragLayerId === img.id) return;
+
+        const fromIdx = this.overlayImages.findIndex(x => x.id === this._dragLayerId);
+        const toIdx   = this.overlayImages.findIndex(x => x.id === img.id);
+        if (fromIdx === -1 || toIdx === -1) return;
+
+        const before = e.clientY < item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2;
+        const [moved] = this.overlayImages.splice(fromIdx, 1);
+        const insertAt = this.overlayImages.findIndex(x => x.id === img.id);
+        this.overlayImages.splice(before ? insertAt : insertAt + 1, 0, moved);
+
+        this._dragLayerId = null;
+        this._updateLayersList();
+        this._renderPreview();
+        this._renderComposite();
+        this.onCommit?.('Reordered layers');
+      });
+
+      // Thumbnail — white bg for text layers so transparent pixels are visible
       const thumb = document.createElement('canvas');
       thumb.width = 30; thumb.height = 30;
       thumb.style.cssText = 'width:30px;height:30px;border:1px solid #555;border-radius:2px;margin-right:8px;flex-shrink:0;';
+      thumb.draggable = false;
       const tCtx = thumb.getContext('2d');
+      if (img.type === 'text') {
+        tCtx.fillStyle = '#ffffff';
+        tCtx.fillRect(0, 0, 30, 30);
+      }
       tCtx.drawImage(img.image, 0, 0, 30, 30);
 
       const name = document.createElement('span');
       name.className = 'image-layer-name';
-      name.textContent = `${i + 1}. ${img.name}`;
+      name.textContent = `${i + 1}. ${img.type === 'text' ? 'T ' : ''}${img.name}`;
 
       const del = document.createElement('button');
       del.textContent = '✕';
       del.className = 'button-medium';
-      del.style.marginLeft = 'auto';
       del.addEventListener('click', (e) => {
         e.stopPropagation();
         this.selectedImageId = img.id;
@@ -416,6 +511,23 @@ export class UVEditor {
 
       item.appendChild(thumb);
       item.appendChild(name);
+
+      if (img.type === 'text') {
+        const editBtn = document.createElement('button');
+        editBtn.textContent = '✎';
+        editBtn.className = 'button-medium';
+        editBtn.title = 'Edit text';
+        editBtn.style.marginLeft = 'auto';
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.selectImage(img.id);
+          this._openTextPanel(img);
+        });
+        item.appendChild(editBtn);
+      } else {
+        del.style.marginLeft = 'auto';
+      }
+
       item.appendChild(del);
       item.addEventListener('click', () => this.selectImage(img.id));
       list.appendChild(item);
@@ -471,7 +583,8 @@ export class UVEditor {
       ? [[-w,-h],[-w,0],[-w,h],[0,-h],[0,0],[0,h],[w,-h],[w,0],[w,h]]
       : [[0, 0]];
 
-    this.overlayImages.forEach(img => {
+    // Draw bottom-up: last array entry first, so layer 1 (index 0) renders on top.
+    [...this.overlayImages].reverse().forEach(img => {
       const x = (img.position.x / 100) * w;
       const y = (img.position.y / 100) * h;
       const iw = (img.size.w / 100) * w;
@@ -493,8 +606,13 @@ export class UVEditor {
           // Corner resize handles
           ctx.fillStyle = '#4CAF50';
           const hs = 7;
+          // Corner handles
           [[-iw/2, -ih/2], [iw/2, -ih/2], [-iw/2, ih/2], [iw/2, ih/2]].forEach(([cx, cy]) => {
             ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
+          });
+          // Edge midpoint handles
+          [[0, -ih/2], [0, ih/2], [-iw/2, 0], [iw/2, 0]].forEach(([ex, ey]) => {
+            ctx.fillRect(ex - hs / 2, ey - hs / 2, hs, hs);
           });
           // Rotate handle: circle above top-center connected by a line
           const rotY = -ih / 2 - 16;
@@ -531,7 +649,8 @@ export class UVEditor {
       ? [[-w,-h],[-w,0],[-w,h],[0,-h],[0,0],[0,h],[w,-h],[w,0],[w,h]]
       : [[0, 0]];
 
-    this.overlayImages.forEach(img => {
+    // Draw bottom-up: last array entry first, so layer 1 (index 0) renders on top.
+    [...this.overlayImages].reverse().forEach(img => {
       const x = (img.position.x / 100) * w;
       const y = (img.position.y / 100) * h;
       const iw = (img.size.w / 100) * w;
@@ -712,14 +831,16 @@ export class UVEditor {
       c.width = img.image.width; c.height = img.image.height;
       c.getContext('2d').drawImage(img.image, 0, 0);
       return {
-        name: img.name,
-        position: { ...img.position },
-        size: { ...img.size },
-        rotation: img.rotation,
+        name:        img.name,
+        type:        img.type     || 'image',
+        textData:    img.textData ? { ...img.textData } : null,
+        position:    { ...img.position },
+        size:        { ...img.size },
+        rotation:    img.rotation,
         aspectRatio: img.aspectRatio,
-        flipH: img.flipH,
-        flipV: img.flipV,
-        imageData: c.toDataURL('image/png')
+        flipH:       img.flipH,
+        flipV:       img.flipV,
+        imageData:   c.toDataURL('image/png')
       };
     }));
 
@@ -792,7 +913,7 @@ export class UVEditor {
     const ROT_DIST   = (16 / 512) * 100;
     const ROT_RADIUS = (10 / 512) * 100;
 
-    for (let i = this.overlayImages.length - 1; i >= 0; i--) {
+    for (let i = 0; i < this.overlayImages.length; i++) {
       const img = this.overlayImages[i];
       const hw = img.size.w / 2, hh = img.size.h / 2;
       const centers = this._getWrapCenters(img);
@@ -811,6 +932,11 @@ export class UVEditor {
               this.uvCanvas.style.cursor = 'nwse-resize'; return;
             }
           }
+          // Edge midpoint handles
+          if (Math.abs(local.x) <= CORNER_HS && Math.abs(local.y + hh) <= CORNER_HS) { this.uvCanvas.style.cursor = 'ns-resize'; return; }
+          if (Math.abs(local.x) <= CORNER_HS && Math.abs(local.y - hh) <= CORNER_HS) { this.uvCanvas.style.cursor = 'ns-resize'; return; }
+          if (Math.abs(local.x + hw) <= CORNER_HS && Math.abs(local.y) <= CORNER_HS) { this.uvCanvas.style.cursor = 'ew-resize'; return; }
+          if (Math.abs(local.x - hw) <= CORNER_HS && Math.abs(local.y) <= CORNER_HS) { this.uvCanvas.style.cursor = 'ew-resize'; return; }
         }
         // Body hit
         if (Math.abs(local.x) <= hw && Math.abs(local.y) <= hh) {
@@ -830,7 +956,7 @@ export class UVEditor {
     const ROT_DIST   = (16 / 512) * 100;
     const ROT_RADIUS = (10 / 512) * 100;
 
-    for (let i = this.overlayImages.length - 1; i >= 0; i--) {
+    for (let i = 0; i < this.overlayImages.length; i++) {
       const img = this.overlayImages[i];
       const hw = img.size.w / 2, hh = img.size.h / 2;
       const centers = this._getWrapCenters(img);
@@ -852,8 +978,9 @@ export class UVEditor {
           return;
         }
 
-        // 2. Corner resize handles (only for the currently selected image)
+        // 2. Corner + edge resize handles (only for the currently selected image)
         if (img.id === this.selectedImageId) {
+          // Corners
           for (const [cx, cy] of [[-hw,-hh],[hw,-hh],[-hw,hh],[hw,hh]]) {
             if (Math.abs(local.x - cx) <= CORNER_HS && Math.abs(local.y - cy) <= CORNER_HS) {
               this.isDragging = true;
@@ -863,6 +990,27 @@ export class UVEditor {
               this.uvCanvas.style.cursor = 'nwse-resize';
               return;
             }
+          }
+          // Edge midpoints — top/bottom stretch height, left/right stretch width
+          if (Math.abs(local.x) <= CORNER_HS && Math.abs(local.y + hh) <= CORNER_HS) {
+            this.isDragging = true; this._dragMode = 'resize-v';
+            this._resizeStart = { origW: img.size.w, origH: img.size.h, origDiag: 1 };
+            this.uvCanvas.style.cursor = 'ns-resize'; return;
+          }
+          if (Math.abs(local.x) <= CORNER_HS && Math.abs(local.y - hh) <= CORNER_HS) {
+            this.isDragging = true; this._dragMode = 'resize-v';
+            this._resizeStart = { origW: img.size.w, origH: img.size.h, origDiag: 1 };
+            this.uvCanvas.style.cursor = 'ns-resize'; return;
+          }
+          if (Math.abs(local.x + hw) <= CORNER_HS && Math.abs(local.y) <= CORNER_HS) {
+            this.isDragging = true; this._dragMode = 'resize-h';
+            this._resizeStart = { origW: img.size.w, origH: img.size.h, origDiag: 1 };
+            this.uvCanvas.style.cursor = 'ew-resize'; return;
+          }
+          if (Math.abs(local.x - hw) <= CORNER_HS && Math.abs(local.y) <= CORNER_HS) {
+            this.isDragging = true; this._dragMode = 'resize-h';
+            this._resizeStart = { origW: img.size.w, origH: img.size.h, origDiag: 1 };
+            this.uvCanvas.style.cursor = 'ew-resize'; return;
           }
         }
 
@@ -904,7 +1052,7 @@ export class UVEditor {
 
     } else if (this._dragMode === 'resize') {
       const local = this._getLocalMouseCoords(mouseX, mouseY, img);
-      if (this._lockAspectRatio && img.aspectRatio) {
+      if (this._lockAspectRatio && img.aspectRatio && img.type !== 'text') {
         // Scale uniformly by how far mouse is from center vs original diagonal
         const newDiag = Math.sqrt(local.x ** 2 + local.y ** 2);
         const scale = newDiag / this._resizeStart.origDiag;
@@ -914,6 +1062,12 @@ export class UVEditor {
         img.size.w = Math.max(2, Math.abs(local.x) * 2);
         img.size.h = Math.max(1, Math.abs(local.y) * 2);
       }
+    } else if (this._dragMode === 'resize-h') {
+      const local = this._getLocalMouseCoords(mouseX, mouseY, img);
+      img.size.w = Math.max(2, Math.abs(local.x) * 2);
+    } else if (this._dragMode === 'resize-v') {
+      const local = this._getLocalMouseCoords(mouseX, mouseY, img);
+      img.size.h = Math.max(1, Math.abs(local.y) * 2);
     }
 
     this._syncSlidersFromImage(img);
@@ -958,6 +1112,145 @@ export class UVEditor {
     this._renderPreview();
     this._renderComposite();
     this.onCommit?.(`Flipped ${axis === 'h' ? 'horizontal' : 'vertical'}`);
+  }
+
+  // ─── Text Tool ────────────────────────────────────────────────
+
+  _openTextPanel(editLayer = null) {
+    const panel = document.getElementById('text-tool-panel');
+    if (!panel) return;
+    this._editingTextId = editLayer ? editLayer.id : null;
+
+    const title = document.getElementById('text-tool-panel-title');
+    if (title) title.textContent = editLayer ? 'Edit Text' : 'Add Text';
+
+    const td = editLayer?.textData;
+    const g = id => document.getElementById(id);
+
+    if (g('text-tool-content'))    g('text-tool-content').value    = td?.content    ?? '';
+    if (g('text-tool-font'))       g('text-tool-font').value       = td?.fontFamily ?? 'Roboto';
+    const size = td?.fontSize ?? 72;
+    if (g('text-tool-size-input')) g('text-tool-size-input').value = size;
+    if (g('text-tool-size-slider'))g('text-tool-size-slider').value= size;
+    if (g('text-tool-color'))      g('text-tool-color').value      = td?.color      ?? '#000000';
+    if (g('text-tool-bold'))       g('text-tool-bold').checked     = td?.bold       ?? false;
+    if (g('text-tool-italic'))     g('text-tool-italic').checked   = td?.italic     ?? false;
+
+    panel.style.display = 'block';
+  }
+
+  _closeTextPanel() {
+    const panel = document.getElementById('text-tool-panel');
+    if (panel) panel.style.display = 'none';
+    this._editingTextId = null;
+  }
+
+  async _onTextCreate() {
+    const g = id => document.getElementById(id);
+    const content = g('text-tool-content')?.value ?? '';
+    if (!content.trim()) { alert('Please enter some text.'); return; }
+
+    const textData = {
+      content,
+      fontFamily: g('text-tool-font')?.value        ?? 'Roboto',
+      fontSize:   parseInt(g('text-tool-size-input')?.value ?? '72'),
+      color:      g('text-tool-color')?.value        ?? '#000000',
+      bold:       g('text-tool-bold')?.checked       ?? false,
+      italic:     g('text-tool-italic')?.checked     ?? false,
+    };
+
+    const editId = this._editingTextId;
+    this._closeTextPanel();
+    await this._addTextLayer(textData, editId);
+  }
+
+  // Render text to a high-res canvas and return a loaded HTMLImageElement.
+  async _buildTextImage(textData) {
+    const { content, fontFamily, fontSize, color, bold, italic } = textData;
+    const weight = bold   ? 'bold'   : 'normal';
+    const style  = italic ? 'italic' : 'normal';
+    const scale  = 3; // 3× oversample for crisp texture quality
+    const scaledSize = fontSize * scale;
+    const fontStr = `${style} ${weight} ${scaledSize}px "${fontFamily}"`;
+
+    // Ensure the font is available before drawing
+    try { await document.fonts.load(fontStr); } catch (_) { /* fallback to whatever is cached */ }
+
+    const lines      = content.split('\n');
+    const lineHeight = scaledSize * 1.25;
+    const padH       = scaledSize * 0.4;
+    const padV       = scaledSize * 0.3;
+
+    // Measure maximum line width
+    const mCvs = document.createElement('canvas');
+    mCvs.width = 4; mCvs.height = 4;
+    const mCtx = mCvs.getContext('2d');
+    mCtx.font = fontStr;
+    let maxW = 0;
+    for (const line of lines) {
+      const w = mCtx.measureText(line || ' ').width;
+      if (w > maxW) maxW = w;
+    }
+
+    const cvs = document.createElement('canvas');
+    cvs.width  = Math.max(Math.ceil(maxW + padH * 2), 4);
+    cvs.height = Math.max(Math.ceil(lineHeight * lines.length + padV * 2), 4);
+
+    const ctx = cvs.getContext('2d');
+    ctx.font         = fontStr;
+    ctx.fillStyle    = color;
+    ctx.textBaseline = 'top';
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], padH, padV + i * lineHeight);
+    }
+
+    const dataUrl = cvs.toDataURL('image/png');
+    return new Promise(resolve => {
+      const img = new Image();
+      img.onload = () => resolve({ image: img, aspectRatio: cvs.width / cvs.height });
+      img.src = dataUrl;
+    });
+  }
+
+  // Create a new text overlay or regenerate an existing one.
+  async _addTextLayer(textData, editId = null) {
+    const { image, aspectRatio } = await this._buildTextImage(textData);
+    const label = `"${textData.content.replace(/\n/g, ' ').slice(0, 24)}"`;
+
+    if (editId !== null) {
+      const existing = this.overlayImages.find(i => i.id === editId);
+      if (existing) {
+        existing.image       = image;
+        existing.name        = label;
+        existing.textData    = { ...textData };
+        existing.aspectRatio = aspectRatio;
+        existing.size.h      = existing.size.w / aspectRatio;
+      }
+      this.log('Text layer updated');
+      this.onCommit?.('Edited text layer');
+    } else {
+      const entry = {
+        id:          this.nextImageId++,
+        image,
+        name:        label,
+        type:        'text',
+        textData:    { ...textData },
+        position:    { x: 50, y: 50 },
+        size:        { w: 40, h: 40 / aspectRatio },
+        rotation:    0,
+        aspectRatio,
+        flipH:       false,
+        flipV:       false,
+      };
+      this.overlayImages.push(entry);
+      this.selectImage(entry.id);
+      this.log('Text layer added — drag to position, click layer to edit');
+      this.onCommit?.('Added text layer');
+    }
+
+    this._updateLayersList();
+    this._renderPreview();
+    this._renderComposite();
   }
 
   // ─── Deactivate Check UV (internal helper) ────────────────────
@@ -1061,7 +1354,8 @@ export class UVEditor {
     this.overlayImages = state.overlayImages.map(s => ({
       ...s,
       position: { ...s.position },
-      size: { ...s.size },
+      size:     { ...s.size },
+      textData: s.textData ? { ...s.textData } : null,
     }));
     this.selectedImageId = state.selectedImageId ?? null;
     this._updateLayersList();
@@ -1076,15 +1370,17 @@ export class UVEditor {
   snapshotOverlays() {
     return {
       overlayImages: this.overlayImages.map(img => ({
-        id: img.id,
-        name: img.name,
-        position: { ...img.position },
-        size: { ...img.size },
-        rotation: img.rotation,
+        id:          img.id,
+        name:        img.name,
+        type:        img.type     || 'image',
+        textData:    img.textData ? { ...img.textData } : null,
+        position:    { ...img.position },
+        size:        { ...img.size },
+        rotation:    img.rotation,
         aspectRatio: img.aspectRatio,
-        flipH: img.flipH,
-        flipV: img.flipV,
-        image: img.image, // live HTMLImageElement — no re-encoding needed
+        flipH:       img.flipH,
+        flipV:       img.flipV,
+        image:       img.image, // live HTMLImageElement — no re-encoding needed
       })),
       selectedImageId: this.selectedImageId,
     };
@@ -1110,15 +1406,17 @@ export class UVEditor {
       nextImageId: this.nextImageId,
       materialBaseColor: this._materialBaseColor,
       overlayImages: this.overlayImages.map(img => ({
-        id: img.id,
-        name: img.name,
-        position: { ...img.position },
-        size: { ...img.size },
-        rotation: img.rotation,
+        id:          img.id,
+        name:        img.name,
+        type:        img.type     || 'image',
+        textData:    img.textData ? { ...img.textData } : null,
+        position:    { ...img.position },
+        size:        { ...img.size },
+        rotation:    img.rotation,
         aspectRatio: img.aspectRatio,
-        flipH: !!img.flipH,
-        flipV: !!img.flipV,
-        imageData: this._imageToDataURL(img.image),
+        flipH:       !!img.flipH,
+        flipV:       !!img.flipV,
+        imageData:   this._imageToDataURL(img.image),
       })),
     };
   }
@@ -1138,15 +1436,17 @@ export class UVEditor {
       const img = new Image();
       img.onload = () => {
         loaded.push({
-          id: Number.isFinite(saved.id) ? saved.id : this.nextImageId++,
-          image: img,
-          name: saved.name || 'Design',
-          position: saved.position ? { ...saved.position } : { x: 50, y: 50 },
-          size: saved.size ? { ...saved.size } : { w: 30, h: 30 },
-          rotation: Number.isFinite(saved.rotation) ? saved.rotation : 0,
+          id:          Number.isFinite(saved.id) ? saved.id : this.nextImageId++,
+          image:       img,
+          name:        saved.name || 'Design',
+          type:        saved.type     || 'image',
+          textData:    saved.textData ? { ...saved.textData } : null,
+          position:    saved.position ? { ...saved.position } : { x: 50, y: 50 },
+          size:        saved.size     ? { ...saved.size }     : { w: 30, h: 30 },
+          rotation:    Number.isFinite(saved.rotation) ? saved.rotation : 0,
           aspectRatio: saved.aspectRatio || (img.width / img.height),
-          flipH: !!saved.flipH,
-          flipV: !!saved.flipV,
+          flipH:       !!saved.flipH,
+          flipV:       !!saved.flipV,
         });
         resolve();
       };
