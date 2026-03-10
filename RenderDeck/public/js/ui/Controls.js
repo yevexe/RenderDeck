@@ -18,7 +18,6 @@ export class ControlsManager {
 
       // Setting 2 - Design editor (UV overlay)
       textureImageUpload: document.getElementById('texture-image-upload'),
-      applyDesignBtn: document.getElementById('apply-design-btn'),
       resetTextureBtn: document.getElementById('reset-texture-btn'),
       designPosXSlider: document.getElementById('design-posx-slider'),
       designPosXInput: document.getElementById('design-posx-input'),
@@ -331,9 +330,6 @@ export class ControlsManager {
     // DESIGN EDITOR (Setting 2)
     // UVEditor._setupInlineUI() directly owns image upload, canvas drag,
     // and transform sliders. Controls.js only wires open + reset.
-    if (el.applyDesignBtn) {
-      el.applyDesignBtn.addEventListener('click', () => cb.onApplyDesign?.());
-    }
     if (el.resetTextureBtn) {
       el.resetTextureBtn.addEventListener('click', () => cb.onResetTexture?.());
     }

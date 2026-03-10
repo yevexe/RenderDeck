@@ -792,12 +792,6 @@ const controls = new ControlsManager({
     materialState.push('Material change');
   },
 
-  onApplyDesign: () => {
-    if (!activeMesh) { logError('No model loaded'); return; }
-    // Just apply the texture to model - don't call open() which would prompt for name
-    uvEditor.applyTextureToModel();
-  },
-
   onResetTexture: () => {
     uvEditor.resetTexture();
   },

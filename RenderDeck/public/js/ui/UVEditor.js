@@ -46,6 +46,23 @@ export class UVEditor {
     this.textureCanvas.height = 2048;
     this.textureCtx = this.textureCanvas.getContext('2d');
 
+    // Sticker PBR map canvases — override metalness/roughness where decals are
+    this._metalnessCanvas = document.createElement('canvas');
+    this._metalnessCanvas.width = 2048;
+    this._metalnessCanvas.height = 2048;
+    this._metalnessCtx = this._metalnessCanvas.getContext('2d');
+
+    this._roughnessCanvas = document.createElement('canvas');
+    this._roughnessCanvas.width = 2048;
+    this._roughnessCanvas.height = 2048;
+    this._roughnessCtx = this._roughnessCanvas.getContext('2d');
+
+    // Original PBR values to restore on reset
+    this._origMetalness = null;
+    this._origRoughness = null;
+    this._liveMetalnessTexture = null;
+    this._liveRoughnessTexture = null;
+
     this.uvCanvas = null;
     this.uvCtx = null;
     this._checkerCache = null; // cached checkerboard for fast preview redraws
@@ -87,18 +104,12 @@ export class UVEditor {
         });
       }
 
-      // Apply / Reset / Save buttons
-      const applyBtn = document.getElementById('apply-design-btn');
-      if (applyBtn) applyBtn.addEventListener('click', () => this.applyTextureToModel());
-
+      // Reset / Save buttons
       const resetBtn = document.getElementById('reset-texture-btn');
       if (resetBtn) resetBtn.addEventListener('click', () => this.resetTexture());
 
       const saveBtn = document.getElementById('save-custom-model-btn');
       if (saveBtn) saveBtn.addEventListener('click', () => this.saveAsCustomModel());
-
-      const deleteBtn = document.getElementById('delete-selected-image-btn');
-      if (deleteBtn) deleteBtn.addEventListener('click', () => this.deleteSelectedImage());
 
       // Canvas drag interactions
       this.uvCanvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
@@ -279,6 +290,7 @@ export class UVEditor {
     this._deactivateCheckUV();
     this._uvPreviewEnabled = false;
     this._materialBaseColor = null;
+    this._removeStickerPBRMaps();
     const pvBtn = document.getElementById('preview-uv-btn');
     if (pvBtn) pvBtn.classList.remove('button-selected');
     this.activeMesh = mesh;
@@ -350,6 +362,7 @@ export class UVEditor {
       this.liveCanvasTexture = texture;
       if (mesh.material) {
         mesh.material.map = texture;
+        this._applyStickerPBRMaps(mesh.material);
         mesh.material.needsUpdate = true;
       }
       window.markNeedsRender?.(4);
@@ -394,9 +407,9 @@ export class UVEditor {
         this.overlayImages.push(imageData);
         this._updateLayersList();
         this._renderPreview();
-        this.log(`Image added: ${file.name} — click "Apply to Model" to apply`);
-
+        this.applyTextureToModel();
         this.selectImage(imageData.id);
+        this.log(`Image added: ${file.name}`);
       };
       img.src = e.target.result;
     };
@@ -420,6 +433,20 @@ export class UVEditor {
     this._updateLayersList();
     this._renderPreview();
     this._renderComposite();
+
+    // Re-render PBR maps so the deleted decal area reverts to original material
+    if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
+      this._renderStickerPBRMaps();
+      if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
+      if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
+      window.markNeedsRender?.(4);
+    }
+
+    // If all overlays removed, clean up PBR maps entirely
+    if (this.overlayImages.length === 0) {
+      this._removeStickerPBRMaps();
+    }
+
     this.onCommit?.('Deleted overlay');
     this.log('Image deleted');
   }
@@ -630,22 +657,18 @@ export class UVEditor {
     if (this._uvPreviewEnabled) this._drawUVWireframe(ctx, w, h);
   }
 
-  // ─── High-res composite render ────────────────────────────────
-  _renderComposite() {
-    const ctx = this.textureCtx;
-    const { width: w, height: h } = this.textureCanvas;
+  // ─── Composite render (shared logic) ─────────────────────────
+  _renderCompositeToCanvas(ctx, w, h, useWrap) {
     ctx.clearRect(0, 0, w, h);
 
-    // Always paint base material color first so designs keep the object's base color.
-    ctx.fillStyle = this._materialBaseColor || '#ffffff';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
 
-    // Then draw source base texture if present (but never feed back live composited texture).
     if (this.baseTexture?.image && this.baseTexture !== this.liveCanvasTexture) {
       ctx.drawImage(this.baseTexture.image, 0, 0, w, h);
     }
 
-    const wrapOffsets = this._wrapImages
+    const wrapOffsets = (useWrap && this._wrapImages)
       ? [[-w,-h],[-w,0],[-w,h],[0,-h],[0,0],[0,h],[w,-h],[w,0],[w,h]]
       : [[0, 0]];
 
@@ -665,14 +688,89 @@ export class UVEditor {
         ctx.restore();
       });
     });
+  }
 
+  // ─── High-res composite render ────────────────────────────────
+  _renderComposite() {
+    this._renderCompositeToCanvas(this.textureCtx, 2048, 2048, true);
 
     if (this.liveCanvasTexture) {
       this.liveCanvasTexture.needsUpdate = true;
-      window.markNeedsRender?.(4); // tell Three.js to pick up the texture upload
+      window.markNeedsRender?.(4);
     }
   }
 
+  // ─── Composite for drag preview ─────
+  _renderCompositeDrag() {
+    this._renderCompositeToCanvas(this.textureCtx, 2048, 2048, true);
+
+    if (this.liveCanvasTexture) {
+      this.liveCanvasTexture.needsUpdate = true;
+      window.markNeedsRender?.(4);
+    }
+
+    // Also update sticker PBR maps during drag so metalness/roughness follow the decals
+    if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
+      this._renderStickerPBRMaps();
+      if (this._liveMetalnessTexture)  this._liveMetalnessTexture.needsUpdate  = true;
+      if (this._liveRoughnessTexture)  this._liveRoughnessTexture.needsUpdate  = true;
+    }
+  }
+
+  // ─── Render a PBR map using overlay shapes as a mask ─────────
+  // Fills canvas with `bgValue` (0-255 gray), then draws overlay shapes
+  // filled with `fgValue` using canvas composite operations.
+  _renderPBRMap(ctx, w, h, bgValue, fgValue) {
+    ctx.clearRect(0, 0, w, h);
+
+    // Step 1: Draw overlay shapes (their alpha masks)
+    const wrapOffsets = this._wrapImages
+      ? [[-w,-h],[-w,0],[-w,h],[0,-h],[0,0],[0,h],[w,-h],[w,0],[w,h]]
+      : [[0, 0]];
+    [...this.overlayImages].reverse().forEach(img => {
+      const x = (img.position.x / 100) * w;
+      const y = (img.position.y / 100) * h;
+      const iw = (img.size.w / 100) * w;
+      const ih = (img.size.h / 100) * h;
+      wrapOffsets.forEach(([dx, dy]) => {
+        ctx.save();
+        ctx.translate(x + dx, y + dy);
+        ctx.rotate((img.rotation * Math.PI) / 180);
+        if (img.flipH) ctx.scale(-1, 1);
+        if (img.flipV) ctx.scale(1, -1);
+        ctx.drawImage(img.image, -iw / 2, -ih / 2, iw, ih);
+        ctx.restore();
+      });
+    });
+
+    // Step 2: Replace all drawn pixels' color with fgValue, keeping alpha
+    const fg = Math.round(fgValue);
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = `rgb(${fg},${fg},${fg})`;
+    ctx.fillRect(0, 0, w, h);
+
+    // Step 3: Fill behind with bgValue (original material value)
+    const bg = Math.round(bgValue);
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = `rgb(${bg},${bg},${bg})`;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ─── Generate sticker metalness + roughness maps ─────────────
+  _renderStickerPBRMaps() {
+    const m = this.activeMesh?.material;
+    if (!m) return;
+
+    const metalness = this._origMetalness ?? m.metalness ?? 0;
+    const roughness = this._origRoughness ?? m.roughness ?? 0.5;
+
+    // Metalness map: original value everywhere, 0 where decals are
+    this._renderPBRMap(this._metalnessCtx, 2048, 2048, metalness * 255, 0);
+    // Roughness map: original value everywhere, 0.5 where decals are (matte sticker)
+    this._renderPBRMap(this._roughnessCtx, 2048, 2048, roughness * 255, 0.5 * 255);
+  }
 
   applyTextureToModel() {
     if (!this.activeMesh) { this.log('No model loaded', true); return; }
@@ -730,20 +828,85 @@ export class UVEditor {
 
     if (this.activeMesh.material) {
       this.activeMesh.material.map = texture;
+
+      // Sticker PBR: override metalness/roughness where decals are
+      this._applyStickerPBRMaps(this.activeMesh.material);
+
       this.activeMesh.material.needsUpdate = true;
     }
 
-    this.log('✓ Design applied to model — drag images to reposition');
+    this.log('✓ Design applied to model');
+  }
+
+  // ─── Apply sticker metalness/roughness maps to material ──────
+  _applyStickerPBRMaps(material) {
+    // Capture originals on first apply
+    if (this._origMetalness === null) this._origMetalness = material.metalness ?? 0;
+    if (this._origRoughness === null) this._origRoughness = material.roughness ?? 0.5;
+
+    // Generate the maps
+    this._renderStickerPBRMaps();
+
+    // Dispose previous live PBR textures
+    if (this._liveMetalnessTexture)  this._liveMetalnessTexture.dispose();
+    if (this._liveRoughnessTexture)  this._liveRoughnessTexture.dispose();
+
+    this._liveMetalnessTexture = new THREE.CanvasTexture(this._metalnessCanvas);
+    this._liveMetalnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
+    this._liveMetalnessTexture.needsUpdate = true;
+
+    this._liveRoughnessTexture = new THREE.CanvasTexture(this._roughnessCanvas);
+    this._liveRoughnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
+    this._liveRoughnessTexture.needsUpdate = true;
+
+    material.metalnessMap = this._liveMetalnessTexture;
+    material.roughnessMap = this._liveRoughnessTexture;
+    // Set scalar values to 1.0 so maps are used as direct values
+    material.metalness = 1.0;
+    material.roughness = 1.0;
+  }
+
+  // ─── Remove sticker PBR maps and restore originals ───────────
+  _removeStickerPBRMaps() {
+    if (!this.activeMesh?.material) return;
+    const m = this.activeMesh.material;
+
+    if (this._liveMetalnessTexture) {
+      this._liveMetalnessTexture.dispose();
+      this._liveMetalnessTexture = null;
+      m.metalnessMap = null;
+    }
+    if (this._liveRoughnessTexture) {
+      this._liveRoughnessTexture.dispose();
+      this._liveRoughnessTexture = null;
+      m.roughnessMap = null;
+    }
+    if (this._origMetalness !== null) { m.metalness = this._origMetalness; this._origMetalness = null; }
+    if (this._origRoughness !== null) { m.roughness = this._origRoughness; this._origRoughness = null; }
+    m.needsUpdate = true;
   }
 
 
   resetTexture() {
-    if (!confirm('Reset all designs? This cannot be undone.')) return;
+    if (this.overlayImages.length === 0) return;
     this.overlayImages = [];
     this.selectedImageId = null;
+    this._removeStickerPBRMaps();
+
+    // Restore original texture on the model
+    if (this.activeMesh?.material) {
+      if (this.liveCanvasTexture) {
+        this.liveCanvasTexture.dispose();
+        this.liveCanvasTexture = null;
+      }
+      this.activeMesh.material.map = this.baseTexture || null;
+      this.activeMesh.material.needsUpdate = true;
+    }
+
     this._updateLayersList();
     this._renderPreview();
-    this.log('Design reset');
+    window.markNeedsRender?.(4);
+    this.log('All decals removed');
   }
 
   // ─── Public transform helpers (used by keyboard shortcuts & UI buttons) ──
@@ -803,8 +966,8 @@ export class UVEditor {
         const m = this.activeMesh.material;
         materialProperties = {
           color: m.color ? '#' + m.color.getHexString() : '#ffffff',
-          metalness: m.metalness ?? 0,
-          roughness: m.roughness ?? 0.5,
+          metalness: this._origMetalness ?? m.metalness ?? 0,
+          roughness: this._origRoughness ?? m.roughness ?? 0.5,
           opacity: m.opacity ?? 1,
           transparent: m.transparent ?? false,
           clearcoat: m.clearcoat ?? 0,
@@ -872,6 +1035,7 @@ export class UVEditor {
         this.activeMesh.material.map.dispose();
       }
       this.activeMesh.material.map = texture;
+      this._applyStickerPBRMaps(this.activeMesh.material);
       this.activeMesh.material.needsUpdate = true;
     }
 
@@ -916,8 +1080,9 @@ export class UVEditor {
     for (let i = 0; i < this.overlayImages.length; i++) {
       const img = this.overlayImages[i];
       const hw = img.size.w / 2, hh = img.size.h / 2;
-      const centers = this._getWrapCenters(img);
-      for (const center of centers) {
+      // Only check primary center for cursor — skip 9x wrap centers
+      const center = { x: img.position.x, y: img.position.y };
+      {
         const local = this._getLocalMouseCoords(mouseX, mouseY, img, center.x, center.y);
 
         // Rotate handle (above top-center in local space)
@@ -1076,10 +1241,8 @@ export class UVEditor {
       requestAnimationFrame(() => {
         this._rafPending = false;
         this._renderPreview();
-        // Only run the expensive 2048×2048 composite during drag if the texture
-        // is already live on the model (user clicked Apply) — gives live model preview.
-        // Before Apply, composite runs cheaply on mouseup instead.
-        if (this.liveCanvasTexture) this._renderComposite();
+        // Live 3D preview during drag
+        if (this.liveCanvasTexture) this._renderCompositeDrag();
       });
     }
   }
@@ -1111,6 +1274,13 @@ export class UVEditor {
     else img.flipV = !img.flipV;
     this._renderPreview();
     this._renderComposite();
+    // Update PBR maps so decal area tracks the flipped position
+    if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
+      this._renderStickerPBRMaps();
+      if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
+      if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
+    }
+    window.markNeedsRender?.(4);
     this.onCommit?.(`Flipped ${axis === 'h' ? 'horizontal' : 'vertical'}`);
   }
 
@@ -1250,7 +1420,7 @@ export class UVEditor {
 
     this._updateLayersList();
     this._renderPreview();
-    this._renderComposite();
+    this.applyTextureToModel();
   }
 
   // ─── Deactivate Check UV (internal helper) ────────────────────
@@ -1285,10 +1455,12 @@ export class UVEditor {
         this.activeMesh.material.needsUpdate = true;
         this._uvCheckActive = true;
         if (btn) btn.classList.add('button-selected');
+        window.markNeedsRender?.(4);
         this.log('Check UV: on');
       }, undefined, () => this.log('Check UV: failed to load UVChecker.png'));
     } else {
       this._deactivateCheckUV();
+      window.markNeedsRender?.(4);
       this.log('Check UV: off');
     }
   }
