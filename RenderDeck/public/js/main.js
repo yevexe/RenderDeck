@@ -574,6 +574,7 @@ function setupButtonRow(groupId, callback) {
       if (input) input.value = btn.dataset.value;
     }
     callback(btn.dataset.value);
+    markNeedsRender(4);
   });
 }
 
@@ -628,6 +629,7 @@ function applyCameraSettings() {
   };
   renderer.toneMapping = TM[camState.toneMapping] ?? THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = camState.exposure;
+  markNeedsRender(4);
 }
 
 function setupCameraUI() {
@@ -1226,8 +1228,8 @@ function setupPostFXUI() {
     globalToggle.addEventListener('change', (e) => {
       rm.setPostFXEnabled(e.target.checked);
     });
-    // Default: off until user enables or picks a preset
-    rm.setPostFXEnabled(false);
+    // Sync to the checkbox's actual DOM state on init
+    rm.setPostFXEnabled(globalToggle.checked);
   }
 
   // ── Individual effect toggles ─────────────────────────────────
@@ -1289,10 +1291,11 @@ function setupPreviewQualityUI() {
       const val = e.target.value;
       if (!val) return;
       const [w, h] = val.split('x').map(Number);
-      renderer.setSize(w, h);
+      rendererManager.setCustomResolution(w, h);
       const cam = cameraManager.getCamera();
       cam.aspect = w / h;
       cam.updateProjectionMatrix();
+      markNeedsRender(4);
       log(`Resolution: ${w}×${h}`);
     });
   }
@@ -1401,7 +1404,7 @@ function setupPreviewQualityUI() {
 
   // ── Shadow Quality ──
   setupButtonRow('shadow-quality-buttons', (v) => {
-    const sizes = { off: 0, low: 512, medium: 1024, high: 2048, ultra: 4096 };
+    const sizes = { off: 0, low: 256, medium: 1024, high: 4096, ultra: 8192 };
     const size = sizes[v] || 2048;
     if (v === 'off') {
       renderer.shadowMap.enabled = false;
@@ -1418,7 +1421,36 @@ function setupPreviewQualityUI() {
         }
       });
     }
+    renderer.shadowMap.needsUpdate = true;
+    // Toggling shadowMap.enabled requires shader recompilation
+    scene.traverse((obj) => {
+      if (obj.isMesh && obj.material) {
+        obj.material.needsUpdate = true;
+      }
+    });
     log(`Shadow quality: ${v}`);
+  });
+
+  // ── Texture Filtering ──
+  setupButtonRow('texture-filtering-buttons', (v) => {
+    const levels = { low: 1, medium: 8, high: 16 };
+    const aniso = levels[v] || 16;
+    const maxAniso = renderer.capabilities.getMaxAnisotropy();
+    const clamped = Math.min(aniso, maxAniso);
+    scene.traverse((obj) => {
+      if (obj.isMesh && obj.material) {
+        const mat = obj.material;
+        const textures = [mat.map, mat.normalMap, mat.roughnessMap, mat.metalnessMap,
+                          mat.aoMap, mat.emissiveMap, mat.displacementMap, mat.alphaMap];
+        textures.forEach((tex) => {
+          if (tex) {
+            tex.anisotropy = clamped;
+            tex.needsUpdate = true;
+          }
+        });
+      }
+    });
+    log(`Texture filtering: Aniso ${clamped}`);
   });
 
   log('Preview quality UI ready.');
