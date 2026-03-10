@@ -67,6 +67,25 @@ export class UVEditor {
     this.uvCtx = null;
     this._checkerCache = null; // cached checkerboard for fast preview redraws
 
+    // Low-res drag canvases — 512x512 (1MB) instead of 2048x2048 (16MB) per frame
+    this._dragCanvas = document.createElement('canvas');
+    this._dragCanvas.width = 512;
+    this._dragCanvas.height = 512;
+    this._dragCtx = this._dragCanvas.getContext('2d');
+    this._dragTexture = null;
+
+    // Low-res drag PBR canvases for sticker metalness/roughness during drag
+    this._dragMetalnessCanvas = document.createElement('canvas');
+    this._dragMetalnessCanvas.width = 512;
+    this._dragMetalnessCanvas.height = 512;
+    this._dragMetalnessCtx = this._dragMetalnessCanvas.getContext('2d');
+    this._dragRoughnessCanvas = document.createElement('canvas');
+    this._dragRoughnessCanvas.width = 512;
+    this._dragRoughnessCanvas.height = 512;
+    this._dragRoughnessCtx = this._dragRoughnessCanvas.getContext('2d');
+    this._dragMetalnessTexture = null;
+    this._dragRoughnessTexture = null;
+
     this.isDragging = false;
     this.dragOffset = { x: 0, y: 0 };
     this._rafPending = false;
@@ -116,14 +135,29 @@ export class UVEditor {
       this.uvCanvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
       this.uvCanvas.addEventListener('mouseup', () => {
         if (this.isDragging) {
+          // Restore full-res texture after drag
+          this._restoreFullResTexture();
           this._renderComposite();
+          // Update sticker PBR maps at full res
+          if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
+            this._renderStickerPBRMaps();
+            if (this._liveMetalnessTexture)  this._liveMetalnessTexture.needsUpdate  = true;
+            if (this._liveRoughnessTexture)  this._liveRoughnessTexture.needsUpdate  = true;
+          }
           this.onCommit?.(`${this._dragMode === 'rotate' ? 'Rotated' : this._dragMode.startsWith('resize') ? 'Resized' : 'Moved'} overlay`);
         }
         this.isDragging = false; this._dragMode = 'translate';
       });
       this.uvCanvas.addEventListener('mouseleave', () => {
         if (this.isDragging) {
+          // Restore full-res texture after drag
+          this._restoreFullResTexture();
           this._renderComposite();
+          if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
+            this._renderStickerPBRMaps();
+            if (this._liveMetalnessTexture)  this._liveMetalnessTexture.needsUpdate  = true;
+            if (this._liveRoughnessTexture)  this._liveRoughnessTexture.needsUpdate  = true;
+          }
           this.onCommit?.('Moved overlay');
         }
         this.isDragging = false; this._dragMode = 'translate';
@@ -700,20 +734,75 @@ export class UVEditor {
     }
   }
 
-  // ─── Composite for drag preview ─────
+  // ─── Composite for drag preview (low-res for performance) ─────
+  // Renders to 512x512 canvas during drag — 16x less GPU upload per frame.
+  // Full-res texture is restored on mouseup/mouseleave.
   _renderCompositeDrag() {
-    this._renderCompositeToCanvas(this.textureCtx, 2048, 2048, true);
+    this._renderCompositeToCanvas(this._dragCtx, 512, 512, true);
 
-    if (this.liveCanvasTexture) {
-      this.liveCanvasTexture.needsUpdate = true;
-      window.markNeedsRender?.(4);
+    if (!this._dragTexture) {
+      this._dragTexture = new THREE.CanvasTexture(this._dragCanvas);
+      this._dragTexture.colorSpace = THREE.SRGBColorSpace;
+    }
+    this._dragTexture.needsUpdate = true;
+
+    // Swap to low-res texture during drag
+    if (this.activeMesh?.material && this.activeMesh.material.map !== this._dragTexture) {
+      this.activeMesh.material.map = this._dragTexture;
+      this.activeMesh.material.needsUpdate = true;
     }
 
-    // Also update sticker PBR maps during drag so metalness/roughness follow the decals
+    // Also update sticker PBR maps at low-res so the white underlay follows the decal
     if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
-      this._renderStickerPBRMaps();
-      if (this._liveMetalnessTexture)  this._liveMetalnessTexture.needsUpdate  = true;
-      if (this._liveRoughnessTexture)  this._liveRoughnessTexture.needsUpdate  = true;
+      this._renderStickerPBRMapsDrag();
+    }
+
+    window.markNeedsRender?.(4);
+  }
+
+  // ─── Low-res sticker PBR maps during drag ───────────────────
+  _renderStickerPBRMapsDrag() {
+    const m = this.activeMesh?.material;
+    if (!m) return;
+
+    const metalness = this._origMetalness ?? m.metalness ?? 0;
+    const roughness = this._origRoughness ?? m.roughness ?? 0.5;
+
+    this._renderPBRMap(this._dragMetalnessCtx, 512, 512, metalness * 255, 0);
+    this._renderPBRMap(this._dragRoughnessCtx, 512, 512, roughness * 255, 0.5 * 255);
+
+    if (!this._dragMetalnessTexture) {
+      this._dragMetalnessTexture = new THREE.CanvasTexture(this._dragMetalnessCanvas);
+      this._dragMetalnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
+    }
+    if (!this._dragRoughnessTexture) {
+      this._dragRoughnessTexture = new THREE.CanvasTexture(this._dragRoughnessCanvas);
+      this._dragRoughnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
+    }
+    this._dragMetalnessTexture.needsUpdate = true;
+    this._dragRoughnessTexture.needsUpdate = true;
+
+    if (m.metalnessMap !== this._dragMetalnessTexture) {
+      m.metalnessMap = this._dragMetalnessTexture;
+      m.roughnessMap = this._dragRoughnessTexture;
+      m.needsUpdate = true;
+    }
+  }
+
+  // ─── Restore full-res texture after drag ─────────────────────
+  _restoreFullResTexture() {
+    if (this.activeMesh?.material) {
+      if (this.liveCanvasTexture) {
+        this.activeMesh.material.map = this.liveCanvasTexture;
+      }
+      // Restore full-res PBR maps
+      if (this._liveMetalnessTexture) {
+        this.activeMesh.material.metalnessMap = this._liveMetalnessTexture;
+      }
+      if (this._liveRoughnessTexture) {
+        this.activeMesh.material.roughnessMap = this._liveRoughnessTexture;
+      }
+      this.activeMesh.material.needsUpdate = true;
     }
   }
 
