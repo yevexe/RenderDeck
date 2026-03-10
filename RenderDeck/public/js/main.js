@@ -498,47 +498,42 @@ function applyMaterialPreset(presetName) {
   if (!activeModel) return;
   const env = sceneManager.getScene().environment;
 
-  if (activeMesh) {
-    // change only the selected mesh
-    if (activeMesh.userData?.isCustomModel) {
-      if (env && activeMesh.material) {
-        activeMesh.material.envMap = env;
-        activeMesh.material.needsUpdate = true;
-      }
-    } else {
-      const material = materialManager.getPreset(presetName);
-      materialManager.applyEnvironment(material, env);
-      if (activeMesh.material) materialManager.dispose(activeMesh.material);
-      activeMesh.material = material;
-      activeMesh.material.needsUpdate = true;
+  const applyToMesh = (mesh) => {
+    // Remove sticker PBR maps before swapping material so originals are cleared
+    uvEditor._removeStickerPBRMaps();
+
+    const material = materialManager.getPreset(presetName);
+    materialManager.applyEnvironment(material, env);
+    if (mesh.material) materialManager.dispose(mesh.material);
+    mesh.material = material;
+    mesh.material.needsUpdate = true;
+
+    // Re-apply composite texture and sticker PBR maps if decals exist
+    if (uvEditor.overlayImages.length > 0 && uvEditor.liveCanvasTexture) {
+      mesh.material.map = uvEditor.liveCanvasTexture;
+      uvEditor._materialBaseColor = '#' + mesh.material.color.getHexString();
+      uvEditor._applyStickerPBRMaps(mesh.material);
+      mesh.material.needsUpdate = true;
     }
+  };
+
+  if (activeMesh) {
+    applyToMesh(activeMesh);
   } else {
-    // fallback: apply to everything
     activeModel.traverse((child) => {
       if (!child.isMesh) return;
-      if (child.userData?.isCustomModel) {
-        if (env && child.material) {
-          child.material.envMap = env;
-          child.material.needsUpdate = true;
-        }
-        return;
-      }
-      const material = materialManager.getPreset(presetName);
-      materialManager.applyEnvironment(material, env);
-      if (child.material) materialManager.dispose(child.material);
-      child.material = material;
+      applyToMesh(child);
       if (!activeMesh) activeMesh = child;
-      child.material.needsUpdate = true;
     });
   }
 
   if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
-  
+
   // Update UV editor base to match current material (clear stale map if none).
   uvEditor.baseTexture = activeMesh?.material?.map || null;
   uvEditor.currentMaterialPreset = presetName;
   uvEditor._renderPreview();
-  
+
   log(`Preset: ${presetName}`);
 }
 
@@ -1184,6 +1179,10 @@ window.updateModelSelect = updateModelList;
 window.switchToModel = (name) => {
   const sel = document.getElementById('object-select') || document.getElementById('model-select');
   if (sel) { sel.value = name; loadModel(name); }
+};
+window.selectModelInDropdown = (name) => {
+  const sel = document.getElementById('object-select') || document.getElementById('model-select');
+  if (sel) sel.value = name;
 };
 
 //═══════════════════════════════════════════════════════════════
