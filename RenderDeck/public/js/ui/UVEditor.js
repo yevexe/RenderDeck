@@ -1048,8 +1048,17 @@ export class UVEditor {
 
     let materialProperties = {};
     if (this.activeMesh?.material) {
+      const mat = this.activeMesh.material;
+      // When sticker PBR maps are active, metalness/roughness are set to 1.0
+      // so the maps drive per-pixel values. Temporarily restore the real
+      // original values before extracting so we save the correct properties.
+      const stickerActive = this._origMetalness !== null;
+      if (stickerActive) {
+        mat.metalness = this._origMetalness;
+        mat.roughness = this._origRoughness;
+      }
       if (this.materialManager) {
-        materialProperties = this.materialManager.extractProperties(this.activeMesh.material);
+        materialProperties = this.materialManager.extractProperties(mat);
       } else {
 
         const m = this.activeMesh.material;
@@ -1075,6 +1084,11 @@ export class UVEditor {
           emissiveIntensity: m.emissiveIntensity ?? 0,
           envMapIntensity: m.envMapIntensity ?? 1,
         };
+      }
+      // Restore 1.0 scalars so sticker PBR maps continue to work
+      if (stickerActive) {
+        mat.metalness = 1.0;
+        mat.roughness = 1.0;
       }
     }
 
