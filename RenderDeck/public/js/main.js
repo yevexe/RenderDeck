@@ -1005,9 +1005,21 @@ function saveSessionState() {
       partName: activeMesh?.name || null,
       sceneName: controls?.elements?.sceneSelect?.value || null,
       materialPreset: getCurrentMaterialPreset() || null,
-      materialProperties: activeMesh?.material
-        ? materialManager.extractProperties(activeMesh.material)
-        : null,
+      materialProperties: (() => {
+        if (!activeMesh?.material) return null;
+        const mat = activeMesh.material;
+        const stickerActive = uvEditor._origMetalness !== null;
+        if (stickerActive) {
+          mat.metalness = uvEditor._origMetalness;
+          mat.roughness = uvEditor._origRoughness;
+        }
+        const props = materialManager.extractProperties(mat);
+        if (stickerActive) {
+          mat.metalness = 1.0;
+          mat.roughness = 1.0;
+        }
+        return props;
+      })(),
       showEnvBackground,
       gradientBgEnabled,
       currentGradientBg,
