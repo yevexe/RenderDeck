@@ -280,9 +280,9 @@
 
             <!-- Image Upload -->
             <h4>Add Design</h4>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <label for="texture-image-upload" class="button" style="width:auto;flex:1;margin:0;">Upload Image</label>
-              <button class="button" id="add-text-btn" style="width:auto;flex:1;margin:0;">Add Text</button>
+            <div style="display:flex;gap:6px;align-items:stretch;">
+              <label for="texture-image-upload" class="button" style="width:auto;flex:1;margin:0;display:flex;align-items:center;justify-content:center;">Upload Image</label>
+              <button class="button" id="add-text-btn" style="width:auto;flex:1;margin:0;display:flex;align-items:center;justify-content:center;">Add Text</button>
             </div>
             <input type="file" id="texture-image-upload" accept=".png,.jpg,.jpeg,.svg" style="display:none;">
             <p class="upload-hint">PNG, JPG, or SVG</p>
@@ -362,10 +362,8 @@
 
             <!-- Actions -->
             <h4>Actions</h4>
-            <button class="button-medium" id="apply-design-btn">&#10003; Apply to Model</button>
             <button class="button-medium" id="save-custom-model-btn">&#128190; Save as Custom Model</button>
             <button class="button-medium" id="reset-texture-btn">&#8635; Reset</button>
-            <button class="button-medium" id="delete-selected-image-btn">&#128465; Delete Selected</button>
 
             <!-- Transformations -->
             <h4>Transformations</h4>
