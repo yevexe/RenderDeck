@@ -1638,6 +1638,12 @@ export class UVEditor {
     if (sel) this._syncSlidersFromImage(sel);
     this._renderPreview();
     this._renderComposite();
+    if (this._origMetalness !== null) {
+      this._renderStickerPBRMaps();
+      if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
+      if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
+    }
+    window.markNeedsRender?.(4);
   }
 
   // ─── Snapshot the current overlay state for history ──────────
