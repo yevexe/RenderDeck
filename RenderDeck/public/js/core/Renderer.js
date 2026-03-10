@@ -27,6 +27,8 @@ export class RendererManager {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
 
+    this._customResolution = null;
+
     // Post-processing passes
     this.composer       = null;
     this.renderPass     = null;
@@ -50,12 +52,24 @@ export class RendererManager {
 
   // ─── Resize renderer + composer ──────────────────────────────
   resize() {
-    const w = this.container.clientWidth  || 1;
-    const h = this.container.clientHeight || 1;
+    // If a custom resolution is set, keep the drawing buffer at that size
+    // but fit the canvas CSS to the container.
+    if (this._customResolution) {
+      const { w, h } = this._customResolution;
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(w, h, false);
+      this.resizeComposer(w, h);
+    } else {
+      const w = this.container.clientWidth  || 1;
+      const h = this.container.clientHeight || 1;
+      this.renderer.setSize(w, h);
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.resizeComposer(w, h);
+    }
+  }
 
-    this.renderer.setSize(w, h);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
+  // ─── Resize composer + post-processing passes ────────────────
+  resizeComposer(w, h) {
     if (this.composer) this.composer.setSize(w, h);
 
     if (this.fxaaPass) {
@@ -64,6 +78,20 @@ export class RendererManager {
     }
 
     if (this.ssaoPass) this.ssaoPass.setSize(w, h);
+  }
+
+  // ─── Set a custom render resolution ──────────────────────────
+  setCustomResolution(w, h) {
+    this._customResolution = { w, h };
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(w, h, false);
+    this.resizeComposer(w, h);
+  }
+
+  // ─── Clear custom resolution (revert to container-fit) ───────
+  clearCustomResolution() {
+    this._customResolution = null;
+    this.resize();
   }
 
   // ─── Build EffectComposer (called once on first render) ──────
