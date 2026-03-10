@@ -1143,8 +1143,8 @@ export class UVEditor {
     }
 
     this.log(`✓ Saved: ${this.customModelName}`);
-    window.updateModelSelect?.();
-    window.switchToModel?.(this.customModelName);
+    if (window.updateModelSelect) await window.updateModelSelect();
+    window.selectModelInDropdown?.(this.customModelName);
   }
 
   // ─── Local-space coordinate transform ────────────────────────
