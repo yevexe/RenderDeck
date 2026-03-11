@@ -147,6 +147,11 @@ export const PROP_PATHS = {
 // Standard Material Presets (JSON files)
 export const STANDARD_MATERIALS = [
   {
+    id: 'RDM_Default_White',
+    label: 'Default — White',
+    path: './assets/standard/materials/RDM_Default_White.json'
+  },
+  {
     id: 'RDM_Ceramic_Porcelain_GlossyWhite',
     label: 'Ceramic — Porcelain Glossy White',
     path: './assets/standard/materials/RDM_Ceramic_Porcelain_GlossyWhite.json'

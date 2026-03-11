@@ -102,6 +102,8 @@ const materialState = new MaterialStateManager({
   getControls:     () => controls,
   getActiveMesh:   () => activeMesh,
   markNeedsRender: (n) => markNeedsRender(n),
+  getUVEditor:     () => uvEditor,
+  getPresetName:   () => getCurrentMaterialPreset(),
 });
 
 function pushSceneHistory(label)  { sceneState.push(label); }
@@ -256,7 +258,7 @@ async function initMaterialPresets() {
   await materialManager.loadPresetsFromManifest(STANDARD_MATERIALS);
   updateMaterialPresetList();
 }
-initMaterialPresets();
+const materialPresetsReady = initMaterialPresets();
 
 //═══════════════════════════════════════════════════════════════
 // MODEL LOADING
@@ -272,6 +274,12 @@ async function loadModel(name, onLoaded = null) {
     controls.setVisible('objectPartSelect', false);
   }
 
+  // Clear history stacks — they are per-object
+  materialState.history.clear();
+  materialState.updateUI();
+  designState.history.clear();
+  designState.updateUI();
+
   const modelData = await modelManager.getModel(name);
   if (!modelData) { logError(`Model not found: ${name}`); return; }
   cleanupActiveModel();
@@ -280,6 +288,12 @@ async function loadModel(name, onLoaded = null) {
   } else {
     await loadRegularModel(name, modelData, onLoaded);
   }
+
+  // Re-init history with the new model's state
+  setTimeout(() => {
+    materialState.init('Initial state');
+    designState.init('Initial state');
+  }, 100);
 }
 
 async function loadCustomModel(name, modelData, onLoaded = null) {
@@ -312,7 +326,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
 
       if (!activeMesh) activeMesh = child;
 
-      const presetName = modelData.materialPreset || 'Wood';
+      const presetName = modelData.materialPreset || 'Default — White';
       const material = materialManager.getPreset(presetName);
       materialManager.applyEnvironment(material, sceneManager.getScene().environment);
       child.material = material;
@@ -337,10 +351,14 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
     // frame the new model from a top‑right‑corner angle
     centerAndFrameModel(object, cameraManager, {mode: 'corner'});
     if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+    // Sync the material dropdown to the custom model's saved preset
+    const matSel = document.getElementById('material-select');
+    const savedPreset = modelData.materialPreset || 'Default — White';
+    if (matSel) matSel.value = savedPreset;
     log(`${name} loaded.`);
     // Initialize UV editor for this custom model
     if (activeMesh) {
-      uvEditor.open(activeMesh, name, modelData.materialPreset || 'Wood');
+      uvEditor.open(activeMesh, name, savedPreset);
     }
     // Restore the scene/background that was active when this custom model was saved
     if (modelData.sceneState) {
@@ -395,7 +413,7 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       propManager.setMainModel(activeModel);
       centerAndFrameModel(object, cameraManager, {mode: 'corner'});
       log(`${name} loaded.`);
-      if (activeMesh) uvEditor.open(activeMesh, name, 'Wood');
+      if (activeMesh) uvEditor.open(activeMesh, name, 'Default — White');
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
     },
@@ -440,11 +458,11 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       activeModel = object;
       propManager.setMainModel(activeModel);
       centerAndFrameModel(object, cameraManager, {mode: 'corner'});
-      applyMaterialPreset(materialManager.getPresetNames()[0] || 'Wood');
+      applyMaterialPreset(materialManager.getPresetNames()[0] || 'Default — White');
       log(`${name} loaded.`);
       // Initialize UV editor for this model
       if (activeMesh) {
-        uvEditor.open(activeMesh, name, 'Wood');
+        uvEditor.open(activeMesh, name, 'Default — White');
       }
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
@@ -475,6 +493,19 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
 
 function cleanupActiveModel() {
   if (activeModel) {
+    // Clear UV editor state before disposing mesh so sticker PBR maps don't leak
+    uvEditor._removeStickerPBRMaps();
+    if (uvEditor.liveCanvasTexture) {
+      uvEditor.liveCanvasTexture.dispose();
+      uvEditor.liveCanvasTexture = null;
+    }
+    uvEditor.overlayImages = [];
+    uvEditor.selectedImageId = null;
+    uvEditor.baseTexture = null;
+    uvEditor._origColor = null;
+    uvEditor._origTransmission = null;
+    uvEditor._materialBaseColor = null;
+
     propManager.setMainModel(null);
     sceneManager.remove(activeModel);
     cleanupObject(activeModel);
@@ -510,8 +541,9 @@ function applyMaterialPreset(presetName) {
 
     // Re-apply composite texture and sticker PBR maps if decals exist
     if (uvEditor.overlayImages.length > 0 && uvEditor.liveCanvasTexture) {
-      mesh.material.map = uvEditor.liveCanvasTexture;
       uvEditor._materialBaseColor = '#' + mesh.material.color.getHexString();
+      uvEditor._renderComposite();
+      mesh.material.map = uvEditor.liveCanvasTexture;
       uvEditor._applyStickerPBRMaps(mesh.material);
       mesh.material.needsUpdate = true;
     }
@@ -529,10 +561,15 @@ function applyMaterialPreset(presetName) {
 
   if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
 
-  // Update UV editor base to match current material (clear stale map if none).
-  uvEditor.baseTexture = activeMesh?.material?.map || null;
+  // Update UV editor base — use null for textureless materials (not the composite).
+  const matMap = activeMesh?.material?.map || null;
+  uvEditor.baseTexture = (matMap && matMap !== uvEditor.liveCanvasTexture) ? matMap : null;
   uvEditor.currentMaterialPreset = presetName;
   uvEditor._renderPreview();
+
+  // Sync the material dropdown to reflect the applied preset
+  const matSel = document.getElementById('material-select');
+  if (matSel) matSel.value = presetName;
 
   log(`Preset: ${presetName}`);
 }
@@ -542,9 +579,31 @@ function updateMaterialProperty(property, value) {
   const mat = activeMesh.material;
   const colorProps = ['color', 'specularColor', 'sheenColor', 'emissive', 'attenuationColor'];
   if (colorProps.includes(property)) {
-    mat[property].set(value);
+    if (property === 'color' && uvEditor._origColor !== null) {
+      // Sticker maps are active — update the stored original and re-composite
+      uvEditor._origColor = value;
+      uvEditor._materialBaseColor = value;
+      uvEditor._renderComposite();
+      // Keep material.color white so decals aren't tinted
+    } else {
+      mat[property].set(value);
+    }
   } else {
-    mat[property] = value;
+    if (property === 'metalness' && uvEditor._origMetalness !== null) {
+      uvEditor._origMetalness = value;
+      uvEditor._renderStickerPBRMaps();
+      if (uvEditor._liveMetalnessTexture) uvEditor._liveMetalnessTexture.needsUpdate = true;
+    } else if (property === 'roughness' && uvEditor._origRoughness !== null) {
+      uvEditor._origRoughness = value;
+      uvEditor._renderStickerPBRMaps();
+      if (uvEditor._liveRoughnessTexture) uvEditor._liveRoughnessTexture.needsUpdate = true;
+    } else if (property === 'transmission' && uvEditor._origTransmission !== null) {
+      uvEditor._origTransmission = value;
+      uvEditor._renderStickerPBRMaps();
+      if (uvEditor._liveTransmissionTexture) uvEditor._liveTransmissionTexture.needsUpdate = true;
+    } else {
+      mat[property] = value;
+    }
   }
   if (property === 'opacity') mat.transparent = value < 1.0;
   if (property === 'transmission') mat.transparent = value > 0;
@@ -830,6 +889,7 @@ const controls = new ControlsManager({
       logSuccess(`Imported: ${result.name}`);
       await updateModelList();
       loadModel(result.name);
+      window.selectModelInDropdown(result.name);
     } else {
       logError(`Import failed: ${result.error}`);
     }
@@ -873,7 +933,7 @@ const controls = new ControlsManager({
       const matSelect = document.getElementById('material-select');
       if (matSelect) matSelect.selectedIndex = 0;
 
-      // Load the first built-in model — this applies the Wood default preset
+      // Load the first built-in model — this applies the Default preset
       if (STANDARD_OBJECTS.length > 0) {
         loadModel(STANDARD_OBJECTS[0].label);
       }
@@ -969,7 +1029,7 @@ function getCurrentModelName() {
 }
 
 function getCurrentMaterialPreset() {
-  return document.getElementById('material-select')?.value || 'Wood';
+  return document.getElementById('material-select')?.value || 'Default — White';
 }
 
 function waitForModelReady(timeoutMs = 12000) {
@@ -999,7 +1059,7 @@ function saveSessionState() {
       modelName: getCurrentModelName() || null,
       partName: activeMesh?.name || null,
       sceneName: controls?.elements?.sceneSelect?.value || null,
-      materialPreset: getCurrentMaterialPreset() || null,
+      materialPreset: uvEditor.currentMaterialPreset || getCurrentMaterialPreset() || null,
       materialProperties: (() => {
         if (!activeMesh?.material) return null;
         const mat = activeMesh.material;
@@ -1007,11 +1067,15 @@ function saveSessionState() {
         if (stickerActive) {
           mat.metalness = uvEditor._origMetalness;
           mat.roughness = uvEditor._origRoughness;
+          if (uvEditor._origTransmission !== null) mat.transmission = uvEditor._origTransmission;
+          if (uvEditor._origColor && mat.color) mat.color.set(uvEditor._origColor);
         }
         const props = materialManager.extractProperties(mat);
         if (stickerActive) {
           mat.metalness = 1.0;
           mat.roughness = 1.0;
+          if (uvEditor._origTransmission > 0) mat.transmission = 1.0;
+          if (mat.color) mat.color.set(0xffffff);
         }
         return props;
       })(),
@@ -1120,10 +1184,20 @@ async function restoreSessionState() {
     }
 
     // Restore material preset + properties
-    if (state.materialPreset) {
+    // Prefer the localStorage boot key's preset (sync write, always up-to-date)
+    // over IDB state which may be stale if the async write didn't finish before unload.
+    let restoredPreset = state.materialPreset;
+    try {
+      const bootRaw = localStorage.getItem(SESSION_BOOT_KEY);
+      if (bootRaw) {
+        const boot = JSON.parse(bootRaw);
+        if (boot?.materialPreset) restoredPreset = boot.materialPreset;
+      }
+    } catch (_) { /* ignore */ }
+    if (restoredPreset) {
       const matSel = document.getElementById('material-select');
-      if (matSel) matSel.value = state.materialPreset;
-      applyMaterialPreset(state.materialPreset);
+      if (matSel) matSel.value = restoredPreset;
+      applyMaterialPreset(restoredPreset);
     }
     if (state.materialProperties && activeMesh?.material) {
       materialManager.applySavedProperties(activeMesh.material, state.materialProperties);
@@ -1879,6 +1953,7 @@ async function initializeApp() {
     // ignore malformed/blocked localStorage
   }
 
+  await materialPresetsReady;
   await updateModelList();
   updateSceneList();
   updateMaterialPresetList();
