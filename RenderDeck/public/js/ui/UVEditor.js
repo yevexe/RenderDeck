@@ -23,7 +23,7 @@ export class UVEditor {
     this.overlayImages = [];
     this.nextImageId = 1;
     this.selectedImageId = null;
-    this.currentMaterialPreset = 'Wood';
+    this.currentMaterialPreset = 'Default — White';
 
     this._uvCheckActive = false;
     this._savedMaterialMap = null;
@@ -60,8 +60,16 @@ export class UVEditor {
     // Original PBR values to restore on reset
     this._origMetalness = null;
     this._origRoughness = null;
+    this._origTransmission = null;
+    this._origColor = null;
     this._liveMetalnessTexture = null;
     this._liveRoughnessTexture = null;
+    this._liveTransmissionTexture = null;
+
+    this._transmissionCanvas = document.createElement('canvas');
+    this._transmissionCanvas.width = 2048;
+    this._transmissionCanvas.height = 2048;
+    this._transmissionCtx = this._transmissionCanvas.getContext('2d');
 
     this.uvCanvas = null;
     this.uvCtx = null;
@@ -85,6 +93,11 @@ export class UVEditor {
     this._dragRoughnessCtx = this._dragRoughnessCanvas.getContext('2d');
     this._dragMetalnessTexture = null;
     this._dragRoughnessTexture = null;
+    this._dragTransmissionCanvas = document.createElement('canvas');
+    this._dragTransmissionCanvas.width = 512;
+    this._dragTransmissionCanvas.height = 512;
+    this._dragTransmissionCtx = this._dragTransmissionCanvas.getContext('2d');
+    this._dragTransmissionTexture = null;
 
     this.isDragging = false;
     this.dragOffset = { x: 0, y: 0 };
@@ -138,26 +151,16 @@ export class UVEditor {
           // Restore full-res texture after drag
           this._restoreFullResTexture();
           this._renderComposite();
-          // Update sticker PBR maps at full res
-          if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
-            this._renderStickerPBRMaps();
-            if (this._liveMetalnessTexture)  this._liveMetalnessTexture.needsUpdate  = true;
-            if (this._liveRoughnessTexture)  this._liveRoughnessTexture.needsUpdate  = true;
-          }
+          this._updateStickerPBRIfActive();
           this.onCommit?.(`${this._dragMode === 'rotate' ? 'Rotated' : this._dragMode.startsWith('resize') ? 'Resized' : 'Moved'} overlay`);
         }
         this.isDragging = false; this._dragMode = 'translate';
       });
       this.uvCanvas.addEventListener('mouseleave', () => {
         if (this.isDragging) {
-          // Restore full-res texture after drag
           this._restoreFullResTexture();
           this._renderComposite();
-          if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
-            this._renderStickerPBRMaps();
-            if (this._liveMetalnessTexture)  this._liveMetalnessTexture.needsUpdate  = true;
-            if (this._liveRoughnessTexture)  this._liveRoughnessTexture.needsUpdate  = true;
-          }
+          this._updateStickerPBRIfActive();
           this.onCommit?.('Moved overlay');
         }
         this.isDragging = false; this._dragMode = 'translate';
@@ -313,7 +316,7 @@ export class UVEditor {
 
   // ─── Open editor for a mesh (called when model loads) ─────────
   // This sets up the editor for a model - NO prompting for names here
-  async open(mesh, originalModelName, currentMaterialPreset = 'Wood') {
+  async open(mesh, originalModelName, currentMaterialPreset = 'Default — White') {
     // If we're already editing this same model, don't reset anything
     if (this.activeMesh === mesh && this.activeModelName === originalModelName) {
       return;
@@ -476,9 +479,17 @@ export class UVEditor {
       window.markNeedsRender?.(4);
     }
 
-    // If all overlays removed, clean up PBR maps entirely
+    // If all overlays removed, clean up PBR maps and restore original texture
     if (this.overlayImages.length === 0) {
       this._removeStickerPBRMaps();
+      if (this.activeMesh?.material) {
+        if (this.liveCanvasTexture) {
+          this.liveCanvasTexture.dispose();
+          this.liveCanvasTexture = null;
+        }
+        this.activeMesh.material.map = this.baseTexture || null;
+        this.activeMesh.material.needsUpdate = true;
+      }
     }
 
     this.onCommit?.('Deleted overlay');
@@ -623,7 +634,15 @@ export class UVEditor {
     }
     ctx.drawImage(this._checkerCache, 0, 0);
 
-    // Base texture ghost
+    // Material color ghost — shows the material's base color as faded context
+    if (this._materialBaseColor && this._materialBaseColor !== '#ffffff') {
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = this._materialBaseColor;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalAlpha = 1;
+    }
+
+    // Base texture ghost — shows the material's texture map if it has one
     if (this.baseTexture?.image) {
       ctx.globalAlpha = 0.25;
       ctx.drawImage(this.baseTexture.image, 0, 0, w, h);
@@ -695,7 +714,7 @@ export class UVEditor {
   _renderCompositeToCanvas(ctx, w, h, useWrap) {
     ctx.clearRect(0, 0, w, h);
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = this._materialBaseColor || '#ffffff';
     ctx.fillRect(0, 0, w, h);
 
     if (this.baseTexture?.image && this.baseTexture !== this.liveCanvasTexture) {
@@ -753,7 +772,7 @@ export class UVEditor {
     }
 
     // Also update sticker PBR maps at low-res so the white underlay follows the decal
-    if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
+    if (this._liveMetalnessTexture || this._liveRoughnessTexture || this._liveTransmissionTexture) {
       this._renderStickerPBRMapsDrag();
     }
 
@@ -787,6 +806,21 @@ export class UVEditor {
       m.roughnessMap = this._dragRoughnessTexture;
       m.needsUpdate = true;
     }
+
+    // Transmission drag map
+    const transmission = this._origTransmission ?? m.transmission ?? 0;
+    if (transmission > 0) {
+      this._renderPBRMap(this._dragTransmissionCtx, 512, 512, transmission * 255, 0);
+      if (!this._dragTransmissionTexture) {
+        this._dragTransmissionTexture = new THREE.CanvasTexture(this._dragTransmissionCanvas);
+        this._dragTransmissionTexture.colorSpace = THREE.LinearSRGBColorSpace;
+      }
+      this._dragTransmissionTexture.needsUpdate = true;
+      if (m.transmissionMap !== this._dragTransmissionTexture) {
+        m.transmissionMap = this._dragTransmissionTexture;
+        m.needsUpdate = true;
+      }
+    }
   }
 
   // ─── Restore full-res texture after drag ─────────────────────
@@ -801,6 +835,9 @@ export class UVEditor {
       }
       if (this._liveRoughnessTexture) {
         this.activeMesh.material.roughnessMap = this._liveRoughnessTexture;
+      }
+      if (this._liveTransmissionTexture) {
+        this.activeMesh.material.transmissionMap = this._liveTransmissionTexture;
       }
       this.activeMesh.material.needsUpdate = true;
     }
@@ -847,6 +884,16 @@ export class UVEditor {
     ctx.globalCompositeOperation = 'source-over';
   }
 
+  _updateStickerPBRIfActive() {
+    if (this._liveMetalnessTexture || this._liveRoughnessTexture || this._liveTransmissionTexture) {
+      this._renderStickerPBRMaps();
+      if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
+      if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
+      if (this._liveTransmissionTexture) this._liveTransmissionTexture.needsUpdate = true;
+      window.markNeedsRender?.(2);
+    }
+  }
+
   // ─── Generate sticker metalness + roughness maps ─────────────
   _renderStickerPBRMaps() {
     const m = this.activeMesh?.material;
@@ -859,6 +906,12 @@ export class UVEditor {
     this._renderPBRMap(this._metalnessCtx, 2048, 2048, metalness * 255, 0);
     // Roughness map: original value everywhere, 0.5 where decals are (matte sticker)
     this._renderPBRMap(this._roughnessCtx, 2048, 2048, roughness * 255, 0.5 * 255);
+
+    // Transmission map: original value everywhere, 0 where decals are (opaque sticker)
+    const transmission = this._origTransmission ?? m.transmission ?? 0;
+    if (transmission > 0) {
+      this._renderPBRMap(this._transmissionCtx, 2048, 2048, transmission * 255, 0);
+    }
   }
 
   applyTextureToModel() {
@@ -872,7 +925,10 @@ export class UVEditor {
     }
 
     // Capture material base color for composite background fill (prevents black-material issue)
-    if (this.activeMesh.material?.color) {
+    // Use stored original color if sticker PBR maps are active (material.color is overridden to white)
+    if (this._origColor) {
+      this._materialBaseColor = this._origColor;
+    } else if (this.activeMesh.material?.color) {
       this._materialBaseColor = '#' + this.activeMesh.material.color.getHexString();
     }
 
@@ -924,6 +980,7 @@ export class UVEditor {
       this.activeMesh.material.needsUpdate = true;
     }
 
+    window.markNeedsRender?.(4);
     this.log('✓ Design applied to model');
   }
 
@@ -932,6 +989,11 @@ export class UVEditor {
     // Capture originals on first apply
     if (this._origMetalness === null) this._origMetalness = material.metalness ?? 0;
     if (this._origRoughness === null) this._origRoughness = material.roughness ?? 0.5;
+    if (this._origTransmission === null) this._origTransmission = material.transmission ?? 0;
+    if (this._origColor === null && material.color) {
+      this._origColor = '#' + material.color.getHexString();
+      this._materialBaseColor = this._origColor;
+    }
 
     // Generate the maps
     this._renderStickerPBRMaps();
@@ -939,6 +1001,7 @@ export class UVEditor {
     // Dispose previous live PBR textures
     if (this._liveMetalnessTexture)  this._liveMetalnessTexture.dispose();
     if (this._liveRoughnessTexture)  this._liveRoughnessTexture.dispose();
+    if (this._liveTransmissionTexture) this._liveTransmissionTexture.dispose();
 
     this._liveMetalnessTexture = new THREE.CanvasTexture(this._metalnessCanvas);
     this._liveMetalnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
@@ -953,6 +1016,19 @@ export class UVEditor {
     // Set scalar values to 1.0 so maps are used as direct values
     material.metalness = 1.0;
     material.roughness = 1.0;
+
+    // Transmission map: opaque where decals are, original transparency elsewhere
+    if (this._origTransmission > 0) {
+      this._liveTransmissionTexture = new THREE.CanvasTexture(this._transmissionCanvas);
+      this._liveTransmissionTexture.colorSpace = THREE.LinearSRGBColorSpace;
+      this._liveTransmissionTexture.needsUpdate = true;
+      material.transmissionMap = this._liveTransmissionTexture;
+      material.transmission = 1.0;
+    }
+
+    // Set color to white — the base color is baked into the composite texture
+    // so Three.js doesn't multiply/tint the decals
+    if (material.color) material.color.set(0xffffff);
   }
 
   // ─── Remove sticker PBR maps and restore originals ───────────
@@ -970,8 +1046,15 @@ export class UVEditor {
       this._liveRoughnessTexture = null;
       m.roughnessMap = null;
     }
+    if (this._liveTransmissionTexture) {
+      this._liveTransmissionTexture.dispose();
+      this._liveTransmissionTexture = null;
+      m.transmissionMap = null;
+    }
     if (this._origMetalness !== null) { m.metalness = this._origMetalness; this._origMetalness = null; }
     if (this._origRoughness !== null) { m.roughness = this._origRoughness; this._origRoughness = null; }
+    if (this._origTransmission !== null) { m.transmission = this._origTransmission; this._origTransmission = null; }
+    if (this._origColor !== null && m.color) { m.color.set(this._origColor); this._origColor = null; }
     m.needsUpdate = true;
   }
 
@@ -1009,6 +1092,7 @@ export class UVEditor {
     this._syncSlidersFromImage(img);
     this._renderPreview();
     this._renderComposite();
+    this._updateStickerPBRIfActive();
   }
 
   /** Rotate selected overlay by deltaDeg degrees. */
@@ -1019,6 +1103,7 @@ export class UVEditor {
     this._syncSlidersFromImage(img);
     this._renderPreview();
     this._renderComposite();
+    this._updateStickerPBRIfActive();
   }
 
   /** Reset selected overlay to its initial center/size/rotation defaults. */
@@ -1031,6 +1116,7 @@ export class UVEditor {
     this._syncSlidersFromImage(img);
     this._renderPreview();
     this._renderComposite();
+    this._updateStickerPBRIfActive();
   }
 
 
@@ -1056,6 +1142,8 @@ export class UVEditor {
       if (stickerActive) {
         mat.metalness = this._origMetalness;
         mat.roughness = this._origRoughness;
+        if (this._origTransmission !== null) mat.transmission = this._origTransmission;
+        if (this._origColor && mat.color) mat.color.set(this._origColor);
       }
       if (this.materialManager) {
         materialProperties = this.materialManager.extractProperties(mat);
@@ -1085,10 +1173,12 @@ export class UVEditor {
           envMapIntensity: m.envMapIntensity ?? 1,
         };
       }
-      // Restore 1.0 scalars so sticker PBR maps continue to work
+      // Restore overridden values so sticker PBR maps continue to work
       if (stickerActive) {
         mat.metalness = 1.0;
         mat.roughness = 1.0;
+        if (this._origTransmission > 0) mat.transmission = 1.0;
+        if (mat.color) mat.color.set(0xffffff);
       }
     }
 
