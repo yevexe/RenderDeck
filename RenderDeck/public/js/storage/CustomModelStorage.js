@@ -47,7 +47,7 @@ export class CustomModelStorage {
       const metadata = {
         basedOn: modelData.basedOn,
         customName: modelData.customName,
-        materialPreset: modelData.materialPreset || 'Wood', // Save the preset!
+        materialPreset: modelData.materialPreset || 'Default — White', // Save the preset!
         materialProperties: modelData.materialProperties || {}, // Save properties too
         createdDate: new Date().toISOString(),
         lastModified: new Date().toISOString(),
