@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Anton&family=Bebas+Neue&family=Caveat:wght@400;700&family=Dancing+Script:wght@400;700&family=Lato:ital,wght@0,400;0,700;1,400;1,700&family=Lobster&family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Montserrat:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Oswald:wght@400;700&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Poppins:ital,wght@0,400;0,700;1,400;1,700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Raleway:ital,wght@0,400;0,700;1,400;1,700&family=Righteous&family=Roboto:ital,wght@0,400;0,700;1,400;1,700&family=Space+Mono:ital,wght@0,400;1,400&family=Ubuntu:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
   <script type="importmap">{
     "imports": {
       "three": "https://unpkg.com/three@0.183.2/build/three.module.js",
@@ -65,12 +66,12 @@
         <div class="design-shortcuts">
           <span class="sc-label">Design:</span>
           <div class="sc-row">
-            <div class="sc-item"><button id="sc-up"      class="sc-btn" title="Move Up (↑)">↑</button><span class="sc-item-label">Up</span></div>
-            <div class="sc-item"><button id="sc-down"    class="sc-btn" title="Move Down (↓)">↓</button><span class="sc-item-label">Down</span></div>
-            <div class="sc-item"><button id="sc-left"    class="sc-btn" title="Move Left (←)">←</button><span class="sc-item-label">Left</span></div>
-            <div class="sc-item"><button id="sc-right"   class="sc-btn" title="Move Right (→)">→</button><span class="sc-item-label">Right</span></div>
-            <div class="sc-item"><button id="sc-rot-ccw" class="sc-btn" title="Rotate CCW (Q)">↺</button><span class="sc-item-label">Q</span></div>
-            <div class="sc-item"><button id="sc-rot-cw"  class="sc-btn" title="Rotate CW (E)">↻</button><span class="sc-item-label">E</span></div>
+            <div class="sc-item"><button id="sc-up" class="sc-btn sc-arrow sc-arrow-up" title="Move Up (↑)">➔</button><span class="sc-item-label">Up</span></div>
+            <div class="sc-item"><button id="sc-down" class="sc-btn sc-arrow sc-arrow-down" title="Move Down (↓)">➔</button><span class="sc-item-label">Down</span></div>
+            <div class="sc-item"><button id="sc-left" class="sc-btn sc-arrow sc-arrow-left" title="Move Left (←)">➔</button><span class="sc-item-label">Left</span></div>
+            <div class="sc-item"><button id="sc-right" class="sc-btn sc-arrow sc-arrow-right" title="Move Right (→)">➔</button><span class="sc-item-label">Right</span></div>
+            <div class="sc-item"><button id="sc-rot-ccw" class="sc-btn" title="Rotate CCW (Q)">⟲</button><span class="sc-item-label">Q</span></div>
+            <div class="sc-item"><button id="sc-rot-cw"  class="sc-btn" title="Rotate CW (E)">⟳</button><span class="sc-item-label">E</span></div>
             <div class="sc-item"><button id="sc-reset"   class="sc-btn" title="Reset Transform (R)">⟲</button><span class="sc-item-label">R</span></div>
           </div>
         </div>
@@ -83,7 +84,6 @@
 
           <!-- Tab links -->
           <div class="tab">
-            <div class="tab">
               <!-- 1: Scene Setup -->
               <button class="tablinks active" onclick="openSetting(event, 'Setting1')" aria-label="Scene Set-Up"
                 title="Scene Set-Up">
@@ -139,15 +139,15 @@
                 title="Setting 10">
                 <span class="tab-fallback">10</span>
               </button>
-            </div>
           </div>
 
           <!-- ===== Setting 1: Scene Set-Up ===== -->
           <div id="Setting1" class="tabcontent" style="display: block;">
+            <div class="tab-panel tab-panel-setting1">
             <h3>Scene Set-Up</h3>
             <hr>
 
-            <div class="history-panel">
+            <div class="history-panel hiddenToggleOn">
               <div class="history-controls">
                 <button class="btn-history" id="scene-undo-btn" disabled>&#8617; Undo</button>
                 <button class="btn-history" id="scene-redo-btn" disabled>&#8618; Redo</button>
@@ -234,14 +234,16 @@
               <option value="solid_white">Solid White</option>
               <option value="solid_gray">Solid Gray</option>
             </select>
+            </div>
           </div>
 
           <!-- ===== Setting 2: Design Editor ===== -->
           <div id="Setting2" class="tabcontent">
+            <div class="tab-panel tab-panel-setting2">
             <h3>Design Editor</h3>
             <hr>
 
-            <div class="history-panel">
+            <div class="history-panel hiddenToggleOn">
               <div class="history-controls">
                 <button class="btn-history" id="design-undo-btn" disabled>&#8617; Undo</button>
                 <button class="btn-history" id="design-redo-btn" disabled>&#8618; Redo</button>
@@ -403,14 +405,16 @@
             </div>
             <input id="design-rotation-slider" class="slider" type="range" min="0" max="360" step="1" value="0">
 
+            </div>
           </div>
 
           <!-- ===== Setting 3: Material (MeshPhysicalMaterial) ===== -->
           <div id="Setting3" class="tabcontent">
+            <div class="tab-panel tab-panel-setting3">
             <h3>Materials (MeshPhysicalMaterial)</h3>
             <hr>
 
-            <div class="history-panel">
+            <div class="history-panel hiddenToggleOn">
               <div class="history-controls">
                 <button class="btn-history" id="mat-undo-btn" disabled>&#8617; Undo</button>
                 <button class="btn-history" id="mat-redo-btn" disabled>&#8618; Redo</button>
@@ -450,7 +454,6 @@
               <h5 class="control-label">Base Color</h5>
               <input id="basecolor-picker" type="color" class="colorPicker" value="#ffffff">
               <div class="color-field">
-                <span class="color-swatch" id="basecolor-swatch"></span>
                 <input id="basecolor-hex" class="value-input value-input-hex" type="text" value="#ffffff" maxlength="7"
                   spellcheck="false">
               </div>
@@ -650,10 +653,12 @@
             </div>
             <input id="envint-slider" class="slider" type="range" min="0" max="5" step="0.01" value="1.00">
 
+            </div>
           </div>
 
           <!-- ===== Setting 4: Camera ===== -->
           <div id="Setting4" class="tabcontent">
+            <div class="tab-panel tab-panel-setting4">
             <h3>Camera</h3>
             <hr>
 
@@ -744,10 +749,12 @@
                 min="0" max="1" value="0.25">
             </div>
             <input id="cam-dof-strength-slider" type="range" min="0" max="1" step="0.01" value="0.25" class="slider">
+            </div>
           </div>
 
           <!-- ===== Setting 5: Preview Quality ===== -->
           <div id="Setting5" class="tabcontent">
+            <div class="tab-panel tab-panel-setting5">
             <h3>Preview Quality</h3>
             <hr>
 
@@ -836,10 +843,12 @@
                 <span>Vertex Colors</span>
               </label>
             </div>
+            </div>
           </div>
 
           <!-- ===== Setting 6: Post-Processing ===== -->
           <div id="Setting6" class="tabcontent">
+            <div class="tab-panel tab-panel-setting6">
             <h3>Post-Processing</h3>
             <hr>
 
@@ -912,17 +921,21 @@
                 min="0" max="1" value="0.15">
             </div>
             <input id="motionblur-strength-slider" type="range" min="0" max="1" step="0.01" value="0.15" class="slider">
+            </div>
           </div>
 
           <!-- ===== Setting 7: Rendering ===== -->
           <div id="Setting7" class="tabcontent">
+            <div class="tab-panel tab-panel-setting7">
             <h3>Rendering</h3>
             <hr>
             <p>Rendering controls will be here.</p>
+            </div>
           </div>
 
           <!-- ===== Setting 8: Export & Project ===== -->
           <div id="Setting8" class="tabcontent">
+            <div class="tab-panel tab-panel-setting8">
             <h3>Export &amp; Project</h3>
             <hr>
 
@@ -1008,21 +1021,26 @@
               <button class="button" id="capture-thumbnail-btn">Capture Thumbnail</button>
               <button class="button" id="download-thumbnail-btn">Download Thumbnail</button>
             </div>
+            </div>
           </div>
 
           <!-- ===== Setting 9: Debug ===== -->
           <div id="Setting9" class="tabcontent">
+            <div class="tab-panel tab-panel-setting9">
             <h3>Debug</h3>
             <hr>
             <div class="debug-panel">
               <p>Ready. Drag and drop OBJ files to add models.</p>
             </div>
+            </div>
           </div>
 
           <div id="Setting10" class="tabcontent">
+            <div class="tab-panel tab-panel-setting10">
             <h3>Setting 10</h3>
             <hr>
             <p>Setting 10 controls will be here.</p>
+            </div>
           </div>
 
         </div><!-- end scene-settings-controls -->
