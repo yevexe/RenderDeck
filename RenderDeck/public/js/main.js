@@ -1368,7 +1368,6 @@ let axesHelper = null;
 function setupPreviewQualityUI() {
   const renderer = rendererManager.getRenderer();
   const scene = sceneManager.getScene();
-
   // ── Resolution select ──
   const resolutionSelect = document.getElementById('resolution-select');
   if (resolutionSelect) {
@@ -1381,7 +1380,7 @@ function setupPreviewQualityUI() {
       cam.aspect = w / h;
       cam.updateProjectionMatrix();
       markNeedsRender(4);
-      log(`Resolution: ${w}×${h}`);
+      log(`Resolution: ${w}x${h}`);
     });
   }
 
@@ -1992,3 +1991,5 @@ document.addEventListener('visibilitychange', () => {
 
 initializeApp();
 //
+
+
