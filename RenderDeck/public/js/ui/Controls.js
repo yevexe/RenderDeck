@@ -34,64 +34,56 @@ export class ControlsManager {
       materialSelect: document.getElementById('material-select'),
       objectSelectMaterialTab: document.getElementById('object-select-materialtab'),
       objectPartSelect: document.getElementById('object-part-select'),
+      materialBasicSection: document.getElementById('material-basic-toggle'),
+      materialBasicContent: document.getElementById('material-basic-content'),
+      materialAdvancedSection: document.getElementById('material-advanced-toggle'),
+      materialAdvancedContent: document.getElementById('material-advanced-content'),
 
       // Base
       basecolorPicker: document.getElementById('basecolor-picker'),
       basecolorHex: document.getElementById('basecolor-hex'),
-      basecolorSwatch: document.getElementById('basecolor-swatch'),
       metalnessSlider: document.getElementById('metalness-slider'),
       metalnessInput: document.getElementById('metalness-input'),
       roughnessSlider: document.getElementById('roughness-slider'),
       roughnessInput: document.getElementById('roughness-input'),
 
       // Specular
-      specularEnable: document.getElementById('specular-enable'),
       speccolorPicker: document.getElementById('speccolor-picker'),
       speccolorHex: document.getElementById('speccolor-hex'),
-      speccolorSwatch: document.getElementById('speccolor-swatch'),
       specintSlider: document.getElementById('specint-slider'),
       specintInput: document.getElementById('specint-input'),
 
       // Clearcoat
-      clearcoatEnable: document.getElementById('clearcoat-enable'),
       clearcoatSlider: document.getElementById('clearcoat-slider'),
       clearcoatInput: document.getElementById('clearcoat-input'),
       clearcoatroughSlider: document.getElementById('clearcoatrough-slider'),
       clearcoatroughInput: document.getElementById('clearcoatrough-input'),
 
       // Opacity
-      opacityEnable: document.getElementById('opacity-enable'),
       opacitySlider: document.getElementById('opacity-slider'),
       opacityInput: document.getElementById('opacity-input'),
 
       // Transmission
-      transEnable: document.getElementById('trans-enable'),
       transmissionSlider: document.getElementById('transmission-slider'),
       transmissionInput: document.getElementById('transmission-input'),
       iorSlider: document.getElementById('ior-slider'),
       iorInput: document.getElementById('ior-input'),
       thicknessSlider: document.getElementById('thickness-slider'),
       thicknessInput: document.getElementById('thickness-input'),
-      attenEnable: document.getElementById('atten-enable'),
       attdistSlider: document.getElementById('attdist-slider'),
       attdistInput: document.getElementById('attdist-input'),
       attcolorPicker: document.getElementById('attcolor-picker'),
       attcolorHex: document.getElementById('attcolor-hex'),
-      attcolorSwatch: document.getElementById('attcolor-swatch'),
 
       // Sheen
-      sheenEnable: document.getElementById('sheen-enable'),
       sheencolorPicker: document.getElementById('sheencolor-picker'),
       sheencolorHex: document.getElementById('sheencolor-hex'),
-      sheencolorSwatch: document.getElementById('sheencolor-swatch'),
       sheenroughSlider: document.getElementById('sheenrough-slider'),
       sheenroughInput: document.getElementById('sheenrough-input'),
 
       // Emissive
-      emissiveEnable: document.getElementById('emissive-enable'),
       emissivecolorPicker: document.getElementById('emissivecolor-picker'),
       emissiveHex: document.getElementById('emissive-hex'),
-      emissiveSwatch: document.getElementById('emissive-swatch'),
       emissiveintSlider: document.getElementById('emissiveint-slider'),
       emissiveintInput: document.getElementById('emissiveint-input'),
 
@@ -119,6 +111,7 @@ export class ControlsManager {
     this.setupEventListeners();
     this.initColorSwatches();
     this._setupChannelPickers();
+    this.initMaterialSections();
   }
 
   // ─── Color swatch init ────────────────────────────────────────
@@ -144,6 +137,33 @@ export class ControlsManager {
         swatch.style.marginRight = '4px';
       }
       if (hex && picker) hex.value = picker.value;
+    });
+  }
+
+  initMaterialSections() {
+    this._bindMaterialSection(this.elements.materialBasicSection, this.elements.materialBasicContent, true);
+    this._bindMaterialSection(this.elements.materialAdvancedSection, this.elements.materialAdvancedContent, false);
+  }
+
+  _bindMaterialSection(toggleEl, contentEl, openByDefault) {
+    if (!toggleEl || !contentEl) return;
+    const sectionEl = toggleEl.closest('.material-section');
+    const setExpanded = (expanded) => {
+      toggleEl.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      if (sectionEl) sectionEl.classList.toggle('is-open', expanded);
+      contentEl.style.maxHeight = expanded ? `${contentEl.scrollHeight}px` : '0px';
+    };
+
+    setExpanded(openByDefault);
+    requestAnimationFrame(() => setExpanded(openByDefault));
+    window.addEventListener('resize', () => {
+      if (toggleEl.getAttribute('aria-expanded') === 'true') {
+        contentEl.style.maxHeight = `${contentEl.scrollHeight}px`;
+      }
+    });
+    toggleEl.addEventListener('click', () => {
+      const expanded = toggleEl.getAttribute('aria-expanded') === 'true';
+      setExpanded(!expanded);
     });
   }
 
@@ -370,13 +390,13 @@ export class ControlsManager {
   _setupChannelPickers() {
     // [mapKey, insertBeforeElementId]
     const CHANNELS = [
-      ['map',              'basecolor-picker'],
-      ['specularColorMap', 'speccolor-picker'],
-      ['clearcoatMap',     'clearcoat-input'],
-      ['alphaMap',         'opacity-input'],
-      ['transmissionMap',  'transmission-input'],
-      ['sheenColorMap',    'sheencolor-picker'],
-      ['emissiveMap',      'emissivecolor-picker'],
+      ['map',              'map-channel-anchor'],
+      ['specularColorMap', 'specularColorMap-channel-anchor'],
+      ['clearcoatMap',     'clearcoatMap-channel-anchor'],
+      ['alphaMap',         'alphaMap-channel-anchor'],
+      ['transmissionMap',  'transmissionMap-channel-anchor'],
+      ['sheenColorMap',    'sheenColorMap-channel-anchor'],
+      ['emissiveMap',      'emissiveMap-channel-anchor'],
     ];
 
     CHANNELS.forEach(([mapKey, refId]) => {
