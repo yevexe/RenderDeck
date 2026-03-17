@@ -62,8 +62,8 @@ export class RendererManager {
     } else {
       const w = this.container.clientWidth  || 1;
       const h = this.container.clientHeight || 1;
-      this.renderer.setSize(w, h);
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.renderer.setSize(w, h, false); // false = don't overwrite CSS (handled by stylesheet)
       this.resizeComposer(w, h);
     }
   }

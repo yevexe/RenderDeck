@@ -4,6 +4,9 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { LineSegments2 }        from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial }         from 'three/addons/lines/LineMaterial.js';
 
 // Core
 import { SceneManager } from './core/Scene.js';
@@ -567,10 +570,10 @@ function applyMaterialPreset(presetName) {
   uvEditor.currentMaterialPreset = presetName;
   uvEditor._renderPreview();
 
-  // Sync the material dropdown to reflect the applied preset
-  const matSel = document.getElementById('material-select');
-  if (matSel) matSel.value = presetName;
+  // Sync the custom material dropdown to reflect the applied preset
+  controls.setMaterialPresetValue(presetName);
 
+  markNeedsRender(4);
   log(`Preset: ${presetName}`);
 }
 
@@ -806,6 +809,14 @@ function setupCameraUI() {
 //═══════════════════════════════════════════════════════════════
 
 const controls = new ControlsManager({
+  onGridChange: (field, value) => {
+    tfGridCfg[field] = value;
+    rebuildGrid();
+    if (tfSnapOn) {
+      propManager.setSnapEnabled(true, gridSnapStep());
+    }
+  },
+
   onModelChange: (name) => loadModel(name),
 
   onPartChange: (partName) => {
@@ -1195,9 +1206,7 @@ async function restoreSessionState() {
       }
     } catch (_) { /* ignore */ }
     if (restoredPreset) {
-      const matSel = document.getElementById('material-select');
-      if (matSel) matSel.value = restoredPreset;
-      applyMaterialPreset(restoredPreset);
+      applyMaterialPreset(restoredPreset); // also calls setMaterialPresetValue + markNeedsRender
     }
     if (state.materialProperties && activeMesh?.material) {
       materialManager.applySavedProperties(activeMesh.material, state.materialProperties);
@@ -1245,8 +1254,63 @@ function updateSceneList() {
   controls.updateSceneSelect(getSceneNames());
 }
 
+// ── Material preset thumbnail renderer ────────────────────────
+let _thumbRenderer = null;
+let _thumbScene    = null;
+let _thumbCamera   = null;
+let _thumbMesh     = null;
+
+function _ensureThumbRenderer() {
+  if (_thumbRenderer) return;
+  _thumbRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  _thumbRenderer.setSize(32, 32); // resized per-call in getMaterialThumbnail
+  _thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
+  _thumbRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+  _thumbRenderer.toneMappingExposure = 1.4;
+
+  _thumbScene = new THREE.Scene();
+  _thumbScene.background = new THREE.Color(0x1e1e1e);
+
+  _thumbCamera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+  _thumbCamera.position.set(0, 0, 3.5);
+
+  // Three-point studio lighting
+  const key  = new THREE.DirectionalLight(0xffffff, 4);   key.position.set(3, 4, 3);
+  const fill = new THREE.DirectionalLight(0x7799cc, 1.5); fill.position.set(-3, 0, -2);
+  const rim  = new THREE.DirectionalLight(0xffffff, 2.5); rim.position.set(-2, 3, -3);
+  _thumbScene.add(key, fill, rim, new THREE.AmbientLight(0x404040, 2));
+
+  _thumbMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 48));
+  _thumbScene.add(_thumbMesh);
+}
+
+/** @param {string} presetName @param {32|64} [size=32] */
+function getMaterialThumbnail(presetName, size = 32) {
+  try {
+    _ensureThumbRenderer();
+    _thumbRenderer.setSize(size, size, false);
+    const mat = materialManager.getPreset(presetName);
+    // Apply scene environment so metallic/reflective materials look correct
+    const env = sceneManager.getScene().environment;
+    if (env) { materialManager.applyEnvironment(mat, env); _thumbScene.environment = env; }
+    else      { _thumbScene.environment = null; }
+    _thumbMesh.material = mat;
+    _thumbRenderer.render(_thumbScene, _thumbCamera);
+    const dataUrl = _thumbRenderer.domElement.toDataURL();
+    mat.dispose();
+    return dataUrl;
+  } catch (e) {
+    console.warn('Thumbnail render failed for', presetName, e);
+    return null;
+  }
+}
+
 function updateMaterialPresetList() {
-  controls.updateMaterialPresetSelect(materialManager.getPresetNames());
+  controls.updateMaterialPresetSelect(
+    materialManager.getPresetNames(),
+    getMaterialThumbnail,
+    () => currentEnvironment   // env key — triggers re-render on hover when env changes
+  );
 }
 
 window.updateModelSelect = updateModelList;
@@ -1362,25 +1426,145 @@ function setupPostFXUI() {
 //═══════════════════════════════════════════════════════════════
 
 // Store helpers so we can toggle them
-let gridHelper = null;
-let axesHelper = null;
+let gridHelper    = null;
+let gridSubHelper = null;   // dashed subdivision lines
+let axesHelper    = null;
+
+// Grid toolbar state (shared between setupTransformToolbar and Controls callbacks)
+let tfGridOn  = false;
+let tfSnapOn  = false;
+const tfGridCfg = { size: 10, divisions: 10, subdivisions: 5 };
+
+function gridSnapStep() {
+  const { size, divisions, subdivisions } = tfGridCfg;
+  const totalDivs = subdivisions > 0 ? divisions * subdivisions : divisions;
+  return size / totalDivs;
+}
+
+function rebuildGrid() {
+  const scene = sceneManager.getScene();
+  if (gridHelper)    { scene.remove(gridHelper);    gridHelper.geometry?.dispose();    gridHelper.material?.dispose();    gridHelper    = null; }
+  if (gridSubHelper) { scene.remove(gridSubHelper); gridSubHelper.geometry?.dispose(); gridSubHelper.material?.dispose(); gridSubHelper = null; }
+  if (!tfGridOn) { markNeedsRender(4); return; }
+
+  const { size, divisions, subdivisions } = tfGridCfg;
+  const canvas = rendererManager.getRenderer().domElement;
+
+  // Main grid — thick white lines via LineSegments2 (true pixel linewidth)
+  {
+    const half = size / 2;
+    const step = size / divisions;
+    const positions = [];
+    for (let i = 0; i <= divisions; i++) {
+      const p = -half + i * step;
+      positions.push(-half, 0, p,  half, 0, p); // line along X
+      positions.push(p, 0, -half,  p, 0,  half); // line along Z
+    }
+    const geo = new LineSegmentsGeometry();
+    geo.setPositions(positions);
+    const mat = new LineMaterial({
+      color: 0xffffff,
+      linewidth: 1.25,
+      resolution: new THREE.Vector2(canvas.width, canvas.height),
+    });
+    gridHelper = new LineSegments2(geo, mat);
+    gridHelper.position.y = -0.01;
+    scene.add(gridHelper);
+  }
+
+  // Subdivision grid — grey semi-transparent GridHelper lines
+  if (subdivisions > 0) {
+    const totalDivs = divisions * subdivisions;
+    gridSubHelper = new THREE.GridHelper(size, totalDivs, 0x7f7f7f, 0x7f7f7f);
+    // Remove lines that overlap with main grid so only subdivision lines show
+    const posAttr = gridSubHelper.geometry.getAttribute('position');
+    const colorAttr = gridSubHelper.geometry.getAttribute('color');
+    const step = size / divisions;
+    const half = size / 2;
+    const eps  = 1e-4;
+    for (let i = 0; i < posAttr.count; i += 2) {
+      const x0 = posAttr.getX(i), z0 = posAttr.getZ(i);
+      const x1 = posAttr.getX(i + 1), z1 = posAttr.getZ(i + 1);
+      // A main-grid line is axis-aligned and sits exactly on a main-division offset
+      const onMainX = Math.abs(((z0 + half) % step)) < eps || Math.abs(((z0 + half) % step) - step) < eps;
+      const onMainZ = Math.abs(((x0 + half) % step)) < eps || Math.abs(((x0 + half) % step) - step) < eps;
+      const isMainLine = (Math.abs(x0 - x1) < eps && onMainZ) || (Math.abs(z0 - z1) < eps && onMainX);
+      if (isMainLine) {
+        // Zero-out the segment so it renders as a degenerate (invisible) line
+        colorAttr.setXYZ(i,     0, 0, 0);
+        colorAttr.setXYZ(i + 1, 0, 0, 0);
+      }
+    }
+    colorAttr.needsUpdate = true;
+    gridSubHelper.material.transparent = true;
+    gridSubHelper.material.opacity = 0.4;
+    gridSubHelper.material.vertexColors = true;
+    gridSubHelper.position.y = -0.009;
+    scene.add(gridSubHelper);
+  }
+  markNeedsRender(4);
+}
 
 function setupPreviewQualityUI() {
   const renderer = rendererManager.getRenderer();
   const scene = sceneManager.getScene();
-  // ── Resolution select ──
-  const resolutionSelect = document.getElementById('resolution-select');
-  if (resolutionSelect) {
-    resolutionSelect.addEventListener('change', (e) => {
-      const val = e.target.value;
-      if (!val) return;
-      const [w, h] = val.split('x').map(Number);
-      rendererManager.setCustomResolution(w, h);
+  // ── Resolution select (temporarily disabled — moved to Rendering tab) ──
+  // The select is in Setting7 with disabled attribute. When re-enabled, uncomment:
+  // const resolutionSelect = document.getElementById('resolution-select');
+  // if (resolutionSelect) {
+  //   resolutionSelect.addEventListener('change', (e) => {
+  //     const val = e.target.value;
+  //     if (!val) return;
+  //     const [w, h] = val.split('x').map(Number);
+  //     rendererManager.setCustomResolution(w, h);
+  //     const cam = cameraManager.getCamera();
+  //     cam.aspect = w / h;
+  //     cam.updateProjectionMatrix();
+  //     markNeedsRender(4);
+  //     log(`Resolution: ${w}x${h}`);
+  //   });
+  // }
+
+  // ── Current Resolution display (Preview Quality tab) ──
+  function updateResolutionDisplay() {
+    const display = document.getElementById('current-resolution-display');
+    if (!display) return;
+    const canvas = rendererManager.getDomElement();
+    if (canvas) {
+      display.textContent = `${canvas.width} × ${canvas.height}`;
+    }
+  }
+  updateResolutionDisplay();
+
+  // ResizeObserver fires after CSS layout is committed, so clientWidth/clientHeight
+  // are already the new values. We render immediately here rather than via markNeedsRender
+  // to avoid the one-frame blank caused by setSize() clearing the canvas before the
+  // animation loop gets a chance to redraw.
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => {
+      rendererManager.resize();
       const cam = cameraManager.getCamera();
-      cam.aspect = w / h;
+      cam.aspect = container.clientWidth / Math.max(1, container.clientHeight);
+      cam.updateProjectionMatrix();
+      rendererManager.render(sceneManager.getScene(), cam);
+      updateResolutionDisplay();
+      // Keep LineMaterial resolution in sync so thick grid lines stay sharp
+      if (gridHelper?.material?.resolution) {
+        const c = rendererManager.getRenderer().domElement;
+        gridHelper.material.resolution.set(c.width, c.height);
+      }
+    }).observe(container);
+  } else {
+    window.addEventListener('resize', () => {
+      const cam = cameraManager.getCamera();
+      cam.aspect = container.clientWidth / Math.max(1, container.clientHeight);
       cam.updateProjectionMatrix();
       markNeedsRender(4);
-      log(`Resolution: ${w}x${h}`);
+      updateResolutionDisplay();
+      if (gridHelper?.material?.resolution) {
+        const c = rendererManager.getRenderer().domElement;
+        gridHelper.material.resolution.set(c.width, c.height);
+      }
     });
   }
 
@@ -1698,11 +1882,33 @@ function setupTransformToolbar() {
   btnRotate?.addEventListener('click',    () => activateMode('rotate',    btnRotate));
   btnScale?.addEventListener('click',     () => activateMode('scale',     btnScale));
 
-  let snapOn = false;
   btnSnap?.addEventListener('click', () => {
-    snapOn = !snapOn;
-    propManager.setSnapEnabled(snapOn);
-    btnSnap.classList.toggle('tf-btn--active', snapOn);
+    tfSnapOn = !tfSnapOn;
+    propManager.setSnapEnabled(tfSnapOn, gridSnapStep());
+    btnSnap.classList.toggle('tf-btn--active', tfSnapOn);
+  });
+
+  // ── Edit-mode lock ──────────────────────────────────────────────
+  const btnEditMode   = document.getElementById('tf-editmode');
+  const toolbar       = document.getElementById('transform-toolbar');
+  let editModeOn = true; // starts enabled (matches current default)
+
+  function applyEditMode(on) {
+    editModeOn = on;
+    propManager.setEditMode(on);
+    btnEditMode?.classList.toggle('tf-btn--active', on);
+    toolbar?.classList.toggle('tf-locked', !on);
+  }
+
+  btnEditMode?.addEventListener('click', () => applyEditMode(!editModeOn));
+  applyEditMode(true); // sync PropManager state with the button's default active state
+
+  // ── Grid toggle (on/off) — settings wiring is in Controls.js ────
+  const btnGrid = document.getElementById('tf-grid');
+  btnGrid?.addEventListener('click', () => {
+    tfGridOn = !tfGridOn;
+    rebuildGrid();
+    btnGrid.classList.toggle('tf-btn--active', tfGridOn);
   });
 
   // Keep toolbar in sync with keyboard shortcuts (PropManager handles the actual mode change)
