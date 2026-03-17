@@ -781,6 +781,12 @@
               </label>
             </div>
 
+            <div class="button-row">
+              <button id="cam-dof-focus-object" class="button-medium" style="flex:1">Focus on Object</button>
+              <button id="cam-dof-reset-focus" class="button-medium" style="flex:1">Reset Focus</button>
+              <button id="cam-dof-reset-all" class="button-medium" style="flex:1">Reset Settings</button>
+            </div>
+
             <div class="control-row">
               <p class="control-label">DOF Focus Distance</p>
               <input id="cam-dof-focus-slider" type="range" min="0.1" max="50" step="0.1" value="5" class="slider">
@@ -793,6 +799,20 @@
               <input id="cam-dof-strength-slider" type="range" min="0" max="1" step="0.01" value="0.25" class="slider">
               <input id="cam-dof-strength-input" class="value-input" type="number" inputmode="decimal" step="0.01"
                 min="0" max="1" value="0.25">
+            </div>
+
+            <div class="control-row">
+              <p class="control-label">DOF Max Blur</p>
+              <input id="cam-dof-maxblur-slider" type="range" min="0" max="0.03" step="0.001" value="0.01" class="slider">
+              <input id="cam-dof-maxblur-input" class="value-input" type="number" inputmode="decimal" step="0.001"
+                min="0" max="0.03" value="0.010">
+            </div>
+
+            <div class="control-row">
+              <p class="control-label">DOF Rings (Quality)</p>
+              <input id="cam-dof-rings-slider" type="range" min="1" max="6" step="1" value="6" class="slider">
+              <input id="cam-dof-rings-input" class="value-input" type="number" inputmode="numeric" step="1"
+                min="1" max="6" value="6">
             </div>
             </div>
           </div>
