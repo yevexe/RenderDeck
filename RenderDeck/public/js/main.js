@@ -1662,11 +1662,8 @@ function setupPreviewQualityUI() {
 
   // ── Anti-Aliasing mode ──
   setupButtonRow('aa-mode-buttons', (v) => {
-    if (v === 'fxaa') {
-      rendererManager.setFXAA(true);
-    } else {
-      rendererManager.setFXAA(false);
-    }
+    rendererManager.setAA(v);
+    markNeedsRender(4);
     log(`Anti-aliasing: ${v}`);
   });
 

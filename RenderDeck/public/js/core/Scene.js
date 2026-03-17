@@ -15,18 +15,13 @@ export class SceneManager {
    * Setup scene lighting (ambient + directional with shadows)
    */
   setupLighting() {
-    // Ambient light - illuminates everything equally
-    const ambient = new THREE.AmbientLight(
-      0xffffff, 
-      CONFIG.LIGHTING.AMBIENT_INTENSITY
-    );
+    // Ambient light — kept at 0 so the HDR environment is the sole light source.
+    // Raise intensity here (or via updateLighting) only if no HDR is loaded.
+    const ambient = new THREE.AmbientLight(0xffffff, 0);
     this.scene.add(ambient);
 
-    // Directional light - simulates sunlight with shadows
-    const directional = new THREE.DirectionalLight(
-      0xffffff, 
-      CONFIG.LIGHTING.DIRECTIONAL_INTENSITY
-    );
+    // Directional light — kept at 0; shadows rig is preserved for future use.
+    const directional = new THREE.DirectionalLight(0xffffff, 0);
     
     directional.position.set(
       CONFIG.LIGHTING.DIRECTIONAL_POSITION.x,
@@ -35,7 +30,9 @@ export class SceneManager {
     );
     
     directional.castShadow = true;
-    
+    directional.shadow.bias       = -0.001; // prevents shadow acne (self-shadowing stripes)
+    directional.shadow.normalBias =  0.02;  // fixes grazing-angle artifacts
+
     // Configure shadow camera
     const shadowSize = CONFIG.LIGHTING.SHADOW_CAMERA_SIZE;
     directional.shadow.camera.left = -shadowSize;
