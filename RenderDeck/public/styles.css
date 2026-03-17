@@ -90,9 +90,10 @@ body {
   line-height: 1.45;
   color: white;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
+  justify-content: flex-start;
+  align-items: flex-start;
+  height: 100vh;
+  overflow: hidden;
 }
 
 button,
@@ -101,14 +102,15 @@ select,
 textarea {
   font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 }
-/* Main container - fixed dimensions and centered */
+/* Main container - fluid, fills entire viewport */
 main {
-  width: 1400px;
-  height: 1080px;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px; /* vertical rhythm between sections */
+  gap: 10px;
 }
 /* Typography - compact UI scale */
 
@@ -178,11 +180,13 @@ hr {
   margin-bottom: 0px;
 }
 .preview {
-  padding: 0 24px 0 24px;
+  padding: 0 24px 24px 24px;
   display: flex;
-  flex-wrap: nowrap;        /* keep side-by-side */
+  flex-wrap: nowrap;
   gap: 10px;
-  align-items: flex-start;  /* <-- critical: prevents stretch-to-tallest */
+  flex: 1 1 0;          /* fill remaining height in main after title */
+  min-height: 0;         /* allow flex shrink below content size */
+  align-items: stretch;  /* let scene-view fill full height */
 }
 .preview h1 {
   width: 100%;
@@ -215,17 +219,21 @@ hr {
   align-items: stretch;
   gap: 8px;
   width: 100%;
+  flex: 1 1 auto;   /* fill remaining height in .scene-view column */
+  min-height: 0;
 }
 
 .editor-stage-toolbar {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
+  position: relative; /* anchor for grid-settings-popup */
 }
 
 .editor-stage-content {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
 }
 /* Scene preview container must clip its contents */
 #scene-view-placeholder,
@@ -1028,13 +1036,13 @@ hr {
   border-color:#888;
 }
 
-/* 16:9 Scene Viewport */
+/* Scene viewport — fills its container fully */
 #scene-view-placeholder,
 .scene-view-placeholder {
   position: relative;
   overflow: hidden;
   width: 100%;
-  aspect-ratio: 16 / 9;   /* enforces 16:9 */
+  height: 100%;
   background-color: #000;
 }
 
@@ -1047,19 +1055,22 @@ hr {
   max-height: none;
 }
 
-/* Scene-view column: don't stretch vertically past its content */
+/* Scene-view column: fills all available height from flex parent */
 .scene-view {
   display: flex;
   flex-direction: column;
-  flex: 2;
-  align-self: flex-start;  /* prevents stretching to tallest sibling */
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
-/* Settings panel: scrollable so long tabs don't overflow */
+/* Settings panel: fixed width, scrolls to full viewport height */
 .scene-settings {
-  flex: 1;
-  align-self: flex-start;
-  max-height: 900px;
+  flex: 0 0 340px;
+  width: 340px;
+  align-self: stretch;
+  max-height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1484,11 +1495,153 @@ hr {
 .hiddenToggleOn{
     display: none;
     position: absolute;
-    overflow: hidden; 
+    overflow: hidden;
     height: 0;
     width: 0;
     padding: 0;
     margin: 0;
     border: 0;
     outline: none;
+}
+
+/* "temporarily off" badge used on disabled settings */
+.temp-off-badge {
+  font-size: 11px;
+  font-weight: 400;
+  color: #888;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 1px 5px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+/* ── Grid settings popup ─────────────────────────────────────── */
+.grid-settings-popup {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 0;
+  z-index: 200;
+  width: 260px;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+/* ── Locked toolbar state — dim transform-mode buttons ──────── */
+.transform-toolbar.tf-locked .tf-btn:not(#tf-editmode) {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Current resolution readout in Preview Quality tab */
+.current-resolution-display {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ccc;
+  margin: 4px 0 8px;
+  padding: 4px 8px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+
+/* ── Custom Select (material preset dropdown + any future reuse) ── */
+.custom-select {
+  position: relative;
+  width: 100%;
+  margin-bottom: 5px;
+  user-select: none;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.custom-select__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  min-height: 30px;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 120%),
+    #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #ccc;
+}
+.custom-select__trigger:hover        { border-color: #666; }
+.custom-select.is-open .custom-select__trigger { border-color: #888; }
+
+.custom-select__value {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-select__arrow {
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-left:  4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top:   5px solid #888;
+  transition: transform 0.15s;
+}
+.custom-select.is-open .custom-select__arrow { transform: rotate(180deg); }
+
+.custom-select__dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+}
+.custom-select.is-open .custom-select__dropdown { display: block; }
+
+.custom-select__option {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #bbb;
+}
+.custom-select__option:hover             { background: #2a2a2a; color: #fff; }
+.custom-select__option.is-active         { background: #313131; color: #fff; }
+
+.custom-select__option-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.custom-select__thumb {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: block;
+  object-fit: cover;
+}
+
+/* Thumbnail in the trigger button sits to the left of the label */
+.custom-select__trigger-thumb {
+  margin-right: 2px;
 }

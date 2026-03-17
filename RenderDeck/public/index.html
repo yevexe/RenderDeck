@@ -31,6 +31,14 @@
         <div class="editor-stage editor-stage--scene">
           <div class="editor-stage-toolbar">
             <div id="transform-toolbar" class="transform-toolbar">
+              <!-- Edit-mode lock: when active (green) transform gizmo is live; when grey gizmo is hidden -->
+              <button id="tf-editmode" class="tf-btn tf-btn--active" title="Toggle Transform Edit Mode">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+              <div class="tf-sep"></div>
               <button id="tf-translate" class="tf-btn tf-btn--active" title="Move (G)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/>
@@ -58,6 +66,39 @@
                   <line x1="3" y1="6" x2="6" y2="6"/><line x1="18" y1="6" x2="21" y2="6"/>
                 </svg>
               </button>
+              <div class="tf-sep"></div>
+              <button id="tf-grid" class="tf-btn" title="Toggle Grid">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+                </svg>
+              </button>
+              <button id="tf-grid-settings" class="tf-btn" title="Grid Settings">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="4" y1="6" x2="20" y2="6"/><circle cx="8" cy="6" r="2"/>
+                  <line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2"/>
+                  <line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- Grid settings popup — shown/hidden by tf-grid-settings button -->
+            <div id="grid-settings-popup" class="grid-settings-popup" style="display:none;">
+              <div class="control-row">
+                <p class="control-label">Size</p>
+                <input id="grid-size-slider" class="slider" type="range" min="1" max="100" step="1" value="10">
+                <input id="grid-size-input" class="value-input" type="number" min="1" max="500" step="1" value="10">
+              </div>
+              <div class="control-row">
+                <p class="control-label">Divisions</p>
+                <input id="grid-divisions-slider" class="slider" type="range" min="1" max="50" step="1" value="10">
+                <input id="grid-divisions-input" class="value-input" type="number" min="1" max="200" step="1" value="10">
+              </div>
+              <div class="control-row">
+                <p class="control-label">Subdivisions</p>
+                <input id="grid-subdivisions-slider" class="slider" type="range" min="0" max="16" step="1" value="5">
+                <input id="grid-subdivisions-input" class="value-input" type="number" min="0" max="20" step="1" value="5">
+              </div>
             </div>
           </div>
           <div class="editor-stage-content">
@@ -444,11 +485,7 @@
             <hr>
 
             <h4>Preset</h4>
-            <select id="material-select" class="dropdown">
-              <option value="" disabled selected>--- Standard Materials ---</option>
-              <!-- populated by JS -->
-              <option value="" disabled>--- User Materials ---</option>
-            </select>
+            <div id="material-select" tabindex="0"></div>
 
             <button class="button-medium" id="add-new-material">New Material</button>
             <button class="button-medium" id="delete-current-material">Delete Material</button>
@@ -767,21 +804,8 @@
             <hr>
 
             <h4>Output</h4>
-            <h5>Select Resolution</h5>
-            <select id="resolution-select" class="dropdown">
-              <option value="" disabled>--- Common (16:9) ---</option>
-              <option value="1280x720">1280 × 720 — HD</option>
-              <option value="1600x900" selected>1600 × 900 — HD+</option>
-              <option value="1920x1080">1920 × 1080 — Full HD</option>
-              <option value="2560x1440">2560 × 1440 — QHD / 2K</option>
-              <option value="3840x2160">3840 × 2160 — 4K UHD</option>
-              <option value="" disabled>--- Square / Texture ---</option>
-              <option value="1024x1024">1024 × 1024</option>
-              <option value="2048x2048">2048 × 2048</option>
-              <option value="4096x4096">4096 × 4096</option>
-              <option value="" disabled>--- Portrait ---</option>
-              <option value="1080x1920">1080 × 1920 — Portrait</option>
-            </select>
+            <p class="control-label">Current Resolution</p>
+            <p id="current-resolution-display" class="current-resolution-display">— × —</p>
 
             <h5>Render Scale</h5>
             <div class="button-row" id="render-scale-buttons" data-target-input="render-scale-value">
@@ -937,7 +961,25 @@
             <div class="tab-panel tab-panel-setting7">
             <h3>Rendering</h3>
             <hr>
-            <p>Rendering controls will be here.</p>
+
+            <h4>Output Resolution <span class="temp-off-badge">temporarily off</span></h4>
+            <p class="control-label">Select Resolution</p>
+            <!-- Resolution select is temporarily disabled — logic is commented out in setupPreviewQualityUI() in main.js -->
+            <select id="resolution-select" class="dropdown" disabled>
+              <option value="" disabled>--- Common (16:9) ---</option>
+              <option value="1280x720">1280 × 720 — HD</option>
+              <option value="1600x900" selected>1600 × 900 — HD+</option>
+              <option value="1920x1080">1920 × 1080 — Full HD</option>
+              <option value="2560x1440">2560 × 1440 — QHD / 2K</option>
+              <option value="3840x2160">3840 × 2160 — 4K UHD</option>
+              <option value="" disabled>--- Square / Texture ---</option>
+              <option value="1024x1024">1024 × 1024</option>
+              <option value="2048x2048">2048 × 2048</option>
+              <option value="4096x4096">4096 × 4096</option>
+              <option value="" disabled>--- Portrait ---</option>
+              <option value="1080x1920">1080 × 1920 — Portrait</option>
+            </select>
+
             </div>
           </div>
 

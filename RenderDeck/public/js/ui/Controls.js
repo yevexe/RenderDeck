@@ -3,6 +3,200 @@
 
 import { log } from '../utils/logger.js';
 
+// ── Reusable custom styled dropdown with optional thumbnail support ──────────
+export class CustomSelect {
+  constructor(container) {
+    this._container      = container;
+    this._value          = '';
+    this._handlers       = [];
+    this._open           = false;
+    this._thumbMap       = new Map(); // value → dataUrl
+    this._getThumbnailFn = null;      // (name) => dataUrl | null
+    this._getEnvKeyFn    = null;      // () => string  — identifies current environment
+    this._lastEnvKey     = undefined; // env key at last render
+    this._rerenderSeq    = 0;         // incremented to cancel stale batches
+    this._items          = [];
+    this._build();
+  }
+
+  _build() {
+    this._container.classList.add('custom-select');
+
+    this._trigger = document.createElement('div');
+    this._trigger.className = 'custom-select__trigger';
+
+    // Thumbnail shown in the trigger for the currently selected item
+    this._triggerThumb = document.createElement('img');
+    this._triggerThumb.className = 'custom-select__thumb custom-select__trigger-thumb';
+    this._triggerThumb.alt = '';
+    this._triggerThumb.style.display = 'none';
+
+    this._label = document.createElement('span');
+    this._label.className = 'custom-select__value';
+    this._label.textContent = '— Select preset —';
+
+    const arrow = document.createElement('span');
+    arrow.className = 'custom-select__arrow';
+
+    this._trigger.append(this._triggerThumb, this._label, arrow);
+
+    this._dropdown = document.createElement('div');
+    this._dropdown.className = 'custom-select__dropdown';
+
+    this._container.append(this._trigger, this._dropdown);
+
+    this._trigger.addEventListener('click', e => { e.stopPropagation(); this._toggle(); });
+
+    // On hover: if environment has changed since last render, kick off a lazy re-render
+    this._trigger.addEventListener('mouseenter', () => {
+      if (!this._getThumbnailFn) return;
+      const envKey = this._getEnvKeyFn?.();
+      if (envKey !== this._lastEnvKey) this._scheduleRerender();
+    });
+
+    document.addEventListener('click', e => {
+      if (!this._container.contains(e.target)) this._close();
+    });
+
+    this._container.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._toggle(); }
+      if (e.key === 'Escape') this._close();
+    });
+  }
+
+  _toggle() { this._open ? this._close() : this._openDropdown(); }
+
+  _openDropdown() {
+    this._open = true;
+    this._container.classList.add('is-open');
+  }
+
+  _close() {
+    this._open = false;
+    this._container.classList.remove('is-open');
+  }
+
+  _setTriggerThumb(value) {
+    const url = this._thumbMap.get(value);
+    if (url) {
+      this._triggerThumb.src = url;
+      this._triggerThumb.style.display = '';
+    } else {
+      this._triggerThumb.style.display = 'none';
+    }
+  }
+
+  /**
+   * Re-render thumbnails for the currently-visible portion first, then
+   * lazily render the rest in small batches without blocking the main thread.
+   */
+  _scheduleRerender() {
+    const token    = ++this._rerenderSeq;
+    const itemEls  = [...this._dropdown.querySelectorAll('.custom-select__option')];
+    if (!itemEls.length || !this._getThumbnailFn) return;
+
+    // Approximate items visible in the 220px max-height dropdown (~32px per row)
+    const VISIBLE = Math.ceil(220 / 32) + 1;
+
+    // Render the visible portion synchronously (fast — user is about to open)
+    for (let i = 0; i < Math.min(VISIBLE, itemEls.length); i++) {
+      this._rerenderItem(itemEls[i]);
+    }
+
+    // Lazily render the rest in batches of 3, ~20 ms apart
+    let idx = VISIBLE;
+    const renderBatch = () => {
+      if (token !== this._rerenderSeq) return; // superseded by a newer call
+      const end = Math.min(idx + 3, itemEls.length);
+      for (; idx < end; idx++) this._rerenderItem(itemEls[idx]);
+      if (idx < itemEls.length) setTimeout(renderBatch, 20);
+    };
+    if (idx < itemEls.length) setTimeout(renderBatch, 20);
+
+    this._lastEnvKey = this._getEnvKeyFn?.();
+  }
+
+  _rerenderItem(optEl) {
+    const name    = optEl.dataset.value;
+    const dataUrl = this._getThumbnailFn(name, 64); // HQ upgrade on hover
+    if (!dataUrl) return;
+    this._thumbMap.set(name, dataUrl);
+    const img = optEl.querySelector('.custom-select__thumb');
+    if (img) img.src = dataUrl;
+    if (name === this._value) this._setTriggerThumb(name);
+  }
+
+  /**
+   * @param {string[]} items
+   * @param {(name: string) => string|null} [getThumbnail]
+   * @param {() => string} [getEnvKey] — returns a key identifying current environment
+   */
+  populate(items, getThumbnail, getEnvKey) {
+    this._items          = items;
+    this._getThumbnailFn = getThumbnail ?? null;
+    this._getEnvKeyFn    = getEnvKey   ?? null;
+    this._lastEnvKey     = getEnvKey?.();
+    this._thumbMap.clear();
+    this._dropdown.innerHTML = '';
+
+    items.forEach(name => {
+      const opt = document.createElement('div');
+      opt.className = 'custom-select__option';
+      opt.dataset.value = name;
+      if (name === this._value) opt.classList.add('is-active');
+
+      // Thumbnail LEFT, label RIGHT  — initial render at 32 px (low cost)
+      if (getThumbnail) {
+        const dataUrl = getThumbnail(name, 32);
+        if (dataUrl) {
+          this._thumbMap.set(name, dataUrl);
+          const img = document.createElement('img');
+          img.className = 'custom-select__thumb';
+          img.src = dataUrl;
+          img.alt = '';
+          opt.appendChild(img);
+        }
+      }
+
+      const label = document.createElement('span');
+      label.className = 'custom-select__option-label';
+      label.textContent = name;
+      opt.appendChild(label);
+
+      opt.addEventListener('click', () => this._select(name));
+      this._dropdown.appendChild(opt);
+    });
+
+    // Refresh trigger thumbnail in case value was already set before populate
+    this._setTriggerThumb(this._value);
+  }
+
+  _select(value) {
+    this._value = value;
+    this._label.textContent = value;
+    this._setTriggerThumb(value);
+    this._dropdown.querySelectorAll('.custom-select__option').forEach(o =>
+      o.classList.toggle('is-active', o.dataset.value === value)
+    );
+    this._close();
+    this._handlers.forEach(cb => cb(value));
+  }
+
+  get value()  { return this._value; }
+  set value(v) {
+    if (!v) return;
+    this._value = v;
+    this._label.textContent = v;
+    this._setTriggerThumb(v);
+    this._dropdown.querySelectorAll('.custom-select__option').forEach(o =>
+      o.classList.toggle('is-active', o.dataset.value === v)
+    );
+  }
+
+  /** Register a value-change handler. */
+  onChange(cb) { this._handlers.push(cb); }
+}
+
 export class ControlsManager {
   constructor(callbacks) {
     this.callbacks = callbacks;
@@ -99,6 +293,16 @@ export class ControlsManager {
       fileInput: document.getElementById('file-input'),
       clearCustomBtn: document.getElementById('clear-custom-btn'),
       modelSelect: document.getElementById('model-select'),
+
+      // Grid settings popup
+      gridSettingsBtn:       document.getElementById('tf-grid-settings'),
+      gridSettingsPopup:     document.getElementById('grid-settings-popup'),
+      gridSizeSlider:        document.getElementById('grid-size-slider'),
+      gridSizeInput:         document.getElementById('grid-size-input'),
+      gridDivisionsSlider:   document.getElementById('grid-divisions-slider'),
+      gridDivisionsInput:    document.getElementById('grid-divisions-input'),
+      gridSubsSlider:        document.getElementById('grid-subdivisions-slider'),
+      gridSubsInput:         document.getElementById('grid-subdivisions-input'),
     };
 
     const missing = Object.entries(this.elements)
@@ -112,6 +316,16 @@ export class ControlsManager {
     this.initColorSwatches();
     this._setupChannelPickers();
     this.initMaterialSections();
+    this.initGridSettings();
+
+    // Custom material preset dropdown (replaces native <select>)
+    if (this.elements.materialSelect) {
+      this._matSelect = new CustomSelect(this.elements.materialSelect);
+      this._matSelect.onChange(value => {
+        this.callbacks.onMaterialChange?.(value);
+        this.callbacks.onMaterialPropertyCommit?.();
+      });
+    }
   }
 
   // ─── Color swatch init ────────────────────────────────────────
@@ -143,6 +357,32 @@ export class ControlsManager {
   initMaterialSections() {
     this._bindMaterialSection(this.elements.materialBasicSection, this.elements.materialBasicContent, true);
     this._bindMaterialSection(this.elements.materialAdvancedSection, this.elements.materialAdvancedContent, false);
+  }
+
+  // ─── Grid settings popup ──────────────────────────────────────
+  initGridSettings() {
+    const el = this.elements;
+    if (!el.gridSettingsBtn || !el.gridSettingsPopup) return;
+
+    // Popup open / close
+    el.gridSettingsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = el.gridSettingsPopup.style.display !== 'none';
+      el.gridSettingsPopup.style.display = open ? 'none' : 'block';
+      el.gridSettingsBtn.classList.toggle('tf-btn--active', !open);
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!el.gridSettingsPopup.contains(e.target) && e.target !== el.gridSettingsBtn) {
+        el.gridSettingsPopup.style.display = 'none';
+        el.gridSettingsBtn.classList.remove('tf-btn--active');
+      }
+    });
+
+    // Slider ↔ input sync — calls onGridChange on every change
+    this.linkSliderInput(el.gridSizeSlider,      el.gridSizeInput,    (v) => this.callbacks.onGridChange?.('size',        Math.max(1, Math.round(v))));
+    this.linkSliderInput(el.gridDivisionsSlider,  el.gridDivisionsInput, (v) => this.callbacks.onGridChange?.('divisions',  Math.max(1, Math.round(v))));
+    this.linkSliderInput(el.gridSubsSlider,       el.gridSubsInput,    (v) => this.callbacks.onGridChange?.('subdivisions', Math.max(0, Math.round(v))));
   }
 
   _bindMaterialSection(toggleEl, contentEl, openByDefault) {
@@ -224,10 +464,7 @@ export class ControlsManager {
       el.objectSelect.addEventListener('change', e => cb.onModelChange?.(e.target.value));
     }
 
-    // ── Material preset ──────────────────────────────────────────
-    if (el.materialSelect) {
-      el.materialSelect.addEventListener('change', e => cb.onMaterialChange?.(e.target.value));
-    }
+    // ── Material preset — handled by CustomSelect (see initialize()) ─
 
     // ── Part selector (for multi-mesh models)
     if (el.objectPartSelect) {
@@ -342,8 +579,7 @@ export class ControlsManager {
       matSliders.forEach(s => s?.addEventListener('change', commit));
       matInputs.forEach(i => i?.addEventListener('change', commit));
       matColors.forEach(c => c?.addEventListener('change', commit));
-      // material preset select is already a commit point
-      if (el.materialSelect) el.materialSelect.addEventListener('change', commit);
+      // material preset commit is handled inside _matSelect.onChange()
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -525,19 +761,13 @@ export class ControlsManager {
   }
 
   /**
-   * Populate the material preset dropdown (Setting 3)
+   * Populate the material preset dropdown (Setting 3).
+   * @param {string[]} presetNames
+   * @param {(name: string) => string|null} [getThumbnail] — optional thumbnail data-URL factory
    */
-  updateMaterialPresetSelect(presetNames) {
-    const sel = this.elements.materialSelect;
-    if (!sel) return;
-    const placeholder = Array.from(sel.options).find(o => o.disabled && o.selected);
-    sel.innerHTML = '';
-    if (placeholder) sel.appendChild(placeholder);
-    presetNames.forEach(name => {
-      const o = document.createElement('option');
-      o.value = name; o.textContent = name;
-      sel.appendChild(o);
-    });
+  updateMaterialPresetSelect(presetNames, getThumbnail, getEnvKey) {
+    if (!this._matSelect) return;
+    this._matSelect.populate(presetNames, getThumbnail, getEnvKey);
   }
 
   /**
@@ -615,6 +845,11 @@ export class ControlsManager {
       const thumb = el[`texThumb_${ch}`];
       if (thumb) this._drawChannelThumb(thumb, material[ch] ?? null);
     });
+  }
+
+  /** Sync the custom material dropdown to show a preset without firing onChange. */
+  setMaterialPresetValue(name) {
+    if (this._matSelect) this._matSelect.value = name;
   }
 
   setEnabled(elementName, enabled) {
