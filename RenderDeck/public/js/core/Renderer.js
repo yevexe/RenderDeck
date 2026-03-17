@@ -8,6 +8,9 @@ import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { TAARenderPass } from 'three/addons/postprocessing/TAARenderPass.js';
+import { SSAARenderPass } from 'three/addons/postprocessing/SSAARenderPass.js';
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
@@ -32,11 +35,14 @@ export class RendererManager {
     // Post-processing passes
     this.composer       = null;
     this.renderPass     = null;
+    this.taaPass        = null;
+    this.ssaaPass       = null;
     this.bloomPass      = null;
     this.ssaoPass       = null;
     this.afterimagePass = null;
     this.vignettePass   = null;
     this.fxaaPass       = null;
+    this.smaaPass       = null;
     this.outputPass     = null;
 
     // Effect state
@@ -45,6 +51,7 @@ export class RendererManager {
     this.vignetteEnabled    = false;
     this.ssaoEnabled        = false;
     this.motionBlurEnabled  = false;
+    this.aaMode             = 'smaa'; // default AA when post-FX is on
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -71,13 +78,12 @@ export class RendererManager {
   // ─── Resize composer + post-processing passes ────────────────
   resizeComposer(w, h) {
     if (this.composer) this.composer.setSize(w, h);
-
-    if (this.fxaaPass) {
-      const pr = this.renderer.getPixelRatio();
-      this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
-    }
-
-    if (this.ssaoPass) this.ssaoPass.setSize(w, h);
+    const pr = this.renderer.getPixelRatio();
+    if (this.fxaaPass)  this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
+    if (this.smaaPass)  this.smaaPass.setSize(w * pr, h * pr);
+    if (this.taaPass)   this.taaPass.setSize(w, h);
+    if (this.ssaaPass)  this.ssaaPass.setSize(w, h);
+    if (this.ssaoPass)  this.ssaoPass.setSize(w, h);
   }
 
   // ─── Set a custom render resolution ──────────────────────────
@@ -96,16 +102,30 @@ export class RendererManager {
 
   // ─── Build EffectComposer (called once on first render) ──────
   buildComposer(scene, camera) {
-    const w = this.container.clientWidth  || 1;
-    const h = this.container.clientHeight || 1;
+    const w  = this.container.clientWidth  || 1;
+    const h  = this.container.clientHeight || 1;
+    const pr = this.renderer.getPixelRatio();
 
     this.composer = new EffectComposer(this.renderer);
 
-    // 1. Standard scene render
+    // 1. TAA — replaces RenderPass when aaMode === 'taa'
+    this.taaPass = new TAARenderPass(scene, camera);
+    this.taaPass.sampleLevel = 2;    // 4 jittered samples
+    this.taaPass.accumulate  = true;
+    this.taaPass.enabled     = false;
+    this.composer.addPass(this.taaPass);
+
+    // 2. SSAA — replaces RenderPass when aaMode === 'ssaa'
+    this.ssaaPass = new SSAARenderPass(scene, camera);
+    this.ssaaPass.sampleLevel = 2; // 4 supersamples per frame
+    this.ssaaPass.enabled     = false;
+    this.composer.addPass(this.ssaaPass);
+
+    // 3. Standard scene render (used for off / fxaa / smaa)
     this.renderPass = new RenderPass(scene, camera);
     this.composer.addPass(this.renderPass);
 
-    // 2. SSAO
+    // 4. SSAO
     this.ssaoPass = new SSAOPass(scene, camera, w, h);
     this.ssaoPass.kernelRadius = 16;
     this.ssaoPass.minDistance  = 0.005;
@@ -113,33 +133,40 @@ export class RendererManager {
     this.ssaoPass.enabled = false;
     this.composer.addPass(this.ssaoPass);
 
-    // 3. Bloom
+    // 5. Bloom
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.35, 0.20, 0.85);
     this.bloomPass.enabled = false;
     this.composer.addPass(this.bloomPass);
 
-    // 4. Motion blur (afterimage)
+    // 6. Motion blur (afterimage)
     this.afterimagePass = new AfterimagePass(0.88);
     this.afterimagePass.enabled = false;
     this.composer.addPass(this.afterimagePass);
 
-    // 5. Vignette
+    // 7. Vignette
     this.vignettePass = new ShaderPass(VignetteShader);
     this.vignettePass.uniforms['offset'].value   = 0.75;
     this.vignettePass.uniforms['darkness'].value = 1.25;
     this.vignettePass.enabled = false;
     this.composer.addPass(this.vignettePass);
 
-    // 6. FXAA (anti-aliasing post pass)
+    // 8. FXAA
     this.fxaaPass = new ShaderPass(FXAAShader);
-    const pr = this.renderer.getPixelRatio();
     this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
     this.fxaaPass.enabled = false;
     this.composer.addPass(this.fxaaPass);
 
-    // 7. OutputPass — handles final tone mapping + sRGB encoding to screen
+    // 9. SMAA (better than FXAA — default post-AA choice)
+    this.smaaPass = new SMAAPass(w * pr, h * pr);
+    this.smaaPass.enabled = false;
+    this.composer.addPass(this.smaaPass);
+
+    // 10. OutputPass — final tone mapping + sRGB encoding
     this.outputPass = new OutputPass();
     this.composer.addPass(this.outputPass);
+
+    // Apply initial AA state
+    this._syncPasses();
   }
 
   // ─── Global post-FX on/off ────────────────────────────────────
@@ -154,9 +181,13 @@ export class RendererManager {
   setSSAO(enabled)        { this.ssaoEnabled       = enabled; this._syncPasses(); }
   setMotionBlur(enabled)  { this.motionBlurEnabled = enabled; this._syncPasses(); }
 
-  setFXAA(enabled) {
-    if (this.fxaaPass) this.fxaaPass.enabled = enabled;
+  setAA(mode) {
+    this.aaMode = mode;
+    this._syncPasses();
   }
+
+  /** @deprecated use setAA('fxaa') */
+  setFXAA(enabled) { this.setAA(enabled ? 'fxaa' : 'off'); }
 
   // ─── Bloom params ─────────────────────────────────────────────
   setBloomStrength(v)  { if (this.bloomPass) this.bloomPass.strength  = v; }
@@ -226,11 +257,25 @@ export class RendererManager {
 
   // Internal: sync every pass's .enabled to current state flags
   _syncPasses() {
-    const on = this.postFXEnabled;
+    const on    = this.postFXEnabled;
+    const aa    = this.aaMode;
+
+    // Exactly one scene-render pass active: TAA/SSAA replace RenderPass
+    const useTAA  = on && aa === 'taa';
+    const useSSAA = on && aa === 'ssaa';
+    if (this.taaPass)        this.taaPass.enabled        = useTAA;
+    if (this.ssaaPass)       this.ssaaPass.enabled       = useSSAA;
+    if (this.renderPass)     this.renderPass.enabled     = !(useTAA || useSSAA);
+
+    // Effect passes — only when post-FX is on
     if (this.bloomPass)       this.bloomPass.enabled       = on && this.bloomEnabled;
     if (this.ssaoPass)        this.ssaoPass.enabled        = on && this.ssaoEnabled;
     if (this.afterimagePass)  this.afterimagePass.enabled  = on && this.motionBlurEnabled;
     if (this.vignettePass)    this.vignettePass.enabled    = on && this.vignetteEnabled;
+
+    // Post-AA passes — only when post-FX is on
+    if (this.fxaaPass)  this.fxaaPass.enabled  = on && aa === 'fxaa';
+    if (this.smaaPass)  this.smaaPass.enabled  = on && aa === 'smaa';
   }
 
   // Internal: push state back into the Setting 6 checkboxes
