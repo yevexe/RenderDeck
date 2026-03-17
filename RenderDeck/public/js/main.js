@@ -658,6 +658,8 @@ const camState = {
   dofEnabled: false,
   dofFocus: 5.0,
   dofAperture: 25,  // 1/aperture used by BokehPass
+  dofMaxBlur: 0.01,
+  dofRings: 6,
 };
 
 function computeFOV(focalLength, sensorKey) {
@@ -779,26 +781,96 @@ function setupCameraUI() {
     rendererManager.getRenderer().toneMappingExposure = v;
   });
 
+  function applyDOF() {
+    rendererManager.setDOF(camState.dofEnabled, camState.dofFocus, camState.dofAperture, camState.dofMaxBlur, camState.dofRings);
+    markNeedsRender(4);
+  }
+
   // DOF toggle
   const dofToggle = document.getElementById('cam-toggle-dof');
   if (dofToggle) {
     dofToggle.addEventListener('change', (e) => {
       camState.dofEnabled = e.target.checked;
-      log(`DOF: ${camState.dofEnabled ? 'on' : 'off'}`);
-      // Full DOF (BokehPass) would require EffectComposer integration in Renderer
-      // Noted for future post-processing implementation
+      applyDOF();
     });
   }
 
   // DOF focus distance
   link('cam-dof-focus-slider', 'cam-dof-focus-input', (v) => {
     camState.dofFocus = v;
+    applyDOF();
   });
 
   // DOF aperture/strength
   link('cam-dof-strength-slider', 'cam-dof-strength-input', (v) => {
     camState.dofAperture = v;
+    applyDOF();
   });
+
+  // DOF max blur
+  link('cam-dof-maxblur-slider', 'cam-dof-maxblur-input', (v) => {
+    camState.dofMaxBlur = v;
+    applyDOF();
+  });
+
+  // DOF rings (sample quality)
+  link('cam-dof-rings-slider', 'cam-dof-rings-input', (v) => {
+    camState.dofRings = Math.round(v);
+    applyDOF();
+  });
+
+  // DOF focus buttons
+  const dofFocusObjBtn = document.getElementById('cam-dof-focus-object');
+  if (dofFocusObjBtn) {
+    dofFocusObjBtn.addEventListener('click', () => {
+      if (!activeMesh) return;
+      const target = new THREE.Vector3();
+      activeMesh.getWorldPosition(target);
+      const dist = cameraManager.getCamera().position.distanceTo(target);
+      const clamped = Math.min(Math.max(dist, 0.1), 50);
+      camState.dofFocus = clamped;
+      const focusSlider = document.getElementById('cam-dof-focus-slider');
+      const focusInput  = document.getElementById('cam-dof-focus-input');
+      if (focusSlider) focusSlider.value = clamped;
+      if (focusInput)  focusInput.value  = clamped.toFixed(1);
+      applyDOF();
+    });
+  }
+
+  const dofResetBtn = document.getElementById('cam-dof-reset-focus');
+  if (dofResetBtn) {
+    dofResetBtn.addEventListener('click', () => {
+      camState.dofFocus = 5.0;
+      const focusSlider = document.getElementById('cam-dof-focus-slider');
+      const focusInput  = document.getElementById('cam-dof-focus-input');
+      if (focusSlider) focusSlider.value = 5.0;
+      if (focusInput)  focusInput.value  = '5.0';
+      applyDOF();
+    });
+  }
+
+  const dofResetAllBtn = document.getElementById('cam-dof-reset-all');
+  if (dofResetAllBtn) {
+    dofResetAllBtn.addEventListener('click', () => {
+      camState.dofFocus    = 5.0;
+      camState.dofAperture = 0.25;
+      camState.dofMaxBlur  = 0.01;
+      camState.dofRings    = 6;
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.value = v;
+      };
+      set('cam-dof-focus-slider',    5.0);
+      set('cam-dof-focus-input',     '5.0');
+      set('cam-dof-strength-slider', 0.25);
+      set('cam-dof-strength-input',  '0.25');
+      set('cam-dof-maxblur-slider',  0.01);
+      set('cam-dof-maxblur-input',   '0.010');
+      set('cam-dof-rings-slider',    6);
+      set('cam-dof-rings-input',     '6');
+      applyDOF();
+    });
+  }
 
   // Apply initial camera settings from UI defaults
   applyCameraSettings();

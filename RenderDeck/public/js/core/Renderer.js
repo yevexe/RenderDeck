@@ -13,6 +13,8 @@ import { TAARenderPass } from 'three/addons/postprocessing/TAARenderPass.js';
 import { SSAARenderPass } from 'three/addons/postprocessing/SSAARenderPass.js';
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+import { HQBokehFragmentShader } from '../shaders/DepthOfFieldShader.js';
 
 export class RendererManager {
   constructor(container) {
@@ -43,6 +45,7 @@ export class RendererManager {
     this.vignettePass   = null;
     this.fxaaPass       = null;
     this.smaaPass       = null;
+    this.bokehPass      = null;
     this.outputPass     = null;
 
     // Effect state
@@ -51,6 +54,7 @@ export class RendererManager {
     this.vignetteEnabled    = false;
     this.ssaoEnabled        = false;
     this.motionBlurEnabled  = false;
+    this.dofEnabled         = false;
     this.aaMode             = 'smaa'; // default AA when post-FX is on
 
     this.resize();
@@ -150,18 +154,30 @@ export class RendererManager {
     this.vignettePass.enabled = false;
     this.composer.addPass(this.vignettePass);
 
-    // 8. FXAA
+    // 8. Depth of Field (Bokeh)
+    this.bokehPass = new BokehPass(scene, camera, {
+      focus:    5.0,
+      aperture: 0.01,
+      maxblur:  0.01,
+    });
+    this.bokehPass.materialBokeh.fragmentShader = HQBokehFragmentShader;
+    this.bokehPass.materialBokeh.uniforms.uRings = { value: 6 };
+    this.bokehPass.materialBokeh.needsUpdate = true;
+    this.bokehPass.enabled = false;
+    this.composer.addPass(this.bokehPass);
+
+    // 9. FXAA
     this.fxaaPass = new ShaderPass(FXAAShader);
     this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
     this.fxaaPass.enabled = false;
     this.composer.addPass(this.fxaaPass);
 
-    // 9. SMAA (better than FXAA — default post-AA choice)
+    // 10. SMAA (better than FXAA — default post-AA choice)
     this.smaaPass = new SMAAPass(w * pr, h * pr);
     this.smaaPass.enabled = false;
     this.composer.addPass(this.smaaPass);
 
-    // 10. OutputPass — final tone mapping + sRGB encoding
+    // 11. OutputPass — final tone mapping + sRGB encoding
     this.outputPass = new OutputPass();
     this.composer.addPass(this.outputPass);
 
@@ -220,6 +236,23 @@ export class RendererManager {
     if (this.afterimagePass) this.afterimagePass.uniforms['damp'].value = 0.5 + v * 0.45;
   }
 
+  // ─── Depth of Field ──────────────────────────────────────────
+  setDOF(enabled, focus, aperture, maxblur = 0.01, rings = 6) {
+    this.dofEnabled = enabled;
+    if (this.bokehPass) {
+      this.bokehPass.uniforms['focus'].value    = focus;
+      // aperture: slider 0..1 → small range that looks good (0.0001 to 0.003)
+      this.bokehPass.uniforms['aperture'].value = aperture * 0.003;
+      this.bokehPass.uniforms['maxblur'].value  = maxblur;
+      this.bokehPass.materialBokeh.uniforms.uRings.value = Math.round(rings);
+    }
+    this._syncPasses();
+  }
+
+  setDOFFocus(focus) {
+    if (this.bokehPass) this.bokehPass.uniforms['focus'].value = focus;
+  }
+
   // ─── Preset loader ───────────────────────────────────────────
   applyPreset(name) {
     switch (name) {
@@ -272,6 +305,7 @@ export class RendererManager {
     if (this.ssaoPass)        this.ssaoPass.enabled        = on && this.ssaoEnabled;
     if (this.afterimagePass)  this.afterimagePass.enabled  = on && this.motionBlurEnabled;
     if (this.vignettePass)    this.vignettePass.enabled    = on && this.vignetteEnabled;
+    if (this.bokehPass)       this.bokehPass.enabled       = on && this.dofEnabled;
 
     // Post-AA passes — only when post-FX is on
     if (this.fxaaPass)  this.fxaaPass.enabled  = on && aa === 'fxaa';
