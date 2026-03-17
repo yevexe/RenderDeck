@@ -73,6 +73,7 @@ export class PropManager {
   }
 
   _onCanvasClick(event) {
+    if (!this._editModeEnabled) return;
     if (this.transformControls.dragging) return;
     if (this._gizmoWasActive) return;
 
@@ -459,10 +460,10 @@ export class PropManager {
     this.log(`Transform mode: ${mode}`);
   }
 
-  setSnapEnabled(enabled) {
+  setSnapEnabled(enabled, translationSnap = 1) {
     this.snapEnabled = enabled;
     if (enabled) {
-      this.transformControls.setTranslationSnap(0.25);
+      this.transformControls.setTranslationSnap(translationSnap);
       this.transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
       this.transformControls.setScaleSnap(0.1);
     } else {
@@ -470,6 +471,13 @@ export class PropManager {
       this.transformControls.setRotationSnap(null);
       this.transformControls.setScaleSnap(null);
     }
+  }
+
+  setEditMode(enabled) {
+    this._editModeEnabled = enabled;
+    if (this.transformControls) this.transformControls.enabled = enabled;
+    if (this._tcHelper)         this._tcHelper.visible         = enabled;
+    window.markNeedsRender?.(4);
   }
 
   setCollisionEnabled(enabled) {
