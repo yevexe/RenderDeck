@@ -1120,6 +1120,82 @@ export class UVEditor {
     this._updateStickerPBRIfActive();
   }
 
+  // ─── Public API for material property changes ──────────────────
+  // Called by main.js so it doesn't need to reach into internals.
+
+  updateMaterialColor(value) {
+    const hasDecals = this.overlayImages && this.overlayImages.length > 0;
+    if (this._origColor !== null) {
+      this._origColor = value;
+      this._materialBaseColor = value;
+      this._renderPreview();
+      if (hasDecals) {
+        this._renderCompositeDrag();
+      } else {
+        this._renderComposite();
+      }
+      return true;
+    }
+    this._materialBaseColor = value;
+    this._renderPreview();
+    return false;
+  }
+
+  updateMaterialPBR(property, value) {
+    const hasDecals = this.overlayImages && this.overlayImages.length > 0;
+    if (property === 'metalness' && this._origMetalness !== null) {
+      this._origMetalness = value;
+      if (hasDecals) { this._renderStickerPBRMapsDrag(); } else {
+        this._renderStickerPBRMaps();
+        if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
+      }
+      return true;
+    }
+    if (property === 'roughness' && this._origRoughness !== null) {
+      this._origRoughness = value;
+      if (hasDecals) { this._renderStickerPBRMapsDrag(); } else {
+        this._renderStickerPBRMaps();
+        if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
+      }
+      return true;
+    }
+    if (property === 'transmission' && this._origTransmission !== null) {
+      this._origTransmission = value;
+      if (hasDecals) { this._renderStickerPBRMapsDrag(); } else {
+        this._renderStickerPBRMaps();
+        if (this._liveTransmissionTexture) this._liveTransmissionTexture.needsUpdate = true;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  commitMaterialChange() {
+    this._restoreFullResTexture();
+    this._renderComposite();
+    this._updateStickerPBRIfActive();
+  }
+
+  reapplyDecalState() {
+    if (!this.activeMesh?.material || !this.overlayImages?.length) return;
+    const mat = this.activeMesh.material;
+    if (this.liveCanvasTexture) mat.map = this.liveCanvasTexture;
+    if (this._origColor !== null && mat.color) mat.color.set(0xffffff);
+    if (this._liveMetalnessTexture) { mat.metalnessMap = this._liveMetalnessTexture; mat.metalness = 1.0; }
+    if (this._liveRoughnessTexture) { mat.roughnessMap = this._liveRoughnessTexture; mat.roughness = 1.0; }
+    if (this._liveTransmissionTexture) { mat.transmissionMap = this._liveTransmissionTexture; mat.transmission = 1.0; }
+    mat.needsUpdate = true;
+  }
+
+  onMaterialPresetApplied(mesh) {
+    this._materialBaseColor = '#' + mesh.material.color.getHexString();
+    if (this.overlayImages.length > 0 && this.liveCanvasTexture) {
+      this._renderComposite();
+      mesh.material.map = this.liveCanvasTexture;
+      this._applyStickerPBRMaps(mesh.material);
+      mesh.material.needsUpdate = true;
+    }
+  }
 
   async saveAsCustomModel() {
     if (!this.customModelName) {

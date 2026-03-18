@@ -610,7 +610,6 @@ function warmupAndGenerateThumbnails() {
   _warmupScene.environment          = env ?? null;
   _warmupScene.environmentIntensity = env ? 0.6 : 0;
 
-  // Tiny offscreen target — we only need the render to happen, not the pixels
   const warmupTarget = new THREE.WebGLRenderTarget(1, 1);
 
   const prevTarget   = renderer.getRenderTarget();
@@ -626,13 +625,12 @@ function warmupAndGenerateThumbnails() {
   renderer.setClearColor(0x252525, 1);
 
   for (const name of materialManager.getPresetNames()) {
-    // Warmup: cached instance → main renderer → onFirstUse fires here
     const mat = materialManager.getPreset(name);
     if (env) materialManager.applyEnvironment(mat, env);
     _warmupSphereMesh.material = mat;
     renderer.render(_warmupScene, _warmupCamera);
 
-    // Thumbnail: fresh material → dedicated antialias renderer → toDataURL
+    // Thumbnail: fresh material + fixed studio lighting (no HDR dependency)
     const thumbMat = materialManager.createFreshPreset(name);
     _thumbSphereMesh.material = thumbMat;
     _thumbRenderer.render(_thumbScene, _thumbCamera);
@@ -640,12 +638,14 @@ function warmupAndGenerateThumbnails() {
     thumbMat.dispose();
   }
 
-  // Restore main renderer state
   renderer.setRenderTarget(prevTarget);
   renderer.toneMapping         = prevToneMap;
   renderer.toneMappingExposure = prevExposure;
   renderer.setClearColor(prevClearCol, prevClearA);
   warmupTarget.dispose();
+
+  // Warmup resets cached preset instances — re-apply sticker state
+  uvEditor.reapplyDecalState();
 }
 
 function applyMaterialPreset(presetName) {
@@ -662,14 +662,7 @@ function applyMaterialPreset(presetName) {
     mesh.material = material;
     mesh.material.needsUpdate = true;
 
-    // Re-apply composite texture and sticker PBR maps if decals exist
-    if (uvEditor.overlayImages.length > 0 && uvEditor.liveCanvasTexture) {
-      uvEditor._materialBaseColor = '#' + mesh.material.color.getHexString();
-      uvEditor._renderComposite();
-      mesh.material.map = uvEditor.liveCanvasTexture;
-      uvEditor._applyStickerPBRMaps(mesh.material);
-      mesh.material.needsUpdate = true;
-    }
+    uvEditor.onMaterialPresetApplied(mesh);
   };
 
   if (activeMesh) {
@@ -684,7 +677,6 @@ function applyMaterialPreset(presetName) {
 
   if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
 
-  // Update UV editor base — use null for textureless materials (not the composite).
   const matMap = activeMesh?.material?.map || null;
   uvEditor.baseTexture = (matMap && matMap !== uvEditor.liveCanvasTexture) ? matMap : null;
   uvEditor.currentMaterialPreset = presetName;
@@ -702,31 +694,15 @@ function updateMaterialProperty(property, value) {
   const mat = activeMesh.material;
   const colorProps = ['color', 'specularColor', 'sheenColor', 'emissive', 'attenuationColor'];
   if (colorProps.includes(property)) {
-    if (property === 'color' && uvEditor._origColor !== null) {
-      // Sticker maps are active — update the stored original and re-composite
-      uvEditor._origColor = value;
-      uvEditor._materialBaseColor = value;
-      uvEditor._renderComposite();
-      // Keep material.color white so decals aren't tinted
+    if (property === 'color') {
+      const handled = uvEditor.updateMaterialColor(value);
+      if (!handled) mat.color.set(value);
     } else {
       mat[property].set(value);
     }
   } else {
-    if (property === 'metalness' && uvEditor._origMetalness !== null) {
-      uvEditor._origMetalness = value;
-      uvEditor._renderStickerPBRMaps();
-      if (uvEditor._liveMetalnessTexture) uvEditor._liveMetalnessTexture.needsUpdate = true;
-    } else if (property === 'roughness' && uvEditor._origRoughness !== null) {
-      uvEditor._origRoughness = value;
-      uvEditor._renderStickerPBRMaps();
-      if (uvEditor._liveRoughnessTexture) uvEditor._liveRoughnessTexture.needsUpdate = true;
-    } else if (property === 'transmission' && uvEditor._origTransmission !== null) {
-      uvEditor._origTransmission = value;
-      uvEditor._renderStickerPBRMaps();
-      if (uvEditor._liveTransmissionTexture) uvEditor._liveTransmissionTexture.needsUpdate = true;
-    } else {
-      mat[property] = value;
-    }
+    const handled = uvEditor.updateMaterialPBR(property, value);
+    if (!handled) mat[property] = value;
   }
   if (property === 'opacity') mat.transparent = value < 1.0;
   if (property === 'transmission') mat.transparent = value > 0;
@@ -1040,8 +1016,6 @@ const controls = new ControlsManager({
         });
       }
       pushSceneHistory(`Environment: ${name}`);
-      warmupAndGenerateThumbnails();
-      updateMaterialPresetList();
     });
   },
 
@@ -1050,6 +1024,7 @@ const controls = new ControlsManager({
   },
 
   onMaterialPropertyCommit: () => {
+    uvEditor.commitMaterialChange();
     materialState.push('Material change');
   },
 
@@ -1819,10 +1794,13 @@ function setupPreviewQualityUI() {
   setupButtonRow('shadow-quality-buttons', (v) => {
     const sizes = { off: 0, low: 256, medium: 1024, high: 4096, ultra: 8192 };
     const size = sizes[v] || 2048;
+    const dirLight = sceneManager.directionalLight;
     if (v === 'off') {
       renderer.shadowMap.enabled = false;
+      if (dirLight) dirLight.intensity = 0;
     } else {
       renderer.shadowMap.enabled = true;
+      if (dirLight) dirLight.intensity = 0.5;
       scene.traverse((obj) => {
         if (obj.isLight && obj.shadow) {
           obj.shadow.mapSize.width = size;
@@ -1835,12 +1813,12 @@ function setupPreviewQualityUI() {
       });
     }
     renderer.shadowMap.needsUpdate = true;
-    // Toggling shadowMap.enabled requires shader recompilation
     scene.traverse((obj) => {
       if (obj.isMesh && obj.material) {
         obj.material.needsUpdate = true;
       }
     });
+    markNeedsRender(4);
     log(`Shadow quality: ${v}`);
   });
 
