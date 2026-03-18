@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
@@ -17,6 +18,7 @@ export class PropManager {
     this.log = log || console.log;
 
     this.gltfLoader = new GLTFLoader();
+    this.objLoader = new OBJLoader();
     this.props = [];
     this.nextPropId = 1;
     this.selectedProp = null;
@@ -179,16 +181,23 @@ export class PropManager {
   }
 
   async addProp(propId, position = { x: 0, y: 0, z: 0 }) {
-    let url, displayName;
+    let url, displayName, format = 'gltf';
 
     if (propId.startsWith('custom_')) {
       const name = propId.replace('custom_', '');
-      url = this.customProps.get(name);
-      displayName = name;
-      if (!url) {
+      const entry = this.customProps.get(name);
+      if (!entry) {
         this.log(`Custom prop not found: ${name}`, true);
         return null;
       }
+      // Support legacy string entries and new { url, format } objects
+      if (typeof entry === 'string') {
+        url = entry;
+      } else {
+        url = entry.url;
+        format = entry.format || 'gltf';
+      }
+      displayName = name;
     } else {
       const cfg = PROP_PATHS[propId];
       if (!cfg || !cfg.file) {
@@ -202,53 +211,53 @@ export class PropManager {
     this.log(`Loading prop: ${displayName}...`);
 
     return new Promise((resolve, reject) => {
-      this.gltfLoader.load(
-        url,
-        (gltf) => {
-          const object = gltf.scene;
-          object.position.set(position.x, position.y, position.z);
+      const onLoad = (object) => {
+        object.position.set(position.x, position.y, position.z);
 
-          object.traverse(child => {
-            if (child.isMesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-            }
-          });
+        object.traverse(child => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
 
-          // Auto-scale: normalize to ~1 unit so every prop is visible
-          const box = new THREE.Box3().setFromObject(object);
-          const size = box.getSize(new THREE.Vector3());
-          const maxDim = Math.max(size.x, size.y, size.z);
-          const autoScale = maxDim > 0 ? 1.0 / maxDim : 1.0;
-          object.scale.setScalar(autoScale);
+        const box = new THREE.Box3().setFromObject(object);
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const autoScale = maxDim > 0 ? 1.0 / maxDim : 1.0;
+        object.scale.setScalar(autoScale);
 
-          const prop = {
-            id: `prop_${this.nextPropId++}`,
-            type: propId,
-            displayName,
-            object3D: object,
-            position: { ...position },
-            rotation: { x: 0, y: 0, z: 0 },
-            scale: { x: autoScale, y: autoScale, z: autoScale },
-            locked: false
-          };
+        const prop = {
+          id: `prop_${this.nextPropId++}`,
+          type: propId,
+          displayName,
+          object3D: object,
+          position: { ...position },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: autoScale, y: autoScale, z: autoScale },
+          locked: false
+        };
 
-          this.scene.add(object);
-          this.props.push(prop);
-          // Update world matrix so TransformControls positions the gizmo correctly
-          object.updateMatrixWorld(true);
-          this.selectProp(prop.id);
+        this.scene.add(object);
+        this.props.push(prop);
+        object.updateMatrixWorld(true);
+        this.selectProp(prop.id);
 
-          this.log(`Prop added: ${displayName}`);
-          this._updatePropsList();
-          resolve(prop);
-        },
-        undefined,
-        (error) => {
-          this.log(`Failed to load prop: ${error.message}`, true);
-          reject(error);
-        }
-      );
+        this.log(`Prop added: ${displayName}`);
+        this._updatePropsList();
+        resolve(prop);
+      };
+
+      const onError = (error) => {
+        this.log(`Failed to load prop: ${error.message}`, true);
+        reject(error);
+      };
+
+      if (format === 'obj') {
+        this.objLoader.load(url, onLoad, undefined, onError);
+      } else {
+        this.gltfLoader.load(url, (gltf) => onLoad(gltf.scene), undefined, onError);
+      }
     });
   }
 
@@ -502,13 +511,15 @@ export class PropManager {
   }
 
   async uploadCustomProp(file) {
-    if (!file.name.endsWith('.glb') && !file.name.endsWith('.gltf')) {
-      this.log('Only GLB/GLTF files are supported for props', true);
+    const ext = file.name.match(/\.(glb|gltf|obj)$/i);
+    if (!ext) {
+      this.log('Only GLB/GLTF/OBJ files are supported for props', true);
       return null;
     }
-    const name = file.name.replace(/\.(glb|gltf)$/i, '');
+    const name = file.name.replace(/\.(glb|gltf|obj)$/i, '');
     const url = URL.createObjectURL(file);
-    this.customProps.set(name, url);
+    const format = ext[1].toLowerCase() === 'obj' ? 'obj' : 'gltf';
+    this.customProps.set(name, { url, format });
     this.log(`Custom prop uploaded: ${name}`);
     return `custom_${name}`;
   }

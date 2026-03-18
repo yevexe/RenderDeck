@@ -1938,9 +1938,11 @@ function setupBackgroundUI() {
 
 function setupPropsUI() {
   const propsSelect   = document.getElementById('props-select');
-  const addPropBtn    = document.getElementById('add-prop-btn');
-  const deletePropBtn = document.getElementById('delete-prop-btn');
-  const clearPropsBtn = document.getElementById('clear-props-btn');
+  const addPropBtn      = document.getElementById('add-prop-btn');
+  const importPropBtn   = document.getElementById('import-prop-btn');
+  const propFileInput   = document.getElementById('prop-file-input');
+  const deletePropBtn   = document.getElementById('delete-prop-btn');
+  const clearPropsBtn   = document.getElementById('clear-props-btn');
 
   if (!propsSelect) return;
 
@@ -1970,6 +1972,35 @@ function setupPropsUI() {
     await propManager.addProp(propId, { x: target.x, y: target.y, z: target.z });
     propsSelect.value = '';
     pushSceneHistory(`Added prop: ${propId}`);
+  });
+
+  importPropBtn?.addEventListener('click', () => propFileInput?.click());
+
+  propFileInput?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const customId = await propManager.uploadCustomProp(file);
+    if (!customId) { propFileInput.value = ''; return; }
+
+    // Re-populate dropdown so the new prop appears
+    const name = customId.replace('custom_', '');
+    let customGroup = propsSelect.querySelector('optgroup[label="Custom"]');
+    if (!customGroup) {
+      customGroup = document.createElement('optgroup');
+      customGroup.label = 'Custom';
+      propsSelect.appendChild(customGroup);
+    }
+    const opt = document.createElement('option');
+    opt.value = customId;
+    opt.textContent = name;
+    customGroup.appendChild(opt);
+
+    // Select it in dropdown and add to scene
+    propsSelect.value = customId;
+    const target = cameraManager.getControls().target;
+    await propManager.addProp(customId, { x: target.x, y: target.y, z: target.z });
+    pushSceneHistory(`Imported prop: ${name}`);
+    propFileInput.value = '';
   });
 
   deletePropBtn?.addEventListener('click', () => {
