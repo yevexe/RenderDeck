@@ -297,6 +297,7 @@ export class UVEditor {
     }
     this._renderPreview();
     this._renderComposite();
+    this._updateStickerPBRIfActive();
   }
 
   // ─── Sync Tab 2 sliders from selected image data ─────────────
