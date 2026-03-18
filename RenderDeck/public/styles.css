@@ -615,16 +615,64 @@ hr {
   width: 65px;
 }
 
-/* No spinners/arrows (Chrome/Safari/Edge) */
+/* No native spinners (Chrome/Safari/Edge) */
 .value-input::-webkit-outer-spin-button,
 .value-input::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
 
-/* No spinners/arrows (Firefox) */
+/* No native spinners (Firefox) */
 .value-input[type="number"] {
   appearance: textfield;
+}
+
+/* Custom spinner arrows wrapper */
+.value-input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.value-input-wrap .value-input {
+  padding-right: 16px;
+}
+
+.value-input-arrows {
+  position: absolute;
+  right: 3px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.value-input-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 10px;
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  pointer-events: auto;
+  user-select: none;
+  transition: color 0.1s;
+}
+
+.value-input-arrow:hover {
+  color: #fff;
+}
+
+.value-input-arrow svg {
+  width: 8px;
+  height: 6px;
 }
 
 /* Focus/hover */

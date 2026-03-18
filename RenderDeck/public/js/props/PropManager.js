@@ -313,6 +313,7 @@ export class PropManager {
     this._mainModelHelper = this._createThickOutline(this.mainModel, 0x00d4ff); // cyan-white
     this.scene.add(this._mainModelHelper);
     this.transformControls.attach(this.mainModel);
+    if (this._tcHelper) this._tcHelper.visible = this._editModeEnabled;
     this.log('Selected: Main Model');
   }
 
@@ -324,6 +325,7 @@ export class PropManager {
     }
     if (this.transformControls?.object === this.mainModel) {
       this.transformControls.detach();
+      if (this._tcHelper) this._tcHelper.visible = false;
     }
   }
 
@@ -337,6 +339,7 @@ export class PropManager {
     this.selectedProp = prop;
     this._addOutline(prop);
     this.transformControls.attach(prop.object3D);
+    if (this._tcHelper) this._tcHelper.visible = this._editModeEnabled;
 
     this._updatePropsList();
     this.log(`Selected: ${prop.displayName}`);
@@ -348,6 +351,7 @@ export class PropManager {
       this.selectedProp = null;
     }
     this.transformControls.detach();
+    if (this._tcHelper) this._tcHelper.visible = false;
     this._updatePropsList();
   }
 
@@ -476,7 +480,9 @@ export class PropManager {
   setEditMode(enabled) {
     this._editModeEnabled = enabled;
     if (this.transformControls) this.transformControls.enabled = enabled;
-    if (this._tcHelper)         this._tcHelper.visible         = enabled;
+    if (this._tcHelper) {
+      this._tcHelper.visible = enabled && !!this.transformControls.object;
+    }
     window.markNeedsRender?.(4);
   }
 
