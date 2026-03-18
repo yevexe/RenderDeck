@@ -3,11 +3,11 @@
 
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
-import { 
-  createWoodTexture, 
-  createMetalTexture, 
-  createGlassTexture, 
-  createPlasticTexture 
+import {
+  createWoodTexture,
+  createMetalTexture,
+  createGlassTexture,
+  createPlasticTexture
 } from './generators.js';
 
 export class MaterialManager {
@@ -20,7 +20,13 @@ export class MaterialManager {
     // (custom models may reference old preset names like 'Wood')
     this._legacyPresets = this._initializeLegacyPresets();
 
-    this.cache = new Map();
+    // Raw params for each JSON preset — used to reset cached instances to defaults
+    this._presetParams = {};
+
+    // One material instance per preset, reused across switches.
+    // Reusing the same object means WebGLProgram.getUniforms() stays cached after
+    // the first render (warmup), so subsequent material switches have zero stall.
+    this._instanceCache = new Map();
   }
 
   /** Legacy procedural presets kept for backward compatibility. */
@@ -69,6 +75,7 @@ export class MaterialManager {
   async loadPresetsFromManifest(standardMaterials) {
     this.presets = {};
     this._jsonPresetNames = [];
+    this._presetParams = {};
     for (const mat of standardMaterials) {
       if (!mat.path || !mat.label) continue;
       if (!mat.path.endsWith('.json')) continue; // skip MTL entries
@@ -78,7 +85,7 @@ export class MaterialManager {
         const json = await res.json();
         const params = json.params || {};
         const label = mat.label;
-        // Factory: each getPreset() call returns a fresh material instance
+        this._presetParams[label] = params;
         this.presets[label] = () => this.createMaterial(label, params);
         this._jsonPresetNames.push(label);
       } catch (e) {
@@ -116,15 +123,80 @@ export class MaterialManager {
     });
   }
 
-  /** Get a material preset by name. Falls back to legacy presets (Wood/Metal/...) then to first JSON preset. */
+  /**
+   * Return the cached material instance for a preset, resetting it to preset defaults first.
+   * Creates and caches the instance on first call.
+   *
+   * Reusing the same object is the key to avoiding WebGLProgram.getUniforms() stalls:
+   * once the warmup renders the instance, Three.js caches all uniform locations on it,
+   * and subsequent renders of that same object skip the expensive first-use path entirely.
+   */
   getPreset(name) {
+    if (this._instanceCache.has(name)) {
+      const mat = this._instanceCache.get(name);
+      this._resetToPreset(mat, name);
+      return mat;
+    }
+    const mat = this._createFresh(name);
+    this._instanceCache.set(name, mat);
+    return mat;
+  }
+
+  /** Create a brand-new material instance (bypasses the cache). Public alias for thumbnail use. */
+  createFreshPreset(name) { return this._createFresh(name); }
+
+  _createFresh(name) {
     if (this.presets[name]) return this.presets[name]();
     if (this._legacyPresets[name]) return this._legacyPresets[name]();
-    // Last resort: first JSON preset or legacy Wood
     const first = this._jsonPresetNames[0];
     if (first) { console.warn(`Preset "${name}" not found, using "${first}"`); return this.presets[first](); }
     console.warn(`Preset "${name}" not found, using Wood`);
     return this._legacyPresets.Wood();
+  }
+
+  /**
+   * Reset a cached material instance to its preset defaults, then re-apply preset params.
+   * Legacy presets (Wood/Metal/Glass/Plastic) have no stored params so they are left
+   * as-is — their procedural textures are created once and preserved in the instance.
+   */
+  _resetToPreset(material, name) {
+    if (!(name in this._presetParams)) {
+      // Legacy preset — no stored scalar params; return as-is
+      material.needsUpdate = true;
+      return;
+    }
+
+    // Reset every property to createMaterial() defaults
+    material.color.set(0xffffff);
+    material.metalness         = 0.0;
+    material.roughness         = 0.5;
+    material.clearcoat         = 0.0;
+    material.clearcoatRoughness = 0.1;
+    material.specularIntensity  = 1.0;
+    material.specularColor.set(0xffffff);
+    material.transmission      = 0.0;
+    material.ior               = 1.5;
+    material.thickness         = 0.0;
+    material.sheen             = 0.0;
+    material.sheenRoughness    = 1.0;
+    material.sheenColor.set(0xffffff);
+    material.emissive.set(0x000000);
+    material.emissiveIntensity  = 0.0;
+    material.attenuationDistance = Infinity;
+    material.attenuationColor.set(0xffffff);
+    material.envMapIntensity   = 1.0;
+    material.opacity           = 1.0;
+    material.transparent       = false;
+    material.map               = null;
+
+    // Re-apply preset-specific values on top
+    const params = this._presetParams[name];
+    this.applySavedProperties(material, params);
+    // applySavedProperties handles string colors; also cover hex-number colors from JSON
+    if (params.color !== undefined && typeof params.color === 'number') material.color.set(params.color);
+    if (params.map !== undefined) material.map = params.map;
+
+    material.needsUpdate = true;
   }
 
   /** Returns JSON-loaded preset names if available, else legacy names. */
@@ -210,8 +282,18 @@ export class MaterialManager {
     };
   }
 
+  /** True if this material is owned by the preset instance cache (must not be disposed). */
+  isOwned(material) {
+    for (const mat of this._instanceCache.values()) {
+      if (mat === material) return true;
+    }
+    return false;
+  }
+
   dispose(material) {
     if (!material) return;
+    // Never dispose cached preset instances — they are reused across material switches
+    if (this.isOwned(material)) return;
     const maps = [
       'map', 'normalMap', 'roughnessMap', 'metalnessMap',
       'aoMap', 'emissiveMap', 'bumpMap', 'displacementMap',
