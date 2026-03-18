@@ -811,8 +811,10 @@ hr {
   cursor: pointer;
   box-sizing: border-box;
 
-  /* only border animates */
-  transition: border-color 0.15s ease;
+  /* outline is GPU-compositable; border-color is not */
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.15s ease;
 }
 
 
@@ -831,7 +833,7 @@ hr {
 
 .button:hover,
 .button-medium:hover {
-  border-color: #666;
+  outline-color: #666;
   background:
     linear-gradient(
       to bottom,
@@ -1639,6 +1641,8 @@ hr {
   border-radius: 50%;
   display: block;
   object-fit: cover;
+  border: none;
+  outline: none;
 }
 
 /* Thumbnail in the trigger button sits to the left of the label */

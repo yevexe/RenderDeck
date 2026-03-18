@@ -528,6 +528,126 @@ function cleanupActiveModel() {
 // MATERIAL MANAGEMENT
 //═══════════════════════════════════════════════════════════════
 
+// ── Material shader warmup + thumbnail generation ──────────────────────────
+//
+// Two separate concerns, two separate renderers:
+//
+//  1. WARMUP  — main renderer, tiny 1×1 offscreen target, no pixel readback.
+//               Renders each cached material instance once so Three.js fires
+//               onFirstUse (caches getUniforms) before the user ever switches.
+//
+//  2. THUMBNAILS — dedicated small renderer with antialias:true.
+//               Renders each preset onto a sphere and calls toDataURL() on its
+//               own canvas — the only reliable way to get smooth AA pixels.
+
+const _matThumbCache = new Map(); // presetName → dataUrl
+
+// ── Warmup (main renderer) ──────────────────────────────────────────────────
+let _warmupScene      = null;
+let _warmupCamera     = null;
+let _warmupSphereMesh = null;
+
+function _ensureWarmupScene() {
+  if (_warmupScene) return;
+  _warmupCamera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+  _warmupCamera.position.set(0, 0.3, 3.5);
+  _warmupCamera.lookAt(0, 0, 0);
+
+  _warmupScene = new THREE.Scene();
+  const domeMat = new THREE.MeshBasicMaterial({ color: 0x252525, side: THREE.BackSide });
+  _warmupScene.add(new THREE.Mesh(new THREE.SphereGeometry(8, 32, 16), domeMat));
+  _warmupSphereMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 48));
+  _warmupScene.add(_warmupSphereMesh);
+  const key  = new THREE.DirectionalLight(0xffffff, 4);   key.position.set(3, 4, 3);
+  const fill = new THREE.DirectionalLight(0x7799cc, 1.5); fill.position.set(-3, 0, -2);
+  const rim  = new THREE.DirectionalLight(0xffffff, 2.5); rim.position.set(-2, 3, -3);
+  _warmupScene.add(key, fill, rim, new THREE.AmbientLight(0x404040, 2));
+}
+
+// ── Thumbnail renderer (separate context, antialias canvas) ────────────────
+let _thumbRenderer   = null;
+let _thumbScene      = null;
+let _thumbCamera     = null;
+let _thumbSphereMesh = null;
+
+function _ensureThumbRenderer() {
+  if (_thumbRenderer) return;
+  _thumbRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  _thumbRenderer.setSize(64, 64, false);
+  _thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
+  _thumbRenderer.toneMapping      = THREE.ACESFilmicToneMapping;
+  _thumbRenderer.toneMappingExposure = 1.4;
+
+  _thumbCamera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+  _thumbCamera.position.set(0, 0.3, 3.5);
+  _thumbCamera.lookAt(0, 0, 0);
+
+  _thumbScene = new THREE.Scene();
+  const domeMat = new THREE.MeshBasicMaterial({ color: 0x252525, side: THREE.BackSide });
+  _thumbScene.add(new THREE.Mesh(new THREE.SphereGeometry(8, 32, 16), domeMat));
+  _thumbSphereMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 48));
+  _thumbScene.add(_thumbSphereMesh);
+  const key  = new THREE.DirectionalLight(0xffffff, 4);   key.position.set(3, 4, 3);
+  const fill = new THREE.DirectionalLight(0x7799cc, 1.5); fill.position.set(-3, 0, -2);
+  const rim  = new THREE.DirectionalLight(0xffffff, 2.5); rim.position.set(-2, 3, -3);
+  _thumbScene.add(key, fill, rim, new THREE.AmbientLight(0x404040, 2));
+}
+
+/**
+ * For each preset:
+ *  - render its cached material instance with the MAIN renderer (tiny target) so
+ *    onFirstUse fires and getUniforms is cached — material switches are instant.
+ *  - render a fresh copy with the dedicated antialias renderer and cache the dataUrl.
+ */
+function warmupAndGenerateThumbnails() {
+  const renderer = rendererManager.getRenderer();
+  if (!renderer) return;
+
+  _ensureWarmupScene();
+  _ensureThumbRenderer();
+
+  const env = sceneManager.getScene().environment;
+  _warmupScene.environment          = env ?? null;
+  _warmupScene.environmentIntensity = env ? 0.6 : 0;
+
+  // Tiny offscreen target — we only need the render to happen, not the pixels
+  const warmupTarget = new THREE.WebGLRenderTarget(1, 1);
+
+  const prevTarget   = renderer.getRenderTarget();
+  const prevToneMap  = renderer.toneMapping;
+  const prevExposure = renderer.toneMappingExposure;
+  const prevClearCol = new THREE.Color();
+  const prevClearA   = renderer.getClearAlpha();
+  renderer.getClearColor(prevClearCol);
+
+  renderer.toneMapping         = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.4;
+  renderer.setRenderTarget(warmupTarget);
+  renderer.setClearColor(0x252525, 1);
+
+  for (const name of materialManager.getPresetNames()) {
+    // Warmup: cached instance → main renderer → onFirstUse fires here
+    const mat = materialManager.getPreset(name);
+    if (env) materialManager.applyEnvironment(mat, env);
+    _warmupSphereMesh.material = mat;
+    renderer.render(_warmupScene, _warmupCamera);
+
+    // Thumbnail: fresh material → dedicated antialias renderer → toDataURL
+    const thumbMat = materialManager.createFreshPreset(name);
+    _thumbSphereMesh.material = thumbMat;
+    _thumbRenderer.render(_thumbScene, _thumbCamera);
+    _matThumbCache.set(name, _thumbRenderer.domElement.toDataURL());
+    thumbMat.dispose();
+  }
+
+  // Restore main renderer state
+  renderer.setRenderTarget(prevTarget);
+  renderer.toneMapping         = prevToneMap;
+  renderer.toneMappingExposure = prevExposure;
+  renderer.setClearColor(prevClearCol, prevClearA);
+  warmupTarget.dispose();
+}
+
 function applyMaterialPreset(presetName) {
   if (!activeModel) return;
   const env = sceneManager.getScene().environment;
@@ -920,6 +1040,8 @@ const controls = new ControlsManager({
         });
       }
       pushSceneHistory(`Environment: ${name}`);
+      warmupAndGenerateThumbnails();
+      updateMaterialPresetList();
     });
   },
 
@@ -1326,55 +1448,9 @@ function updateSceneList() {
   controls.updateSceneSelect(getSceneNames());
 }
 
-// ── Material preset thumbnail renderer ────────────────────────
-let _thumbRenderer = null;
-let _thumbScene    = null;
-let _thumbCamera   = null;
-let _thumbMesh     = null;
-
-function _ensureThumbRenderer() {
-  if (_thumbRenderer) return;
-  _thumbRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  _thumbRenderer.setSize(32, 32); // resized per-call in getMaterialThumbnail
-  _thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
-  _thumbRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-  _thumbRenderer.toneMappingExposure = 1.4;
-
-  _thumbScene = new THREE.Scene();
-  _thumbScene.background = new THREE.Color(0x1e1e1e);
-
-  _thumbCamera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
-  _thumbCamera.position.set(0, 0, 3.5);
-
-  // Three-point studio lighting
-  const key  = new THREE.DirectionalLight(0xffffff, 4);   key.position.set(3, 4, 3);
-  const fill = new THREE.DirectionalLight(0x7799cc, 1.5); fill.position.set(-3, 0, -2);
-  const rim  = new THREE.DirectionalLight(0xffffff, 2.5); rim.position.set(-2, 3, -3);
-  _thumbScene.add(key, fill, rim, new THREE.AmbientLight(0x404040, 2));
-
-  _thumbMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 48));
-  _thumbScene.add(_thumbMesh);
-}
-
-/** @param {string} presetName @param {32|64} [size=32] */
-function getMaterialThumbnail(presetName, size = 32) {
-  try {
-    _ensureThumbRenderer();
-    _thumbRenderer.setSize(size, size, false);
-    const mat = materialManager.getPreset(presetName);
-    // Apply scene environment so metallic/reflective materials look correct
-    const env = sceneManager.getScene().environment;
-    if (env) { materialManager.applyEnvironment(mat, env); _thumbScene.environment = env; }
-    else      { _thumbScene.environment = null; }
-    _thumbMesh.material = mat;
-    _thumbRenderer.render(_thumbScene, _thumbCamera);
-    const dataUrl = _thumbRenderer.domElement.toDataURL();
-    mat.dispose();
-    return dataUrl;
-  } catch (e) {
-    console.warn('Thumbnail render failed for', presetName, e);
-    return null;
-  }
+/** @param {string} presetName */
+function getMaterialThumbnail(presetName) {
+  return _matThumbCache.get(presetName) ?? null;
 }
 
 function updateMaterialPresetList() {
@@ -2228,6 +2304,7 @@ async function initializeApp() {
   }
 
   await materialPresetsReady;
+  warmupAndGenerateThumbnails();
   await updateModelList();
   updateSceneList();
   updateMaterialPresetList();
