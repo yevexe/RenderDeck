@@ -414,7 +414,17 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       sceneManager.add(object);
       activeModel = object;
       propManager.setMainModel(activeModel);
-      centerAndFrameModel(object, cameraManager, {mode: 'corner'});
+      if (_bootCamera) {
+        // Restore saved camera immediately so there's no default→saved snap.
+        cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
+        if (_bootCamera.target) cameraManager.setTarget(_bootCamera.target.x, _bootCamera.target.y, _bootCamera.target.z);
+        _bootCamera = null;
+      } else {
+        centerAndFrameModel(object, cameraManager, {mode: 'corner'});
+      }
+      // Pre-compile the real mesh shader variants so the first rendered frame
+      // doesn't stall on onFirstUse (absorbs the cost into the loading wait).
+      rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
       if (activeMesh) uvEditor.open(activeMesh, name, 'Default — White');
       markNeedsRender(60);
@@ -460,8 +470,18 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       sceneManager.add(object);
       activeModel = object;
       propManager.setMainModel(activeModel);
-      centerAndFrameModel(object, cameraManager, {mode: 'corner'});
+      if (_bootCamera) {
+        // Restore saved camera immediately so there's no default→saved snap.
+        cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
+        if (_bootCamera.target) cameraManager.setTarget(_bootCamera.target.x, _bootCamera.target.y, _bootCamera.target.z);
+        _bootCamera = null;
+      } else {
+        centerAndFrameModel(object, cameraManager, {mode: 'corner'});
+      }
       applyMaterialPreset(materialManager.getPresetNames()[0] || 'Default — White');
+      // Pre-compile the real mesh shader variants so the first rendered frame
+      // doesn't stall on onFirstUse (absorbs the cost into the loading wait).
+      rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
       // Initialize UV editor for this model
       if (activeMesh) {
@@ -598,8 +618,11 @@ function _ensureThumbRenderer() {
  *  - render its cached material instance with the MAIN renderer (tiny target) so
  *    onFirstUse fires and getUniforms is cached — material switches are instant.
  *  - render a fresh copy with the dedicated antialias renderer and cache the dataUrl.
+ *
+ * Runs asynchronously, yielding one rAF between each preset so shader compilation
+ * is spread across frames instead of blocking the main thread all at once.
  */
-function warmupAndGenerateThumbnails() {
+async function warmupAndGenerateThumbnails() {
   const renderer = rendererManager.getRenderer();
   if (!renderer) return;
 
@@ -612,25 +635,35 @@ function warmupAndGenerateThumbnails() {
 
   const warmupTarget = new THREE.WebGLRenderTarget(1, 1);
 
-  const prevTarget   = renderer.getRenderTarget();
-  const prevToneMap  = renderer.toneMapping;
-  const prevExposure = renderer.toneMappingExposure;
-  const prevClearCol = new THREE.Color();
-  const prevClearA   = renderer.getClearAlpha();
-  renderer.getClearColor(prevClearCol);
-
-  renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.4;
-  renderer.setRenderTarget(warmupTarget);
-  renderer.setClearColor(0x252525, 1);
-
   for (const name of materialManager.getPresetNames()) {
+    // Yield to the main thread before each preset so the render loop stays responsive
+    await new Promise(resolve => requestAnimationFrame(resolve));
+
+    // Save renderer state
+    const prevTarget   = renderer.getRenderTarget();
+    const prevToneMap  = renderer.toneMapping;
+    const prevExposure = renderer.toneMappingExposure;
+    const prevClearCol = new THREE.Color();
+    const prevClearA   = renderer.getClearAlpha();
+    renderer.getClearColor(prevClearCol);
+
+    renderer.toneMapping         = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.4;
+    renderer.setRenderTarget(warmupTarget);
+    renderer.setClearColor(0x252525, 1);
+
     const mat = materialManager.getPreset(name);
     if (env) materialManager.applyEnvironment(mat, env);
     _warmupSphereMesh.material = mat;
     renderer.render(_warmupScene, _warmupCamera);
 
-    // Thumbnail: fresh material + fixed studio lighting (no HDR dependency)
+    // Restore renderer state
+    renderer.setRenderTarget(prevTarget);
+    renderer.toneMapping         = prevToneMap;
+    renderer.toneMappingExposure = prevExposure;
+    renderer.setClearColor(prevClearCol, prevClearA);
+
+    // Thumbnail uses a separate renderer — no state conflict
     const thumbMat = materialManager.createFreshPreset(name);
     _thumbSphereMesh.material = thumbMat;
     _thumbRenderer.render(_thumbScene, _thumbCamera);
@@ -638,14 +671,13 @@ function warmupAndGenerateThumbnails() {
     thumbMat.dispose();
   }
 
-  renderer.setRenderTarget(prevTarget);
-  renderer.toneMapping         = prevToneMap;
-  renderer.toneMappingExposure = prevExposure;
-  renderer.setClearColor(prevClearCol, prevClearA);
   warmupTarget.dispose();
 
   // Warmup resets cached preset instances — re-apply sticker state
   uvEditor.reapplyDecalState();
+
+  // All thumbnails are now cached — refresh the material list so they appear.
+  updateMaterialPresetList();
 }
 
 function applyMaterialPreset(presetName) {
@@ -684,6 +716,11 @@ function applyMaterialPreset(presetName) {
 
   // Sync the custom material dropdown to reflect the applied preset
   controls.setMaterialPresetValue(presetName);
+
+  // Compile the new material against the real mesh geometry so the first
+  // render doesn't stall on onFirstUse for this shader variant.
+  const renderer = rendererManager.getRenderer();
+  if (renderer) renderer.compile(sceneManager.getScene(), cameraManager.getCamera());
 
   markNeedsRender(4);
   log(`Preset: ${presetName}`);
@@ -1281,6 +1318,7 @@ function saveSessionState() {
         partName: state.partName,
         sceneName: state.sceneName,
         materialPreset: state.materialPreset,
+        camera: state.camera,
       }));
     } catch (_) {
       // ignore localStorage quota/availability failures
@@ -2367,6 +2405,9 @@ function setupValueInputSpinners() {
 // INITIAL SETUP
 //═══════════════════════════════════════════════════════════════
 
+// Saved camera from the last session, used to skip centerAndFrameModel on boot.
+let _bootCamera = null;
+
 async function initializeApp() {
   // Fast path: preload last edited model immediately (sync localStorage read).
   try {
@@ -2374,6 +2415,7 @@ async function initializeApp() {
     if (raw) {
       const boot = JSON.parse(raw);
       const bootName = boot?.modelName;
+      if (boot?.camera) _bootCamera = boot.camera;
       if (bootName) {
         const modelSel = document.getElementById('object-select') || document.getElementById('model-select');
         if (modelSel) modelSel.value = bootName;
