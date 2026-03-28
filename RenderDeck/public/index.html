@@ -13,7 +13,8 @@
   <script type="importmap">{
     "imports": {
       "three": "https://unpkg.com/three@0.183.2/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.183.2/examples/jsm/"
+      "three/addons/": "https://unpkg.com/three@0.183.2/examples/jsm/",
+      "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js"
     }
   }</script>
 </head>
@@ -134,6 +135,9 @@
           </div>
           <div class="editor-stage-content">
             <div id="scene-view-placeholder" class="scene-view-placeholder">
+              <div id="loading-overlay" class="loading-overlay">
+                <div class="loading-spinner"></div>
+              </div>
               <div class="drop-hint">
                 <p>Drag &amp; Drop OBJ files here</p>
                 <p class="drop-hint-small">or use Tab 1 to select a model</p>
@@ -274,6 +278,7 @@
             </select>
             <button class="button-medium" id="add-prop-btn">Add Prop</button>
             <button class="button-medium" id="import-prop-btn">Import Prop</button>
+            <button class="button-medium" id="sketchfab-prop-btn">Import Prop from Sketchfab</button>
             <input type="file" id="prop-file-input" accept=".glb,.gltf,.obj" style="display:none;">
 
             <h5>Props in Scene</h5>
