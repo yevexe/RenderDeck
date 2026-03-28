@@ -28,6 +28,11 @@ import { log, logError, logSuccess, logWarn } from './utils/logger.js';
 
 import { cleanupObject } from './utils/helpers.js';
 
+// Sketchfab integration
+import { SketchfabAPI }    from './sketchfab/SketchfabAPI.js';
+import { SketchfabModal }  from './sketchfab/SketchfabModal.js';
+import { extractModelFromZip } from './sketchfab/SketchfabLoader.js';
+
 // Config
 import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './config.js';
 
@@ -107,7 +112,8 @@ let showEnvBackground = true;   // scene.background = HDR when true
 let gradientBgEnabled = false;  // show CSS gradient when true
 let currentGradientBg = '';     // key from GRADIENT_PRESETS
 
-const sceneStorage = new CustomSceneStorage();
+const sceneStorage   = new CustomSceneStorage();
+const sketchfabAPI   = new SketchfabAPI();
 
 //═══════════════════════════════════════════════════════════════
 // STATE EDITORS — three independent undo/redo stacks
@@ -1392,6 +1398,7 @@ function saveSessionState() {
       modelName: getCurrentModelName() || null,
       partName: activeMesh?.name || null,
       sceneName: controls?.elements?.sceneSelect?.value || null,
+      activeCustomScene: document.getElementById('scene-select')?.value || null,
       materialPreset: uvEditor.currentMaterialPreset || getCurrentMaterialPreset() || null,
       isCustomMaterial: materialManager.isUserPreset(uvEditor.currentMaterialPreset || getCurrentMaterialPreset()),
       materialProperties: (() => {
@@ -1460,6 +1467,14 @@ async function restoreSessionState() {
   }
 
   try {
+    // Sync the custom scene dropdown — the UI is already built by the time restore runs
+    if (state.activeCustomScene) {
+      const sel = document.getElementById('scene-select');
+      if (sel && sel.querySelector(`option[value="${state.activeCustomScene}"]`)) {
+        sel.value = state.activeCustomScene;
+      }
+    }
+
     // Restore scene/environment selection first
     if (state.sceneName) {
       const sel = controls?.elements?.sceneSelect;
@@ -1549,8 +1564,9 @@ async function restoreSessionState() {
       await uvEditor.restoreSessionState(state.uvEditor);
     }
 
-    // Restore props
+    // Restore props (re-download any Sketchfab props first)
     if (state.props?.length) {
+      await ensureSketchfabPropsRegistered(state.props);
       await propManager.loadSceneData(state.props);
     }
 
@@ -2373,6 +2389,43 @@ function setupPropsUI() {
       pushSceneHistory('Cleared all props');
     }
   });
+
+  // Sketchfab import
+  const sketchfabModal = new SketchfabModal(sketchfabAPI, {
+    onImportProp: async (uid, name) => {
+      // 1. Get download URLs from Sketchfab
+      const downloads = await sketchfabAPI.getDownloadUrls(uid);
+      const info = downloads.glb ?? downloads.gltf ?? downloads.source;
+      if (!info?.url) throw new Error('No downloadable format available for this model.');
+
+      // 2. Fetch the ZIP/GLB
+      const zipData = await sketchfabAPI.fetchZip(info.url);
+
+      // 3. Extract GLB/GLTF and get a blob URL
+      const blobUrl = await extractModelFromZip(zipData);
+
+      // 4. Register as a custom prop keyed by UID so it can be re-downloaded on reload
+      const propId = propManager.registerBlobProp(`sketchfab_${uid}`, blobUrl, 'gltf', uid, name);
+      const target   = cameraManager.getControls().target;
+      await propManager.addProp(propId, { x: target.x, y: target.y, z: target.z });
+
+      // 5. Add to dropdown under "Sketchfab" group
+      let sfGroup = propsSelect.querySelector('optgroup[label="Sketchfab"]');
+      if (!sfGroup) {
+        sfGroup = document.createElement('optgroup');
+        sfGroup.label = 'Sketchfab';
+        propsSelect.appendChild(sfGroup);
+      }
+      const opt = document.createElement('option');
+      opt.value = propId;
+      opt.textContent = name;
+      sfGroup.appendChild(opt);
+
+      pushSceneHistory(`Imported Sketchfab prop: ${name}`);
+    },
+  });
+
+  document.getElementById('sketchfab-prop-btn')?.addEventListener('click', () => sketchfabModal.open());
 }
 
 function setupTransformToolbar() {
@@ -2503,6 +2556,27 @@ function setupTransformToolbar() {
 // CUSTOM SCENES UI
 //═══════════════════════════════════════════════════════════════
 
+// Re-downloads and registers any Sketchfab props found in a props array before loading.
+// Must be called before propManager.loadSceneData() so blob URLs are available.
+async function ensureSketchfabPropsRegistered(propsData) {
+  const sfProps = (propsData ?? []).filter(p => p.sketchfabUid);
+  for (const p of sfProps) {
+    const uid  = p.sketchfabUid;
+    const key  = `sketchfab_${uid}`;
+    if (propManager.customProps.has(key)) continue; // already registered this session
+    try {
+      const downloads = await sketchfabAPI.getDownloadUrls(uid);
+      const info = downloads.glb ?? downloads.gltf ?? downloads.source;
+      if (!info?.url) throw new Error('No download URL');
+      const zipData = await sketchfabAPI.fetchZip(info.url);
+      const blobUrl = await extractModelFromZip(zipData);
+      propManager.registerBlobProp(key, blobUrl, 'gltf', uid, p.displayName ?? null);
+    } catch (e) {
+      log(`Could not restore Sketchfab prop "${p.displayName ?? uid}": ${e.message}`, true);
+    }
+  }
+}
+
 // loadSceneSetup — restores a full saved scene (env, props, model+transform, camera)
 // Camera is restored INSIDE the model onLoaded callback so it runs after centerAndFrameModel.
 async function loadSceneSetup(sceneData) {
@@ -2519,8 +2593,9 @@ async function loadSceneSetup(sceneData) {
     });
   }
 
-  // 2. Restore props
+  // 2. Restore props (re-download any Sketchfab props first)
   if (sceneData.props) {
+    await ensureSketchfabPropsRegistered(sceneData.props);
     await propManager.loadSceneData(sceneData.props);
   }
 
@@ -2602,7 +2677,7 @@ async function setupSceneSetupUI() {
   if (!sceneSelect) return;
 
   async function populateScenesDropdown() {
-    sceneSelect.innerHTML = '<option value="" disabled selected>--- Select a Scene ---</option>';
+    sceneSelect.innerHTML = '<option value="default">Default (no props)</option>';
     const names = await sceneStorage.getAllSceneNames();
     if (names.length > 0) {
       const grp = document.createElement('optgroup');
@@ -2621,6 +2696,7 @@ async function setupSceneSetupUI() {
 
   sceneSelect.addEventListener('change', async (e) => {
     const value = e.target.value;
+    if (value === 'default') { propManager.clearAllProps(); return; }
     if (!value.startsWith('custom:')) return;
     const sceneData = await sceneStorage.getScene(value.replace('custom:', ''));
     if (sceneData) await loadSceneSetup(sceneData);
@@ -2833,6 +2909,15 @@ async function initializeApp() {
   if (!restored && STANDARD_OBJECTS.length > 0) {
     setTimeout(() => loadModel(STANDARD_OBJECTS[0].label), 100);
   }
+
+  // Let the restored frame render, then fade out the loading overlay
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+      overlay.classList.add('fade-out');
+      overlay.addEventListener('transitionend', () => overlay.remove(), { once: true });
+    }
+  }));
 
   // Record initial history states after everything is loaded
   setTimeout(() => {

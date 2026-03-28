@@ -244,6 +244,30 @@ hr {
   height: 100%;
 }
 
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: #141414;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.35s ease;
+}
+.loading-overlay.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #333;
+  border-top-color: #888;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Ensure the WebGL canvas never exceeds container */
 #scene-view-placeholder canvas {
   display: block;
@@ -877,6 +901,16 @@ hr {
 .button-medium {
   display: inline-block;
   padding: 2.5px 5px;
+}
+
+#sketchfab-prop-btn {
+  background: linear-gradient(135deg, #2a2a2a 0%, #5a3a1a 60%, #7a4a20 100%);
+  border-color: #7a5030;
+  color: #e8c8a0;
+}
+#sketchfab-prop-btn:hover {
+  background: linear-gradient(135deg, #333 0%, #6a4520 60%, #8a5528 100%);
+  outline-color: #8a6040;
 }
 
 .button:hover,

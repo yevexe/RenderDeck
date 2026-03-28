@@ -203,7 +203,7 @@ export class PropManager {
         url = entry.url;
         format = entry.format || 'gltf';
       }
-      displayName = name;
+      displayName = (typeof entry === 'object' && entry.displayName) ? entry.displayName : name;
     } else {
       const cfg = PROP_PATHS[propId];
       if (!cfg || !cfg.file) {
@@ -666,6 +666,11 @@ export class PropManager {
     }
   }
 
+  registerBlobProp(name, blobUrl, format = 'gltf', sketchfabUid = null, displayName = null) {
+    this.customProps.set(name, { url: blobUrl, format, ...(sketchfabUid ? { sketchfabUid } : {}), ...(displayName ? { displayName } : {}) });
+    return `custom_${name}`;
+  }
+
   async uploadCustomProp(file) {
     const ext = file.name.match(/\.(glb|gltf|obj)$/i);
     if (!ext) {
@@ -718,12 +723,19 @@ export class PropManager {
   }
 
   getSceneData() {
-    return this.props.map(prop => ({
-      type: prop.type,
-      position: { ...prop.position },
-      rotation: { ...prop.rotation },
-      scale: { ...prop.scale }
-    }));
+    return this.props.map(prop => {
+      const entry = prop.type.startsWith('custom_')
+        ? this.customProps.get(prop.type.replace('custom_', ''))
+        : null;
+      return {
+        type: prop.type,
+        displayName: prop.displayName,
+        position: { ...prop.position },
+        rotation: { ...prop.rotation },
+        scale: { ...prop.scale },
+        ...(entry?.sketchfabUid ? { sketchfabUid: entry.sketchfabUid } : {}),
+      };
+    });
   }
 
   getMainModelTransform() {
