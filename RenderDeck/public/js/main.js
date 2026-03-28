@@ -69,6 +69,37 @@ let activeModel = null;
 let activeMesh = null;
 let meshMap = {}; // name → mesh reference for multi‑part models
 
+// Texture quality: track current anisotropy so every loaded texture gets the right setting
+let currentAnisotropy = 16;
+
+/** Apply current quality settings to a freshly-loaded Three.js texture. */
+function applyTexQuality(tex) {
+  if (!tex || !tex.isTexture) return;
+  const renderer = rendererManager?.getRenderer?.();
+  const maxAniso = renderer ? renderer.capabilities.getMaxAnisotropy() : 16;
+  tex.anisotropy = Math.min(currentAnisotropy, maxAniso);
+  if (tex.generateMipmaps !== false) {
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+  }
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+}
+
+/** Traverse an Object3D and apply quality settings to every texture on every mesh. */
+function applyTexQualityToObject(root) {
+  const TEX_SLOTS = [
+    'map','normalMap','roughnessMap','metalnessMap','aoMap',
+    'emissiveMap','displacementMap','alphaMap','bumpMap',
+    'clearcoatMap','clearcoatNormalMap','clearcoatRoughnessMap',
+    'specularColorMap','transmissionMap','sheenColorMap','sheenRoughnessMap',
+  ];
+  root.traverse(child => {
+    if (!child.isMesh) return;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    mats.forEach(mat => { if (mat) TEX_SLOTS.forEach(s => applyTexQuality(mat[s])); });
+  });
+}
+
 // Background / environment state
 let currentEnvTexture = null;   // currently loaded HDR texture
 let currentEnvironment = null;  // name of currently loaded HDR (e.g. 'Studio Kominka')
@@ -414,6 +445,7 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       sceneManager.add(object);
       activeModel = object;
       propManager.setMainModel(activeModel);
+      applyTexQualityToObject(object);
       if (_bootCamera) {
         // Restore saved camera immediately so there's no default→saved snap.
         cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
@@ -470,6 +502,7 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       sceneManager.add(object);
       activeModel = object;
       propManager.setMainModel(activeModel);
+      applyTexQualityToObject(object);
       if (_bootCamera) {
         // Restore saved camera immediately so there's no default→saved snap.
         cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
@@ -714,8 +747,9 @@ function applyMaterialPreset(presetName) {
   uvEditor.currentMaterialPreset = presetName;
   uvEditor._renderPreview();
 
-  // Sync the custom material dropdown to reflect the applied preset
+  // Sync the custom material dropdown and name field to reflect the applied preset
   controls.setMaterialPresetValue(presetName);
+  setMaterialNameField(presetName);
 
   // Compile the new material against the real mesh geometry so the first
   // render doesn't stall on onFirstUse for this shader variant.
@@ -726,8 +760,78 @@ function applyMaterialPreset(presetName) {
   log(`Preset: ${presetName}`);
 }
 
+/**
+ * If the active mesh is using a standard preset, fork it into a new user preset so the
+ * original remains immutable. User presets are never forked — they are edited in place.
+ * Called before any property edit.
+ */
+function ensureMaterialIsMutable() {
+  if (!activeMesh?.material) return;
+  // Only standard (read-only) presets need forking; user presets are already standalone.
+  if (!materialManager.isStandardPreset(activeMesh.material.name)) return;
+
+  const sourceName = activeMesh.material.name || 'Custom';
+  const newName = materialManager.generateUserPresetName(sourceName);
+  const forked  = materialManager.forkMaterial(activeMesh.material, newName);
+
+  const env = sceneManager.getScene().environment;
+  materialManager.applyEnvironment(forked, env);
+  activeMesh.material = forked;
+
+  materialManager.addUserPreset(newName, materialManager.extractProperties(forked));
+  updateMaterialPresetList();
+  controls.setMaterialPresetValue(newName);
+  setMaterialNameField(newName);
+  scheduleThumbnailUpdate(newName, forked);
+  log(`Forked "${sourceName}" → "${newName}"`);
+}
+
+// ── Slider-drag deferral ──────────────────────────────────────────────────────
+// While a range slider is held down we skip fork/thumbnail/name work and only
+// apply raw values. On pointerup we do all the deferred work exactly once.
+let _sliderDragging     = false;
+let _pendingMaterialEdit = false;
+
+document.addEventListener('pointerdown', (e) => {
+  if (e.target.matches('input[type=range]')) _sliderDragging = true;
+});
+document.addEventListener('pointerup', () => {
+  if (!_sliderDragging) return;
+  _sliderDragging = false;
+  if (!_pendingMaterialEdit) return;
+  _pendingMaterialEdit = false;
+  if (!activeMesh?.material) return;
+  // Fork now (if still on a standard preset) and persist + thumbnail.
+  ensureMaterialIsMutable();
+  const mat = activeMesh.material;
+  if (materialManager.isUserPreset(mat.name)) {
+    materialManager.updateUserPresetParams(mat.name, materialManager.extractProperties(mat));
+    scheduleThumbnailUpdate(mat.name, mat);
+  }
+});
+
 function updateMaterialProperty(property, value) {
   if (!activeMesh?.material) return;
+
+  if (_sliderDragging) {
+    // Fast path while dragging: apply the value directly, defer all expensive work.
+    const mat = activeMesh.material;
+    const colorProps = ['color', 'specularColor', 'sheenColor', 'emissive', 'attenuationColor'];
+    if (colorProps.includes(property)) {
+      if (property === 'color') { const h = uvEditor.updateMaterialColor(value); if (!h) mat.color.set(value); }
+      else mat[property].set(value);
+    } else {
+      const h = uvEditor.updateMaterialPBR(property, value);
+      if (!h) mat[property] = value;
+    }
+    if (property === 'opacity')     mat.transparent = value < 1.0;
+    if (property === 'transmission') mat.transparent = value > 0;
+    mat.needsUpdate = true;
+    _pendingMaterialEdit = true;
+    return;
+  }
+
+  ensureMaterialIsMutable();
   const mat = activeMesh.material;
   const colorProps = ['color', 'specularColor', 'sheenColor', 'emissive', 'attenuationColor'];
   if (colorProps.includes(property)) {
@@ -744,6 +848,11 @@ function updateMaterialProperty(property, value) {
   if (property === 'opacity') mat.transparent = value < 1.0;
   if (property === 'transmission') mat.transparent = value > 0;
   mat.needsUpdate = true;
+
+  if (materialManager.isUserPreset(mat.name)) {
+    materialManager.updateUserPresetParams(mat.name, materialManager.extractProperties(mat));
+    scheduleThumbnailUpdate(mat.name, mat);
+  }
 }
 
 //═══════════════════════════════════════════════════════════════
@@ -1015,7 +1124,8 @@ function setupCameraUI() {
 
 const controls = new ControlsManager({
   onGridChange: (field, value) => {
-    tfGridCfg[field] = value;
+    // Grid size input is in display units (cm or in); convert to Three.js units (1 unit = 1 cm)
+    tfGridCfg[field] = (field === 'size' && measureUnit === 'in') ? value * 2.54 : value;
     rebuildGrid();
     if (tfSnapOn) {
       propManager.setSnapEnabled(true, gridSnapStep());
@@ -1119,7 +1229,7 @@ const controls = new ControlsManager({
     loader.load(url, (tex) => {
       URL.revokeObjectURL(url);
       tex.colorSpace = THREE.SRGBColorSpace;
-      tex.needsUpdate = true;
+      applyTexQuality(tex);
       const old = activeMesh.material[channel];
       if (old && old.isTexture) old.dispose();
       activeMesh.material[channel] = tex;
@@ -1230,7 +1340,13 @@ function selectPart(mesh) {
   if (!mesh) return;
   clearHighlight();
   activeMesh = mesh;
-  if (activeMesh.material) controls.syncMaterialUI(activeMesh.material);
+  if (activeMesh.material) {
+    controls.syncMaterialUI(activeMesh.material);
+    if (activeMesh.material.name) {
+      controls.setMaterialPresetValue(activeMesh.material.name);
+      setMaterialNameField(activeMesh.material.name);
+    }
+  }
   uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
   cameraManager.frameObject(activeMesh, {mode: 'corner'});
   const sel = controls.elements.objectPartSelect;
@@ -1466,6 +1582,68 @@ function getMaterialThumbnail(presetName) {
   return _matThumbCache.get(presetName) ?? null;
 }
 
+// Tracks pending idle-callback / timeout IDs per preset name so rapid slider
+// moves cancel the previous pending render and only fire once after settling.
+const _pendingThumbUpdates = new Map();
+
+/**
+ * Schedule a thumbnail render during browser idle time.
+ * - Pass a live material reference to pick up its current values.
+ * - Pass null/undefined to create a fresh preset copy (used for standard presets).
+ * Multiple calls for the same name cancel the previous pending render.
+ *
+ * @param {string}           name - preset name
+ * @param {THREE.Material=}  mat  - live material (optional; created fresh if omitted)
+ */
+function scheduleThumbnailUpdate(name, mat) {
+  // Cancel any outstanding request for this name
+  if (_pendingThumbUpdates.has(name)) {
+    const pending = _pendingThumbUpdates.get(name);
+    if (typeof cancelIdleCallback === 'function') cancelIdleCallback(pending);
+    else clearTimeout(pending);
+  }
+
+  const render = () => {
+    _pendingThumbUpdates.delete(name);
+    _ensureThumbRenderer();
+    const env = sceneManager.getScene().environment;
+    // If no live material was supplied, create a fresh disposable copy
+    const owned = !!mat;
+    const m = owned ? mat : materialManager.createFreshPreset(name);
+    if (env) {
+      _thumbScene.environment          = env;
+      _thumbScene.environmentIntensity = 0.6;
+      materialManager.applyEnvironment(m, env);
+    }
+    _thumbSphereMesh.material = m;
+    _thumbRenderer.render(_thumbScene, _thumbCamera);
+    _matThumbCache.set(name, _thumbRenderer.domElement.toDataURL());
+    if (!owned) m.dispose();
+    updateMaterialPresetList();
+  };
+
+  let id;
+  if (typeof requestIdleCallback === 'function') {
+    id = requestIdleCallback(render, { timeout: 1500 });
+  } else {
+    id = setTimeout(render, 500);
+  }
+  _pendingThumbUpdates.set(name, id);
+}
+
+/**
+ * Schedule thumbnail generation for every preset that currently has no cached
+ * thumbnail. Spreads the work across idle frames so the UI stays responsive.
+ * Called after restoring standard presets or any bulk list change.
+ */
+function scheduleAllMissingThumbnails() {
+  for (const name of materialManager.getPresetNames()) {
+    if (!_matThumbCache.has(name)) {
+      scheduleThumbnailUpdate(name, null);
+    }
+  }
+}
+
 function updateMaterialPresetList() {
   controls.updateMaterialPresetSelect(
     materialManager.getPresetNames(),
@@ -1473,6 +1651,115 @@ function updateMaterialPresetList() {
     () => currentEnvironment   // env key — triggers re-render on hover when env changes
   );
 }
+
+// ── Material preset buttons: New / Rename / Delete ───────────────────────────
+document.getElementById('add-new-material')?.addEventListener('click', () => {
+  if (!activeMesh?.material) return;
+  const sourceName = activeMesh.material.name || 'Custom';
+  const newName = materialManager.generateUserPresetName(sourceName);
+  const forked  = materialManager.forkMaterial(activeMesh.material, newName);
+  const env     = sceneManager.getScene().environment;
+  materialManager.applyEnvironment(forked, env);
+  activeMesh.material = forked;
+  materialManager.addUserPreset(newName, materialManager.extractProperties(forked));
+  updateMaterialPresetList();
+  controls.setMaterialPresetValue(newName);
+  setMaterialNameField(newName);
+  controls.syncMaterialUI(activeMesh.material);
+  scheduleThumbnailUpdate(newName, forked);
+  log(`New material: "${newName}"`);
+});
+
+// ── Inline rename form ────────────────────────────────────────────────────────
+// The form is always visible. setMaterialNameField() is called from
+// applyMaterialPreset() and selectPart() to keep the input in sync.
+const _renameInput   = document.getElementById('rename-material-input');
+const _renameConfirm = document.getElementById('rename-material-confirm');
+const _renameClear   = document.getElementById('rename-material-clear');
+
+function setMaterialNameField(name) {
+  if (_renameInput) _renameInput.value = name ?? '';
+}
+
+function _resetRenameField() {
+  setMaterialNameField(activeMesh?.material?.name ?? '');
+}
+
+function _commitRename() {
+  const current = activeMesh?.material?.name;
+  const newName = _renameInput.value.trim();
+  if (!newName || !current || newName === current) { _resetRenameField(); return; }
+  if (materialManager.getPresetNames().includes(newName)) {
+    _renameInput.style.borderColor = '#c06060';
+    _renameInput.select();
+    setTimeout(() => { _renameInput.style.borderColor = ''; }, 1000);
+    return;
+  }
+
+  if (materialManager.isStandardPreset(current)) {
+    // Fork the standard preset under the chosen name
+    const forked = materialManager.forkMaterial(activeMesh.material, newName);
+    materialManager.applyEnvironment(forked, sceneManager.getScene().environment);
+    activeMesh.material = forked;
+    materialManager.addUserPreset(newName, materialManager.extractProperties(forked));
+    scheduleThumbnailUpdate(newName, forked);
+    log(`Forked "${current}" → "${newName}"`);
+  } else {
+    // User preset — rename in place
+    materialManager.renamePreset(current, newName);
+    if (_matThumbCache.has(current)) {
+      _matThumbCache.set(newName, _matThumbCache.get(current));
+      _matThumbCache.delete(current);
+    }
+    log(`Renamed "${current}" → "${newName}"`);
+  }
+
+  updateMaterialPresetList();
+  controls.setMaterialPresetValue(newName);
+  setMaterialNameField(newName);
+}
+
+// Rename button → focus + select so the user can start typing immediately
+document.getElementById('rename-material')?.addEventListener('click', () => {
+  _renameInput?.focus();
+  _renameInput?.select();
+});
+
+_renameConfirm?.addEventListener('click', _commitRename);
+_renameClear  ?.addEventListener('click', () => { _renameInput.value = ''; _renameInput.focus(); });
+
+_renameInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter')  { e.preventDefault(); _commitRename(); }
+  if (e.key === 'Escape') { e.preventDefault(); _resetRenameField(); _renameInput.blur(); }
+});
+
+document.getElementById('delete-current-material')?.addEventListener('click', () => {
+  const current = activeMesh?.material?.name;
+  if (!current) return;
+  if (!confirm(`Remove "${current}" from the list?`)) return;
+
+  // Switch away first so the mesh isn't left with a dead material
+  const fallback = materialManager.getPresetNames().find(n => n !== current);
+  if (fallback) applyMaterialPreset(fallback);
+
+  if (materialManager.isStandardPreset(current)) {
+    // Standard presets are soft-deleted (hidden) — restored via Load Standard Materials
+    materialManager.hideStandardPreset(current);
+  } else if (!materialManager.deleteUserPreset(current)) {
+    // Untracked forked material — dispose directly
+    materialManager.dispose(activeMesh?.material);
+  }
+  _matThumbCache.delete(current);
+  updateMaterialPresetList();
+  log(`Removed material: "${current}"`);
+});
+
+document.getElementById('load-standard-materials')?.addEventListener('click', () => {
+  materialManager.restoreAllStandardPresets();
+  updateMaterialPresetList();
+  scheduleAllMissingThumbnails();
+  log('Standard materials restored');
+});
 
 window.updateModelSelect = updateModelList;
 window.switchToModel = (name) => {
@@ -1572,6 +1859,30 @@ function setupPostFXUI() {
   link('vignette-intensity-slider', 'vignette-intensity-input', v => rm.setVignetteIntensity(v));
   link('vignette-softness-slider',  'vignette-softness-input',  v => rm.setVignetteSoftness(v));
 
+  // Color picker + hex sync
+  const vColorPicker = document.getElementById('vignette-color-picker');
+  const vColorHex    = document.getElementById('vignette-color-hex');
+  const vColorSwatch = document.getElementById('vignette-color-swatch');
+  const syncVignetteColor = (hex) => {
+    rm.setVignetteColor(hex);
+    if (vColorPicker) vColorPicker.value = hex;
+    if (vColorHex)    vColorHex.value    = hex;
+    if (vColorSwatch) vColorSwatch.style.backgroundColor = hex;
+    markNeedsRender(4);
+  };
+  vColorPicker?.addEventListener('input',  e => syncVignetteColor(e.target.value));
+  vColorHex?.addEventListener('change', e => {
+    const v = e.target.value.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) syncVignetteColor(v);
+  });
+  syncVignetteColor('#000000'); // initialize swatch
+
+  // Blend mode
+  document.getElementById('vignette-blend-mode')?.addEventListener('change', e => {
+    rm.setVignetteBlendMode(parseInt(e.target.value, 10));
+    markNeedsRender(4);
+  });
+
   // ── AO controls ───────────────────────────────────────────────
   link('ao-intensity-slider', 'ao-intensity-input', v => rm.setSSAOIntensity(v));
   link('ao-radius-slider',    'ao-radius-input',    v => rm.setSSAORadius(v));
@@ -1595,6 +1906,7 @@ let axesHelper    = null;
 let tfGridOn  = false;
 let tfSnapOn  = false;
 const tfGridCfg = { size: 10, divisions: 10, subdivisions: 5 };
+let measureUnit = 'cm'; // 'cm' | 'in'  — 1 Three.js unit = 1 cm
 
 function gridSnapStep() {
   const { size, divisions, subdivisions } = tfGridCfg;
@@ -1866,16 +2178,14 @@ function setupPreviewQualityUI() {
     const aniso = levels[v] || 16;
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
     const clamped = Math.min(aniso, maxAniso);
+    currentAnisotropy = clamped; // remember for future texture loads
     scene.traverse((obj) => {
       if (obj.isMesh && obj.material) {
         const mat = obj.material;
         const textures = [mat.map, mat.normalMap, mat.roughnessMap, mat.metalnessMap,
                           mat.aoMap, mat.emissiveMap, mat.displacementMap, mat.alphaMap];
         textures.forEach((tex) => {
-          if (tex) {
-            tex.anisotropy = clamped;
-            tex.needsUpdate = true;
-          }
+          if (tex) { tex.anisotropy = clamped; tex.needsUpdate = true; }
         });
       }
     });
@@ -2094,6 +2404,71 @@ function setupTransformToolbar() {
 
   btnEditMode?.addEventListener('click', () => applyEditMode(!editModeOn));
   applyEditMode(true); // sync PropManager state with the button's default active state
+
+  // ── Measure unit (cm / in) ───────────────────────────────────
+  function applyMeasureUnit(unit) {
+    measureUnit = unit;
+    propManager.setMeasureUnit(unit);
+
+    const gridSizeInput  = document.getElementById('grid-size-input');
+    const gridSizeLabel  = document.getElementById('grid-size-unit-label');
+
+    // Keep the same display number but re-interpret it in the new unit.
+    // e.g. "10 cm" → "10 in": each cell now represents 1 inch = 2.54 Three.js units.
+    const displayVal = parseFloat(gridSizeInput?.value) || 10;
+    tfGridCfg.size = unit === 'in' ? displayVal * 2.54 : displayVal;
+
+    if (gridSizeLabel) gridSizeLabel.textContent = unit === 'in' ? 'in' : 'cm';
+
+    document.getElementById('unit-cm')?.classList.toggle('unit-btn--active', unit === 'cm');
+    document.getElementById('unit-in')?.classList.toggle('unit-btn--active', unit === 'in');
+
+    rebuildGrid();
+    if (tfSnapOn) propManager.setSnapEnabled(true, gridSnapStep());
+  }
+
+  document.getElementById('unit-cm')?.addEventListener('click', () => applyMeasureUnit('cm'));
+  document.getElementById('unit-in')?.addEventListener('click', () => applyMeasureUnit('in'));
+
+  // ── Dimension label toggle + settings popup ──────────────────
+  const btnDimensions  = document.getElementById('tf-dimensions');
+  const btnDimSettings = document.getElementById('tf-dim-settings');
+  const dimPopup       = document.getElementById('dim-settings-popup');
+  let dimLabelsOn = true;
+
+  btnDimensions?.addEventListener('click', () => {
+    dimLabelsOn = !dimLabelsOn;
+    propManager.setShowLabels(dimLabelsOn);
+    btnDimensions.classList.toggle('tf-btn--active', dimLabelsOn);
+  });
+
+  btnDimSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = dimPopup?.style.display !== 'none';
+    if (dimPopup) dimPopup.style.display = open ? 'none' : 'block';
+    btnDimSettings.classList.toggle('tf-btn--active', !open);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (dimPopup && dimPopup.style.display !== 'none' &&
+        !dimPopup.contains(e.target) && e.target !== btnDimSettings) {
+      dimPopup.style.display = 'none';
+      btnDimSettings?.classList.remove('tf-btn--active');
+    }
+  });
+
+  // Label style: Default vs Parallel
+  const btnStyleDefault  = document.getElementById('dim-style-default');
+  const btnStyleParallel = document.getElementById('dim-style-parallel');
+
+  function applyLabelStyle(parallel) {
+    propManager.setLabelsParallel(parallel);
+    btnStyleDefault?.classList.toggle('unit-btn--active', !parallel);
+    btnStyleParallel?.classList.toggle('unit-btn--active', parallel);
+  }
+
+  btnStyleDefault?.addEventListener('click',  () => applyLabelStyle(false));
+  btnStyleParallel?.addEventListener('click', () => applyLabelStyle(true));
 
   // ── Grid toggle (on/off) — settings wiring is in Controls.js ────
   const btnGrid = document.getElementById('tf-grid');

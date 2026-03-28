@@ -27,6 +27,15 @@ export class MaterialManager {
     // Reusing the same object means WebGLProgram.getUniforms() stays cached after
     // the first render (warmup), so subsequent material switches have zero stall.
     this._instanceCache = new Map();
+
+    // User-created presets — stored in localStorage, prepended to the UI list
+    this._userPresetNames = [];  // ordered list, newest first
+    this._userPresetParams = {}; // name → params
+    this._loadUserPresetsFromStorage();
+
+    // Standard presets the user has hidden ("deleted") — persisted in localStorage
+    this._hiddenStandardPresets = new Set();
+    this._loadHiddenFromStorage();
   }
 
   /** Legacy procedural presets kept for backward compatibility. */
@@ -91,6 +100,16 @@ export class MaterialManager {
       } catch (e) {
         console.warn(`MaterialManager: failed to load preset "${mat.label}"`, e);
       }
+    }
+
+    // Re-register user presets — their factories were wiped when this.presets
+    // was reset above. Without this, getPreset() falls back to the first standard
+    // preset and assigns its name to activeMesh.material, making delete impossible.
+    for (const name of this._userPresetNames) {
+      const params = this._userPresetParams[name];
+      if (!params) continue;
+      this._presetParams[name] = { ...params };
+      this.presets[name] = () => this.createMaterial(name, params);
     }
   }
 
@@ -199,11 +218,163 @@ export class MaterialManager {
     material.needsUpdate = true;
   }
 
-  /** Returns JSON-loaded preset names if available, else legacy names. */
+  /** Returns user presets first, then visible standard presets. */
   getPresetNames() {
+    const standard = (this._jsonPresetNames.length > 0
+      ? [...this._jsonPresetNames]
+      : Object.keys(this._legacyPresets)
+    ).filter(n => !this._hiddenStandardPresets.has(n));
+    return [...this._userPresetNames, ...standard];
+  }
+
+  /** All standard preset names regardless of hidden state. */
+  getAllStandardPresetNames() {
     return this._jsonPresetNames.length > 0
       ? [...this._jsonPresetNames]
       : Object.keys(this._legacyPresets);
+  }
+
+  /** Hide a standard preset from the list (soft-delete). */
+  hideStandardPreset(name) {
+    this._hiddenStandardPresets.add(name);
+    this._saveHiddenToStorage();
+  }
+
+  /** Restore all hidden standard presets back to the list. */
+  restoreAllStandardPresets() {
+    this._hiddenStandardPresets.clear();
+    this._saveHiddenToStorage();
+  }
+
+  _saveHiddenToStorage() {
+    try {
+      localStorage.setItem('rd_hidden_presets', JSON.stringify([...this._hiddenStandardPresets]));
+    } catch (_) {}
+  }
+
+  _loadHiddenFromStorage() {
+    try {
+      const raw = localStorage.getItem('rd_hidden_presets');
+      if (!raw) return;
+      JSON.parse(raw).forEach(n => this._hiddenStandardPresets.add(n));
+    } catch (_) {}
+  }
+
+  /** True when the named preset is a standard (read-only) preset. */
+  isStandardPreset(name) {
+    return this._jsonPresetNames.includes(name) || name in this._legacyPresets;
+  }
+
+  /** True when the named preset was created by the user. */
+  isUserPreset(name) {
+    return this._userPresetNames.includes(name);
+  }
+
+  /** Create a deep copy of a material and return it as a standalone instance (NOT cached). */
+  forkMaterial(sourceMat, newName) {
+    const copy = sourceMat.clone();
+    copy.name = newName;
+    copy.needsUpdate = true;
+    return copy;
+  }
+
+  /** Generate a unique user preset name based on a base name. */
+  generateUserPresetName(baseName) {
+    let name = `${baseName} (custom)`;
+    let i = 2;
+    while (this._userPresetNames.includes(name) || this._jsonPresetNames.includes(name)) {
+      name = `${baseName} (custom ${i++})`;
+    }
+    return name;
+  }
+
+  /** Register a user preset from the given property object (no Three.js material needed). */
+  addUserPreset(name, params) {
+    // Remove if already exists (re-add at top)
+    this._userPresetNames = this._userPresetNames.filter(n => n !== name);
+    this._userPresetNames.unshift(name);
+    this._userPresetParams[name] = { ...params };
+    this._presetParams[name] = { ...params };
+    this.presets[name] = () => this.createMaterial(name, params);
+    this._saveUserPresetsToStorage();
+  }
+
+  /**
+   * Update a user preset's stored params in-place (no reordering, no cached instance reset).
+   * Used to persist live slider edits so switching away and back keeps the edits.
+   */
+  updateUserPresetParams(name, params) {
+    if (!this._userPresetNames.includes(name)) return;
+    this._userPresetParams[name] = { ...params };
+    this._presetParams[name] = { ...params };
+    this.presets[name] = () => this.createMaterial(name, params);
+    this._saveUserPresetsToStorage();
+  }
+
+  /** Rename a user preset. Returns false if not found or name taken. */
+  renamePreset(oldName, newName) {
+    if (!this.isUserPreset(oldName)) return false;
+    if (this.getPresetNames().includes(newName)) return false;
+    const params = this._userPresetParams[oldName];
+    // Update all tracking structures
+    const idx = this._userPresetNames.indexOf(oldName);
+    this._userPresetNames[idx] = newName;
+    delete this._userPresetParams[oldName];
+    this._userPresetParams[newName] = params;
+    delete this._presetParams[oldName];
+    this._presetParams[newName] = params;
+    delete this.presets[oldName];
+    this.presets[newName] = () => this.createMaterial(newName, params);
+    // Move cached instance if any
+    if (this._instanceCache.has(oldName)) {
+      const mat = this._instanceCache.get(oldName);
+      mat.name = newName;
+      this._instanceCache.delete(oldName);
+      this._instanceCache.set(newName, mat);
+    }
+    this._saveUserPresetsToStorage();
+    return true;
+  }
+
+  /** Delete a user preset. Returns false if it's a standard preset. */
+  deleteUserPreset(name) {
+    if (!this.isUserPreset(name)) return false;
+    this._userPresetNames = this._userPresetNames.filter(n => n !== name);
+    delete this._userPresetParams[name];
+    delete this._presetParams[name];
+    delete this.presets[name];
+    if (this._instanceCache.has(name)) {
+      this._instanceCache.get(name).dispose();
+      this._instanceCache.delete(name);
+    }
+    this._saveUserPresetsToStorage();
+    return true;
+  }
+
+  _saveUserPresetsToStorage() {
+    try {
+      localStorage.setItem('rd_user_presets', JSON.stringify({
+        names:  this._userPresetNames,
+        params: this._userPresetParams,
+      }));
+    } catch (_) { /* quota exceeded — ignore */ }
+  }
+
+  _loadUserPresetsFromStorage() {
+    try {
+      const raw = localStorage.getItem('rd_user_presets');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!data?.names || !data?.params) return;
+      for (const name of data.names) {
+        const params = data.params[name];
+        if (!params) continue;
+        this._userPresetNames.push(name);
+        this._userPresetParams[name] = params;
+        this._presetParams[name] = params;
+        this.presets[name] = () => this.createMaterial(name, params);
+      }
+    } catch (_) { /* corrupt data — ignore */ }
   }
 
   addPreset(name, generator) {
