@@ -11,7 +11,7 @@ import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { TAARenderPass } from 'three/addons/postprocessing/TAARenderPass.js';
 import { SSAARenderPass } from 'three/addons/postprocessing/SSAARenderPass.js';
-import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
+import { CustomVignetteShader } from '../shaders/CustomVignetteShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { HQBokehFragmentShader } from '../shaders/DepthOfFieldShader.js';
@@ -147,10 +147,12 @@ export class RendererManager {
     this.afterimagePass.enabled = false;
     this.composer.addPass(this.afterimagePass);
 
-    // 7. Vignette
-    this.vignettePass = new ShaderPass(VignetteShader);
-    this.vignettePass.uniforms['offset'].value   = 0.75;
-    this.vignettePass.uniforms['darkness'].value = 1.25;
+    // 7. Vignette (custom shader with color + blend-mode support)
+    this.vignettePass = new ShaderPass(CustomVignetteShader);
+    this.vignettePass.uniforms['offset'].value        = 0.75;
+    this.vignettePass.uniforms['darkness'].value      = 1.25;
+    this.vignettePass.uniforms['vignetteColor'].value = new THREE.Color(0x000000);
+    this.vignettePass.uniforms['blendMode'].value     = 0;
     this.vignettePass.enabled = false;
     this.composer.addPass(this.vignettePass);
 
@@ -219,6 +221,14 @@ export class RendererManager {
   setVignetteSoftness(v) {
     // offset: 1.0 = soft edge, 0.2 = sharp vignette ring
     if (this.vignettePass) this.vignettePass.uniforms['offset'].value = 1.0 - v * 0.8;
+  }
+
+  setVignetteColor(hex) {
+    if (this.vignettePass) this.vignettePass.uniforms['vignetteColor'].value.set(hex);
+  }
+
+  setVignetteBlendMode(mode) {
+    if (this.vignettePass) this.vignettePass.uniforms['blendMode'].value = mode | 0;
   }
 
   // ─── SSAO params ─────────────────────────────────────────────
