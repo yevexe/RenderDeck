@@ -32,6 +32,12 @@ export class PropManager {
     this.mainModel = null;
     this._mainModelHelper = null;
     this.onTransformCommit = null; // set by caller; receives (mode: 'translate'|'rotate'|'scale')
+    this._editModeEnabled = true;
+    this._showLabels = true;
+    this._labelsParallel = false;
+    this._measureUnit = 'cm'; // 'cm' | 'in'
+    this._labelCanvas = null;
+    this._labelCtx = null;
 
     this._setupTransformControls();
     this._setupEventListeners();
@@ -336,6 +342,7 @@ export class PropManager {
       this.transformControls.detach();
       if (this._tcHelper) this._tcHelper.visible = false;
     }
+    this._clearSizeLabels();
   }
 
   selectProp(propId) {
@@ -366,18 +373,46 @@ export class PropManager {
 
   // ── Thick-outline helpers (LineSegments2 gives true pixel linewidth) ──
 
-  _boxPositions(object3D) {
-    const box = new THREE.Box3().setFromObject(object3D);
-    const { min: n, max: x } = box;
-    // 12 edges, each as a pair [x1,y1,z1, x2,y2,z2]
+  /** Compute 8 OBB corners in world space — box is tight in the object's LOCAL space
+   *  so it rotates/scales with the object rather than expanding as an AABB. */
+  _getOBBCorners(object3D) {
+    object3D.updateMatrixWorld(true);
+    const invWorld = new THREE.Matrix4().copy(object3D.matrixWorld).invert();
+    const localBox = new THREE.Box3();
+    object3D.traverse(child => {
+      if (!child.isMesh || !child.geometry) return;
+      child.geometry.computeBoundingBox();
+      const gb = child.geometry.boundingBox.clone();
+      gb.applyMatrix4(new THREE.Matrix4().multiplyMatrices(invWorld, child.matrixWorld));
+      localBox.union(gb);
+    });
+    const { min: n, max: x } = localBox;
+    const wm = object3D.matrixWorld;
     return [
-      n.x,n.y,n.z, x.x,n.y,n.z,   x.x,n.y,n.z, x.x,n.y,x.z,
-      x.x,n.y,x.z, n.x,n.y,x.z,   n.x,n.y,x.z, n.x,n.y,n.z,
-      n.x,x.y,n.z, x.x,x.y,n.z,   x.x,x.y,n.z, x.x,x.y,x.z,
-      x.x,x.y,x.z, n.x,x.y,x.z,   n.x,x.y,x.z, n.x,x.y,n.z,
-      n.x,n.y,n.z, n.x,x.y,n.z,   x.x,n.y,n.z, x.x,x.y,n.z,
-      x.x,n.y,x.z, x.x,x.y,x.z,   n.x,n.y,x.z, n.x,x.y,x.z,
+      new THREE.Vector3(n.x, n.y, n.z).applyMatrix4(wm), // 0 bottom-front-left
+      new THREE.Vector3(x.x, n.y, n.z).applyMatrix4(wm), // 1 bottom-front-right
+      new THREE.Vector3(x.x, n.y, x.z).applyMatrix4(wm), // 2 bottom-back-right
+      new THREE.Vector3(n.x, n.y, x.z).applyMatrix4(wm), // 3 bottom-back-left
+      new THREE.Vector3(n.x, x.y, n.z).applyMatrix4(wm), // 4 top-front-left
+      new THREE.Vector3(x.x, x.y, n.z).applyMatrix4(wm), // 5 top-front-right
+      new THREE.Vector3(x.x, x.y, x.z).applyMatrix4(wm), // 6 top-back-right
+      new THREE.Vector3(n.x, x.y, x.z).applyMatrix4(wm), // 7 top-back-left
     ];
+  }
+
+  _boxPositions(object3D) {
+    const c = this._getOBBCorners(object3D);
+    // 12 edges as segment pairs
+    const edges = [
+      [0,1],[1,2],[2,3],[3,0], // bottom face
+      [4,5],[5,6],[6,7],[7,4], // top face
+      [0,4],[1,5],[2,6],[3,7], // vertical edges
+    ];
+    const pos = [];
+    for (const [a, b] of edges) {
+      pos.push(c[a].x, c[a].y, c[a].z, c[b].x, c[b].y, c[b].z);
+    }
+    return pos;
   }
 
   /** Return { dw, dh, cw, ch, linewidth } needed for LineMaterial consistency. */
@@ -410,14 +445,124 @@ export class PropManager {
     outline.material?.dispose();
   }
 
+  _createLabelCanvas() {
+    const parent = this.renderer.domElement.parentElement;
+    if (!parent) return;
+    const canvas = document.createElement('canvas');
+    canvas.setAttribute('data-size-labels', '1');
+    canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:10;';
+    parent.appendChild(canvas);
+    this._labelCanvas = canvas;
+    this._labelCtx = canvas.getContext('2d');
+  }
+
+  _formatSize(cm) {
+    // cm is Three.js units (1 unit = 1 cm)
+    if (this._measureUnit === 'in') {
+      const inches = cm / 2.54;
+      return `${inches.toFixed(inches >= 10 ? 1 : 2)}"`;
+    }
+    if (cm >= 10) return `${cm.toFixed(0)} cm`;
+    if (cm >= 1)  return `${cm.toFixed(1)} cm`;
+    return `${(cm * 10).toFixed(1)} mm`;
+  }
+
+  _updateSizeLabels(object3D) {
+    if (!this._labelCanvas) this._createLabelCanvas();
+    if (!this._labelCanvas) return;
+
+    const domEl = this.renderer.domElement;
+    const w = domEl.clientWidth  || domEl.width;
+    const h = domEl.clientHeight || domEl.height;
+    const lc = this._labelCanvas;
+    if (lc.width !== w || lc.height !== h) { lc.width = w; lc.height = h; }
+
+    const ctx = this._labelCtx;
+    ctx.clearRect(0, 0, w, h);
+
+    const c = this._getOBBCorners(object3D);
+    // Measure along OBB local axes (world distances between adjacent corners)
+    const W = c[0].distanceTo(c[1]);
+    const H = c[0].distanceTo(c[4]);
+    const D = c[0].distanceTo(c[3]);
+
+    // Representative edges: one per axis, on the front/visible face
+    const labelEdges = [
+      { p1: c[0], p2: c[1], text: `W: ${this._formatSize(W)}` },
+      { p1: c[1], p2: c[5], text: `H: ${this._formatSize(H)}` },
+      { p1: c[1], p2: c[2], text: `D: ${this._formatSize(D)}` },
+    ];
+
+    ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const pad = 4;
+    const bh = 16;
+
+    for (const { p1, p2, text } of labelEdges) {
+      const mid3D = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+      const pm = mid3D.clone().project(this.camera);
+      if (pm.z >= 1) continue;
+
+      const sx = (pm.x *  0.5 + 0.5) * w;
+      const sy = (pm.y * -0.5 + 0.5) * h;
+
+      if (this._labelsParallel) {
+        const pp1 = p1.clone().project(this.camera);
+        const pp2 = p2.clone().project(this.camera);
+        let angle = Math.atan2(-(pp2.y - pp1.y) * h, (pp2.x - pp1.x) * w);
+        // Keep text right-side up
+        if (angle >  Math.PI / 2) angle -= Math.PI;
+        if (angle < -Math.PI / 2) angle += Math.PI;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(angle);
+        const tw = ctx.measureText(text).width;
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(-tw / 2 - pad, -bh / 2, tw + pad * 2, bh);
+        ctx.fillStyle = '#00d4ff';
+        ctx.fillText(text, 0, 0);
+        ctx.restore();
+      } else {
+        const tw = ctx.measureText(text).width;
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(sx - tw / 2 - pad, sy - bh / 2, tw + pad * 2, bh);
+        ctx.fillStyle = '#00d4ff';
+        ctx.fillText(text, sx, sy);
+      }
+    }
+  }
+
+  _clearSizeLabels() {
+    if (!this._labelCanvas) return;
+    this._labelCtx.clearRect(0, 0, this._labelCanvas.width, this._labelCanvas.height);
+  }
+
   /** Returns true if there are any active outlines (used to skip updateOutlines when idle) */
   hasOutlines() {
     return !!(this.selectedProp?._outlineHelper || this._mainModelHelper);
   }
 
+  setShowLabels(visible) {
+    this._showLabels = visible;
+    if (!visible) this._clearSizeLabels();
+    window.markNeedsRender?.(4);
+  }
+
+  setLabelsParallel(parallel) {
+    this._labelsParallel = parallel;
+    window.markNeedsRender?.(4);
+  }
+
+  setMeasureUnit(unit) {
+    this._measureUnit = unit; // 'cm' | 'in'
+    window.markNeedsRender?.(4);
+  }
+
   /** Call every frame from the animate loop to keep outlines tracking moving objects */
   updateOutlines() {
     const { dw, dh, linewidth } = this._outlineMetrics();
+    let labelTarget = null;
     const refresh = (outline) => {
       if (!outline) return;
       const obj = outline.userData?.trackedObject;
@@ -425,9 +570,16 @@ export class PropManager {
       outline.geometry.setPositions(this._boxPositions(obj));
       outline.material.resolution.set(dw, dh);
       outline.material.linewidth = linewidth;
+      labelTarget = obj;
     };
     if (this.selectedProp?._outlineHelper) refresh(this.selectedProp._outlineHelper);
     if (this._mainModelHelper)             refresh(this._mainModelHelper);
+
+    if (labelTarget && this._editModeEnabled && this._showLabels) {
+      this._updateSizeLabels(labelTarget);
+    } else {
+      this._clearSizeLabels();
+    }
   }
 
   _addOutline(prop) {
@@ -443,6 +595,7 @@ export class PropManager {
       this._disposeThickOutline(prop._outlineHelper);
       prop._outlineHelper = null;
     }
+    this._clearSizeLabels();
   }
 
   _updatePropTransform(prop) {
@@ -492,6 +645,9 @@ export class PropManager {
     if (this._tcHelper) {
       this._tcHelper.visible = enabled && !!this.transformControls.object;
     }
+    if (this._mainModelHelper) this._mainModelHelper.visible = enabled;
+    if (this.selectedProp?._outlineHelper) this.selectedProp._outlineHelper.visible = enabled;
+    if (!enabled || !this._showLabels) this._clearSizeLabels();
     window.markNeedsRender?.(4);
   }
 

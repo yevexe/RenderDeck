@@ -1144,6 +1144,97 @@ hr {
   gap: 4px;
 }
 
+/* ── Inline rename form (material) ────────────────────────────── */
+.rename-inline-form {
+  display: flex;
+  align-items: stretch;
+  gap: 0;          /* field + confirm share a border — zero gap */
+  margin-top: 5px;
+}
+
+.rename-inline-field {
+  position: relative;
+  flex: 1;
+}
+
+.rename-inline-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 20px 2px 6px;
+  background: #141414;
+  color: #e8e8e8;
+  border: 1px solid #555;
+  border-right: none;            /* merges visually with the confirm button */
+  border-radius: 4px 0 0 4px;
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.rename-inline-input:focus {
+  border-color: #888;
+}
+
+.rename-inline-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  background: #3a3a3a;
+  border: none;
+  border-radius: 50%;
+  color: #999;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.rename-inline-clear:hover {
+  background: #505050;
+  color: #e0e0e0;
+}
+
+/* Confirm (✓) — flush right edge of field, shares left border */
+.rename-inline-confirm {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 120%),
+    #1a1a1a;
+  color: #c8c8c8;
+  border: 1px solid #555;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.15s ease, background 0.15s ease;
+}
+
+.rename-inline-confirm:hover {
+  outline-color: #666;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.16) 0%, rgba(0,0,0,0.18) 100%),
+    #2a2a2a;
+}
+
+.rename-inline-confirm:active {
+  transition: none;
+  background:
+    linear-gradient(to bottom, rgba(0,0,0,0.18) 0%, rgba(255,255,255,0.10) 100%),
+    #1a1a1a;
+}
+
 .material-sections {
   display: flex;
   flex-direction: column;
@@ -1334,7 +1425,9 @@ hr {
 .sc-btn {
   width: 24px;
   height: 24px;
-  background: #1a1a1a;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.18) 120%),
+    #1a1a1a;
   border: 1px solid #444;
   border-radius: 3px;
   color: #ccc;
@@ -1350,7 +1443,9 @@ hr {
 
 .sc-btn:hover {
   border-color: #777;
-  background: #242424;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.18) 0%, rgba(0,0,0,0.20) 100%),
+    #242424;
 }
 
 .sc-btn.sc-active {
@@ -1523,7 +1618,9 @@ hr {
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: rgba(26, 26, 26, 0.88);
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.18) 120%),
+    rgba(26, 26, 26, 0.88);
   border: 1px solid #444;
   border-radius: 6px;
   color: #aaa;
@@ -1532,8 +1629,20 @@ hr {
   backdrop-filter: blur(4px);
 }
 
-.tf-btn:hover { background: rgba(60, 60, 60, 0.92); border-color: #666; color: #fff; }
-.tf-btn--active { background: rgba(28, 68, 28, 0.92) !important; border-color: #4CAF50 !important; color: #4CAF50 !important; }
+.tf-btn:hover {
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.18) 0%, rgba(0,0,0,0.20) 100%),
+    rgba(60, 60, 60, 0.92);
+  border-color: #666;
+  color: #fff;
+}
+.tf-btn--active {
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.22) 100%),
+    rgba(28, 68, 28, 0.92) !important;
+  border-color: #4CAF50 !important;
+  color: #4CAF50 !important;
+}
 
 .tf-btn svg {
   width: 14px;
@@ -1579,6 +1688,59 @@ hr {
   border-radius: 6px;
   padding: 8px 10px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+/* ── Unit toggle buttons (cm/in, Default/Parallel) ─────────── */
+.popup-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 0 0 5px;
+}
+
+.popup-divider {
+  height: 1px;
+  background: #333;
+  margin: 8px 0;
+}
+
+.unit-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.unit-btn {
+  flex: 1;
+  padding: 4px 8px;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.15) 120%),
+    #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #aaa;
+  font-size: 12px;
+  font-family: 'Inter', system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+}
+
+.unit-btn:hover {
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.16) 0%, rgba(0,0,0,0.18) 100%),
+    #2a2a2a;
+  border-color: #666;
+  color: #ddd;
+}
+
+.unit-btn--active {
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.22) 100%),
+    #262626;
+  border-color: #888;
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 0 rgba(0,0,0,0.35);
 }
 
 /* ── Locked toolbar state — dim transform-mode buttons ──────── */

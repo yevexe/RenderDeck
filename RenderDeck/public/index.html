@@ -80,12 +80,35 @@
                   <line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2"/>
                 </svg>
               </button>
+              <div class="tf-sep"></div>
+              <button id="tf-dimensions" class="tf-btn tf-btn--active" title="Toggle Dimension Labels">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                  <line x1="3" y1="21" x2="21" y2="21"/>
+                  <line x1="9" y1="21" x2="9" y2="9"/>
+                  <line x1="15" y1="21" x2="15" y2="9"/>
+                  <line x1="3" y1="14" x2="21" y2="14"/>
+                </svg>
+              </button>
+              <button id="tf-dim-settings" class="tf-btn" title="Dimension Label Settings">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+              </button>
             </div>
 
             <!-- Grid settings popup — shown/hidden by tf-grid-settings button -->
             <div id="grid-settings-popup" class="grid-settings-popup" style="display:none;">
+              <!-- Unit toggle at top -->
+              <p class="popup-section-label">Units</p>
+              <div class="unit-toggle">
+                <button id="unit-cm" class="unit-btn unit-btn--active">cm</button>
+                <button id="unit-in" class="unit-btn">in</button>
+              </div>
+              <div class="popup-divider"></div>
               <div class="control-row">
-                <p class="control-label">Size</p>
+                <p class="control-label">Size (<span id="grid-size-unit-label">cm</span>)</p>
                 <input id="grid-size-slider" class="slider" type="range" min="1" max="100" step="1" value="10">
                 <input id="grid-size-input" class="value-input" type="number" min="1" max="500" step="1" value="10">
               </div>
@@ -98,6 +121,14 @@
                 <p class="control-label">Subdivisions</p>
                 <input id="grid-subdivisions-slider" class="slider" type="range" min="0" max="16" step="1" value="5">
                 <input id="grid-subdivisions-input" class="value-input" type="number" min="0" max="20" step="1" value="5">
+              </div>
+            </div>
+            <!-- Dimension label settings popup -->
+            <div id="dim-settings-popup" class="grid-settings-popup" style="display:none;">
+              <p class="popup-section-label">Label Style</p>
+              <div class="unit-toggle">
+                <button id="dim-style-default" class="unit-btn unit-btn--active">Default</button>
+                <button id="dim-style-parallel" class="unit-btn">Parallel</button>
               </div>
             </div>
           </div>
@@ -460,7 +491,7 @@
           <!-- ===== Setting 3: Material (MeshPhysicalMaterial) ===== -->
           <div id="Setting3" class="tabcontent">
             <div class="tab-panel tab-panel-setting3">
-            <h3>Materials (MeshPhysicalMaterial)</h3>
+            <h3>Materials</h3>
             <hr>
 
             <div class="history-panel hiddenToggleOn">
@@ -489,8 +520,24 @@
             <h4>Preset</h4>
             <div id="material-select" tabindex="0"></div>
 
-            <button class="button-medium" id="add-new-material">New Material</button>
-            <button class="button-medium" id="delete-current-material">Delete Material</button>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              <button class="button-medium" id="add-new-material">New Material</button>
+              <button class="button-medium" id="rename-material">Rename</button>
+              <button class="button-medium" id="delete-current-material">Delete</button>
+              <button class="button-medium" id="load-standard-materials">Load Standard</button>
+            </div>
+
+            <div id="rename-material-form" class="rename-inline-form">
+              <div class="rename-inline-field">
+                <input id="rename-material-input" class="rename-inline-input" type="text" autocomplete="off" spellcheck="false" placeholder="Material name…">
+                <button class="rename-inline-clear" id="rename-material-clear" tabindex="-1" aria-label="Clear">
+                  <svg width="7" height="7" viewBox="0 0 8 8" fill="none"><line x1="1" y1="1" x2="7" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="1" x2="1" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+              <button class="rename-inline-confirm" id="rename-material-confirm" aria-label="Confirm rename">
+                <svg width="13" height="10" viewBox="0 0 13 10" fill="none"><polyline points="1,5 5,9 12,1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
 
             <div class="material-sections">
               <div class="material-section is-open" data-material-section="basic">
@@ -953,6 +1000,24 @@
               <input id="vignette-softness-slider" type="range" min="0" max="1" step="0.01" value="0.6" class="slider">
               <input id="vignette-softness-input" class="value-input" type="number" inputmode="decimal" step="0.01"
                 min="0" max="1" value="0.60">
+            </div>
+
+            <div class="control-row">
+              <p class="control-label">Vignette Color</p>
+              <span id="vignette-color-swatch" class="color-swatch"></span>
+              <input type="color" id="vignette-color-picker" value="#000000">
+              <input type="text"  id="vignette-color-hex"    class="hex-input" value="#000000" maxlength="7">
+            </div>
+
+            <div class="control-row">
+              <p class="control-label">Blend Mode</p>
+              <select id="vignette-blend-mode" class="dropdown" style="flex:1;">
+                <option value="0">Normal</option>
+                <option value="1">Multiply</option>
+                <option value="2">Screen</option>
+                <option value="3">Overlay</option>
+                <option value="4">Luminosity</option>
+              </select>
             </div>
 
             <h4>AO Controls</h4>
