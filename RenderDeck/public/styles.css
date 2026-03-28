@@ -1844,6 +1844,23 @@ hr {
   font-size: 12px;
 }
 
+.custom-select__group-label {
+  padding: 6px 8px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  pointer-events: none;
+  user-select: none;
+}
+
+.custom-select__separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: #333;
+}
+
 .custom-select__thumb {
   flex-shrink: 0;
   width: 22px;

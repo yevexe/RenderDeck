@@ -115,6 +115,31 @@ export class CameraManager {
   }
 
   /**
+   * Keep the current camera azimuth/elevation but re-position it at the
+   * correct distance for the new object. The orbit target moves to the
+   * new object's bounding-box center.
+   * @param {THREE.Object3D} object
+   */
+  reframeObject(object) {
+    if (!object || !this.controls) return;
+
+    const box = new THREE.Box3().setFromObject(object);
+    const newCenter = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const fov = this.camera.fov * (Math.PI / 180);
+    const idealDist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 2;
+
+    // Preserve current look direction (old target → camera, normalized)
+    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+
+    this.camera.position.copy(newCenter).addScaledVector(dir, idealDist);
+    this.controls.target.copy(newCenter);
+    this.controls.update();
+  }
+
+  /**
    * Set camera position
    * @param {number} x
    * @param {number} y
