@@ -20,13 +20,8 @@ export class MaterialManager {
     // (custom models may reference old preset names like 'Wood')
     this._legacyPresets = this._initializeLegacyPresets();
 
-    // Raw params for each JSON preset — used to reset cached instances to defaults
+    // Raw params for each JSON preset — used by _createFresh to build materials
     this._presetParams = {};
-
-    // One material instance per preset, reused across switches.
-    // Reusing the same object means WebGLProgram.getUniforms() stays cached after
-    // the first render (warmup), so subsequent material switches have zero stall.
-    this._instanceCache = new Map();
 
     // User-created presets — stored in localStorage, prepended to the UI list
     this._userPresetNames = [];  // ordered list, newest first
@@ -117,7 +112,7 @@ export class MaterialManager {
    * Create a MeshPhysicalMaterial with full defaults
    */
   createMaterial(name, properties) {
-    return new THREE.MeshPhysicalMaterial({
+    const merged = {
       side: THREE.DoubleSide,
       color: 0xffffff,
       metalness: 0.0,
@@ -139,29 +134,29 @@ export class MaterialManager {
       envMapIntensity: 1.0,
       ...properties,
       name,
-    });
+    };
+    // attenuationDistance: 0 is used as a JSON stand-in for Infinity — restore it
+    if (merged.attenuationDistance === 0 || merged.attenuationDistance === null) {
+      merged.attenuationDistance = Infinity;
+    }
+    // Transmission materials must be transparent to render correctly
+    if (merged.transmission > 0) merged.transparent = true;
+    // Opacity < 1 also needs transparent
+    if (merged.opacity !== undefined && merged.opacity < 1) merged.transparent = true;
+    return new THREE.MeshPhysicalMaterial(merged);
   }
 
   /**
-   * Return the cached material instance for a preset, resetting it to preset defaults first.
-   * Creates and caches the instance on first call.
-   *
-   * Reusing the same object is the key to avoiding WebGLProgram.getUniforms() stalls:
-   * once the warmup renders the instance, Three.js caches all uniform locations on it,
-   * and subsequent renders of that same object skip the expensive first-use path entirely.
+   * Return a fresh material instance for a preset.
+   * Each caller gets its own copy — no shared cache, no contamination.
+   * Warmup pre-compiles shader variants so fresh instances still skip
+   * the WebGLProgram.getUniforms() stall on first render.
    */
   getPreset(name) {
-    if (this._instanceCache.has(name)) {
-      const mat = this._instanceCache.get(name);
-      this._resetToPreset(mat, name);
-      return mat;
-    }
-    const mat = this._createFresh(name);
-    this._instanceCache.set(name, mat);
-    return mat;
+    return this._createFresh(name);
   }
 
-  /** Create a brand-new material instance (bypasses the cache). Public alias for thumbnail use. */
+  /** Alias kept for call sites that explicitly want a fresh copy. */
   createFreshPreset(name) { return this._createFresh(name); }
 
   _createFresh(name) {
@@ -173,51 +168,6 @@ export class MaterialManager {
     return this._legacyPresets.Wood();
   }
 
-  /**
-   * Reset a cached material instance to its preset defaults, then re-apply preset params.
-   * Legacy presets (Wood/Metal/Glass/Plastic) have no stored params so they are left
-   * as-is — their procedural textures are created once and preserved in the instance.
-   */
-  _resetToPreset(material, name) {
-    if (!(name in this._presetParams)) {
-      // Legacy preset — no stored scalar params; return as-is
-      material.needsUpdate = true;
-      return;
-    }
-
-    // Reset every property to createMaterial() defaults
-    material.color.set(0xffffff);
-    material.metalness         = 0.0;
-    material.roughness         = 0.5;
-    material.clearcoat         = 0.0;
-    material.clearcoatRoughness = 0.1;
-    material.specularIntensity  = 1.0;
-    material.specularColor.set(0xffffff);
-    material.transmission      = 0.0;
-    material.ior               = 1.5;
-    material.thickness         = 0.0;
-    material.sheen             = 0.0;
-    material.sheenRoughness    = 1.0;
-    material.sheenColor.set(0xffffff);
-    material.emissive.set(0x000000);
-    material.emissiveIntensity  = 0.0;
-    material.attenuationDistance = Infinity;
-    material.attenuationColor.set(0xffffff);
-    material.envMapIntensity   = 1.0;
-    material.opacity           = 1.0;
-    material.transparent       = false;
-    material.map               = null;
-
-    // Re-apply preset-specific values on top
-    const params = this._presetParams[name];
-    this.applySavedProperties(material, params);
-    // applySavedProperties handles string colors; also cover hex-number colors from JSON
-    if (params.color !== undefined && typeof params.color === 'number') material.color.set(params.color);
-    if (params.map !== undefined) material.map = params.map;
-
-    material.needsUpdate = true;
-  }
-
   /** Returns user presets first, then visible standard presets. */
   getPresetNames() {
     const standard = (this._jsonPresetNames.length > 0
@@ -225,6 +175,15 @@ export class MaterialManager {
       : Object.keys(this._legacyPresets)
     ).filter(n => !this._hiddenStandardPresets.has(n));
     return [...this._userPresetNames, ...standard];
+  }
+
+  /** Returns { user: string[], standard: string[] } for grouped UI display. */
+  getPresetNamesByCategory() {
+    const standard = (this._jsonPresetNames.length > 0
+      ? [...this._jsonPresetNames]
+      : Object.keys(this._legacyPresets)
+    ).filter(n => !this._hiddenStandardPresets.has(n));
+    return { user: [...this._userPresetNames], standard };
   }
 
   /** All standard preset names regardless of hidden state. */
@@ -325,13 +284,6 @@ export class MaterialManager {
     this._presetParams[newName] = params;
     delete this.presets[oldName];
     this.presets[newName] = () => this.createMaterial(newName, params);
-    // Move cached instance if any
-    if (this._instanceCache.has(oldName)) {
-      const mat = this._instanceCache.get(oldName);
-      mat.name = newName;
-      this._instanceCache.delete(oldName);
-      this._instanceCache.set(newName, mat);
-    }
     this._saveUserPresetsToStorage();
     return true;
   }
@@ -343,10 +295,6 @@ export class MaterialManager {
     delete this._userPresetParams[name];
     delete this._presetParams[name];
     delete this.presets[name];
-    if (this._instanceCache.has(name)) {
-      this._instanceCache.get(name).dispose();
-      this._instanceCache.delete(name);
-    }
     this._saveUserPresetsToStorage();
     return true;
   }
@@ -404,7 +352,10 @@ export class MaterialManager {
     if (properties.clearcoatRoughness !== undefined) material.clearcoatRoughness = properties.clearcoatRoughness;
     if (properties.specularIntensity !== undefined) material.specularIntensity = properties.specularIntensity;
     if (properties.specularColor !== undefined) material.specularColor.set(properties.specularColor);
-    if (properties.transmission !== undefined) material.transmission = properties.transmission;
+    if (properties.transmission !== undefined) {
+      material.transmission = properties.transmission;
+      if (properties.transmission > 0) material.transparent = true;
+    }
     if (properties.ior !== undefined) material.ior = properties.ior;
     if (properties.thickness !== undefined) material.thickness = properties.thickness;
     if (properties.attenuationDistance !== undefined) {
@@ -453,22 +404,13 @@ export class MaterialManager {
     };
   }
 
-  /** True if this material is owned by the preset instance cache (must not be disposed). */
-  isOwned(material) {
-    for (const mat of this._instanceCache.values()) {
-      if (mat === material) return true;
-    }
-    return false;
-  }
-
   dispose(material) {
     if (!material) return;
-    // Never dispose cached preset instances — they are reused across material switches
-    if (this.isOwned(material)) return;
+    // envMap is intentionally excluded — it's the scene's shared HDR texture
     const maps = [
       'map', 'normalMap', 'roughnessMap', 'metalnessMap',
       'aoMap', 'emissiveMap', 'bumpMap', 'displacementMap',
-      'alphaMap', 'lightMap', 'envMap', 'clearcoatMap',
+      'alphaMap', 'lightMap', 'clearcoatMap',
       'clearcoatNormalMap', 'clearcoatRoughnessMap',
       'sheenColorMap', 'sheenRoughnessMap',
       'specularIntensityMap', 'specularColorMap',

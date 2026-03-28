@@ -25,8 +25,8 @@ import * as IDBStorage from './storage/indexedDBStorage.js';
 
 // Utils
 import { log, logError, logSuccess, logWarn } from './utils/logger.js';
-import { TextureCompositor } from './utils/TextureCompositor.js';
-import { centerAndFrameModel, cleanupObject } from './utils/helpers.js';
+
+import { cleanupObject } from './utils/helpers.js';
 
 // Config
 import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './config.js';
@@ -127,6 +127,8 @@ const sceneState = new SceneStateManager({
     if ('gradientBgEnabled'  in updates) gradientBgEnabled  = updates.gradientBgEnabled;
     if ('currentGradientBg'  in updates) currentGradientBg  = updates.currentGradientBg;
   },
+  getModelName: () => getCurrentModelName(),
+  loadModel:    (name) => loadModel(name),
 });
 
 const designState = new DesignStateManager({ uvEditor });
@@ -335,10 +337,47 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
   const loadingPaths = await modelManager.getLoadingPaths(modelData.basedOn);
   if (!loadingPaths) { logError(`Base model not found: ${modelData.basedOn}`); return; }
 
+  // Pre-decode overlay images in parallel with OBJ load so decals are ready immediately
+  const overlayPreload = (modelData.overlayImages?.length > 0)
+    ? Promise.all(modelData.overlayImages.map(saved => new Promise(res => {
+        const img = new Image();
+        img.onload = () => res({
+          id:          0,
+          image:       img,
+          name:        saved.name,
+          type:        saved.type     || 'image',
+          textData:    saved.textData ? { ...saved.textData } : null,
+          position:    { ...saved.position },
+          size:        { ...saved.size },
+          rotation:    saved.rotation,
+          aspectRatio: saved.aspectRatio,
+          flipH:       saved.flipH ?? false,
+          flipV:       saved.flipV ?? false,
+        });
+        img.onerror = () => res(null);
+        img.src = saved.imageData;
+      })))
+      .then(results => {
+        let id = 1;
+        return results.filter(Boolean).map(o => ({ ...o, id: id++ }));
+      })
+    : Promise.resolve([]);
+
   const objPath = loadingPaths.obj;
 
-  objLoader.load(objPath, (object) => {
+  objLoader.load(objPath, async (object) => {
     const meshList = [];
+
+    const savedPreset = modelData.materialPreset || 'Default — White';
+    // Explicit flag, or infer: if the preset name isn't a known standard preset, treat as custom
+    const isCustom = modelData.isCustomMaterial === true
+      || (modelData.isCustomMaterial === undefined && !materialManager.isStandardPreset(savedPreset) && savedPreset !== 'Default — White');
+
+    if (isCustom && modelData.materialProperties &&
+        !materialManager.getPresetNames().includes(savedPreset)) {
+      materialManager.addUserPreset(savedPreset, modelData.materialProperties);
+      scheduleThumbnailUpdate(savedPreset, null);
+    }
 
     object.traverse((child) => {
       if (!child.isMesh) return;
@@ -346,7 +385,6 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
       child.receiveShadow = true;
       child.userData.isCustomModel = true;
 
-      // unique naming
       let baseName = child.name || `Part`;
       let uniqueName = baseName;
       let idx = 1;
@@ -360,16 +398,26 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
 
       if (!activeMesh) activeMesh = child;
 
-      const presetName = modelData.materialPreset || 'Default — White';
-      const material = materialManager.getPreset(presetName);
-      materialManager.applyEnvironment(material, sceneManager.getScene().environment);
-      child.material = material;
-
-      if (modelData.materialProperties) {
-        materialManager.applySavedProperties(child.material, modelData.materialProperties);
+      if (isCustom) {
+        // Custom material: start from the global preset then override with this
+        // model's own saved snapshot so two models can share a preset name but
+        // keep independent slider values.
+        const material = materialManager.createFreshPreset(savedPreset);
+        material.name = savedPreset;
+        materialManager.applyEnvironment(material, sceneManager.getScene().environment);
+        if (modelData.materialProperties) {
+          materialManager.applySavedProperties(material, modelData.materialProperties);
+        }
+        child.material = material;
+      } else {
+        // Standard material: use the cached preset
+        const material = materialManager.getPreset(savedPreset);
+        materialManager.applyEnvironment(material, sceneManager.getScene().environment);
+        child.material = material;
+        if (modelData.materialProperties) {
+          materialManager.applySavedProperties(child.material, modelData.materialProperties);
+        }
       }
-
-      // Composite texture is applied by uvEditor.open() after it loads the overlays.
     });
 
     sceneManager.add(object);
@@ -382,22 +430,26 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
     const multi = names.length > 1;
     controls.setEnabled('objectPartSelect', multi);
     controls.setVisible('objectPartSelect', multi);
-    // frame the new model from a top‑right‑corner angle
-    centerAndFrameModel(object, cameraManager, {mode: 'corner'});
     if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
-    // Sync the material dropdown to the custom model's saved preset
-    const matSel = document.getElementById('material-select');
-    const savedPreset = modelData.materialPreset || 'Default — White';
-    if (matSel) matSel.value = savedPreset;
+    updateMaterialPresetList();
+    controls.setMaterialPresetValue(savedPreset);
     log(`${name} loaded.`);
-    // Initialize UV editor for this custom model
+    // Initialize UV editor — images were pre-decoded in parallel with OBJ load
     if (activeMesh) {
-      uvEditor.open(activeMesh, name, savedPreset);
+      const preloadedImages = await overlayPreload;
+      uvEditor.openWithPreloadedData(activeMesh, name, modelData, preloadedImages, savedPreset);
     }
     // Restore the scene/background that was active when this custom model was saved
     if (modelData.sceneState) {
       restoreSceneState(modelData.sceneState);
     }
+    const _customBootLoad = !!_bootCamera;
+    if (_bootCamera) {
+      cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
+      if (_bootCamera.target) cameraManager.setTarget(_bootCamera.target.x, _bootCamera.target.y, _bootCamera.target.z);
+      _bootCamera = null;
+    }
+    if (!_customBootLoad) cameraManager.reframeObject(object);
     markNeedsRender(60);
     if (onLoaded) onLoaded(object);
   },
@@ -405,7 +457,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
   (err) => logError(`OBJ load failed: ${err}`));
 }
 
-async function loadRegularModel(name, modelData, onLoaded = null) {
+async function loadRegularModel(name, _modelData, onLoaded = null) {
   log(`Loading ${name}…`);
   const loadingPaths = await modelManager.getLoadingPaths(name);
   if (!loadingPaths) { logError(`No paths for ${name}`); return; }
@@ -446,16 +498,13 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       activeModel = object;
       propManager.setMainModel(activeModel);
       applyTexQualityToObject(object);
+      const _glbBootLoad = !!_bootCamera;
       if (_bootCamera) {
-        // Restore saved camera immediately so there's no default→saved snap.
         cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
         if (_bootCamera.target) cameraManager.setTarget(_bootCamera.target.x, _bootCamera.target.y, _bootCamera.target.z);
         _bootCamera = null;
-      } else {
-        centerAndFrameModel(object, cameraManager, {mode: 'corner'});
       }
-      // Pre-compile the real mesh shader variants so the first rendered frame
-      // doesn't stall on onFirstUse (absorbs the cost into the loading wait).
+      if (!_glbBootLoad) cameraManager.reframeObject(object);
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
       if (activeMesh) uvEditor.open(activeMesh, name, 'Default — White');
@@ -503,15 +552,14 @@ async function loadRegularModel(name, modelData, onLoaded = null) {
       activeModel = object;
       propManager.setMainModel(activeModel);
       applyTexQualityToObject(object);
+      const _objBootLoad = !!_bootCamera;
       if (_bootCamera) {
-        // Restore saved camera immediately so there's no default→saved snap.
         cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
         if (_bootCamera.target) cameraManager.setTarget(_bootCamera.target.x, _bootCamera.target.y, _bootCamera.target.z);
         _bootCamera = null;
-      } else {
-        centerAndFrameModel(object, cameraManager, {mode: 'corner'});
       }
-      applyMaterialPreset(materialManager.getPresetNames()[0] || 'Default — White');
+      if (!_objBootLoad) cameraManager.reframeObject(object);
+      applyMaterialPreset('Default — White');
       // Pre-compile the real mesh shader variants so the first rendered frame
       // doesn't stall on onFirstUse (absorbs the cost into the loading wait).
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
@@ -564,6 +612,13 @@ function cleanupActiveModel() {
 
     propManager.setMainModel(null);
     sceneManager.remove(activeModel);
+    // Detach cached materials before cleanup so they aren't disposed
+    activeModel.traverse(child => {
+      if (child.isMesh && child.material) {
+        materialManager.dispose(child.material);
+        child.material = null;
+      }
+    });
     cleanupObject(activeModel);
     activeModel = null;
     activeMesh = null;
@@ -636,7 +691,7 @@ function _ensureThumbRenderer() {
   _thumbCamera.lookAt(0, 0, 0);
 
   _thumbScene = new THREE.Scene();
-  const domeMat = new THREE.MeshBasicMaterial({ color: 0x252525, side: THREE.BackSide });
+  const domeMat = new THREE.MeshBasicMaterial({ color: 0x606060, side: THREE.BackSide });
   _thumbScene.add(new THREE.Mesh(new THREE.SphereGeometry(8, 32, 16), domeMat));
   _thumbSphereMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 48));
   _thumbScene.add(_thumbSphereMesh);
@@ -665,6 +720,8 @@ async function warmupAndGenerateThumbnails() {
   const env = sceneManager.getScene().environment;
   _warmupScene.environment          = env ?? null;
   _warmupScene.environmentIntensity = env ? 0.6 : 0;
+  _thumbScene.environment           = env ?? null;
+  _thumbScene.environmentIntensity  = env ? 0.4 : 0;
 
   const warmupTarget = new THREE.WebGLRenderTarget(1, 1);
 
@@ -685,10 +742,11 @@ async function warmupAndGenerateThumbnails() {
     renderer.setRenderTarget(warmupTarget);
     renderer.setClearColor(0x252525, 1);
 
-    const mat = materialManager.getPreset(name);
+    const mat = materialManager.createFreshPreset(name);
     if (env) materialManager.applyEnvironment(mat, env);
     _warmupSphereMesh.material = mat;
     renderer.render(_warmupScene, _warmupCamera);
+    mat.dispose();
 
     // Restore renderer state
     renderer.setRenderTarget(prevTarget);
@@ -751,108 +809,49 @@ function applyMaterialPreset(presetName) {
   controls.setMaterialPresetValue(presetName);
   setMaterialNameField(presetName);
 
-  // Compile the new material against the real mesh geometry so the first
-  // render doesn't stall on onFirstUse for this shader variant.
-  const renderer = rendererManager.getRenderer();
-  if (renderer) renderer.compile(sceneManager.getScene(), cameraManager.getCamera());
-
-  markNeedsRender(4);
+  // Render immediately so transmission materials create their internal
+  // render target on the first frame (compile() alone doesn't do this).
+  rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
+  markNeedsRender(8);
   log(`Preset: ${presetName}`);
 }
 
-/**
- * If the active mesh is using a standard preset, fork it into a new user preset so the
- * original remains immutable. User presets are never forked — they are edited in place.
- * Called before any property edit.
- */
-function ensureMaterialIsMutable() {
-  if (!activeMesh?.material) return;
-  // Only standard (read-only) presets need forking; user presets are already standalone.
-  if (!materialManager.isStandardPreset(activeMesh.material.name)) return;
 
-  const sourceName = activeMesh.material.name || 'Custom';
-  const newName = materialManager.generateUserPresetName(sourceName);
-  const forked  = materialManager.forkMaterial(activeMesh.material, newName);
-
-  const env = sceneManager.getScene().environment;
-  materialManager.applyEnvironment(forked, env);
-  activeMesh.material = forked;
-
-  materialManager.addUserPreset(newName, materialManager.extractProperties(forked));
-  updateMaterialPresetList();
-  controls.setMaterialPresetValue(newName);
-  setMaterialNameField(newName);
-  scheduleThumbnailUpdate(newName, forked);
-  log(`Forked "${sourceName}" → "${newName}"`);
+// Extract material properties with sticker PBR overrides temporarily restored
+// so the saved preset reflects real values, not the sticker-overridden ones.
+function extractPropertiesForPreset(mat) {
+  const stickerActive = uvEditor._origMetalness !== null;
+  if (stickerActive) {
+    mat.metalness = uvEditor._origMetalness;
+    mat.roughness = uvEditor._origRoughness;
+    if (uvEditor._origTransmission !== null) mat.transmission = uvEditor._origTransmission;
+    if (uvEditor._origColor && mat.color) mat.color.set(uvEditor._origColor);
+  }
+  const props = materialManager.extractProperties(mat);
+  if (stickerActive) {
+    mat.metalness = 1.0;
+    mat.roughness = 1.0;
+    if (uvEditor._origTransmission > 0) mat.transmission = 1.0;
+    if (mat.color) mat.color.set(0xffffff);
+  }
+  return props;
 }
 
-// ── Slider-drag deferral ──────────────────────────────────────────────────────
-// While a range slider is held down we skip fork/thumbnail/name work and only
-// apply raw values. On pointerup we do all the deferred work exactly once.
-let _sliderDragging     = false;
-let _pendingMaterialEdit = false;
-
-document.addEventListener('pointerdown', (e) => {
-  if (e.target.matches('input[type=range]')) _sliderDragging = true;
-});
-document.addEventListener('pointerup', () => {
-  if (!_sliderDragging) return;
-  _sliderDragging = false;
-  if (!_pendingMaterialEdit) return;
-  _pendingMaterialEdit = false;
-  if (!activeMesh?.material) return;
-  // Fork now (if still on a standard preset) and persist + thumbnail.
-  ensureMaterialIsMutable();
-  const mat = activeMesh.material;
-  if (materialManager.isUserPreset(mat.name)) {
-    materialManager.updateUserPresetParams(mat.name, materialManager.extractProperties(mat));
-    scheduleThumbnailUpdate(mat.name, mat);
-  }
-});
 
 function updateMaterialProperty(property, value) {
   if (!activeMesh?.material) return;
-
-  if (_sliderDragging) {
-    // Fast path while dragging: apply the value directly, defer all expensive work.
-    const mat = activeMesh.material;
-    const colorProps = ['color', 'specularColor', 'sheenColor', 'emissive', 'attenuationColor'];
-    if (colorProps.includes(property)) {
-      if (property === 'color') { const h = uvEditor.updateMaterialColor(value); if (!h) mat.color.set(value); }
-      else mat[property].set(value);
-    } else {
-      const h = uvEditor.updateMaterialPBR(property, value);
-      if (!h) mat[property] = value;
-    }
-    if (property === 'opacity')     mat.transparent = value < 1.0;
-    if (property === 'transmission') mat.transparent = value > 0;
-    mat.needsUpdate = true;
-    _pendingMaterialEdit = true;
-    return;
-  }
-
-  ensureMaterialIsMutable();
   const mat = activeMesh.material;
   const colorProps = ['color', 'specularColor', 'sheenColor', 'emissive', 'attenuationColor'];
   if (colorProps.includes(property)) {
-    if (property === 'color') {
-      const handled = uvEditor.updateMaterialColor(value);
-      if (!handled) mat.color.set(value);
-    } else {
-      mat[property].set(value);
-    }
+    if (property === 'color') { const h = uvEditor.updateMaterialColor(value); if (!h) mat.color.set(value); }
+    else mat[property].set(value);
   } else {
-    const handled = uvEditor.updateMaterialPBR(property, value);
-    if (!handled) mat[property] = value;
+    const h = uvEditor.updateMaterialPBR(property, value);
+    if (!h) mat[property] = value;
   }
-  if (property === 'opacity') mat.transparent = value < 1.0;
+  if (property === 'opacity')      mat.transparent = value < 1.0;
   if (property === 'transmission') mat.transparent = value > 0;
   mat.needsUpdate = true;
-
-  if (materialManager.isUserPreset(mat.name)) {
-    materialManager.updateUserPresetParams(mat.name, materialManager.extractProperties(mat));
-    scheduleThumbnailUpdate(mat.name, mat);
-  }
 }
 
 //═══════════════════════════════════════════════════════════════
@@ -1132,7 +1131,10 @@ const controls = new ControlsManager({
     }
   },
 
-  onModelChange: (name) => loadModel(name),
+  onModelChange: (name) => {
+    pushSceneHistory(`Object → ${name}`);
+    loadModel(name);
+  },
 
   onPartChange: (partName) => {
     if (!partName) return;
@@ -1141,7 +1143,7 @@ const controls = new ControlsManager({
       activeMesh = mesh;
       if (activeMesh.material) controls.syncMaterialUI(activeMesh.material);
       uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
-      cameraManager.frameObject(activeMesh, {mode: 'corner'});
+      cameraManager.reframeObject(activeMesh);
     }
   },
 
@@ -1256,9 +1258,7 @@ const controls = new ControlsManager({
       logSuccess(`Cleared ${result.count} custom model(s)`);
       await updateModelList();
 
-      // Reset the material preset dropdown to its placeholder
-      const matSelect = document.getElementById('material-select');
-      if (matSelect) matSelect.selectedIndex = 0;
+      controls.setMaterialPresetValue('Default — White');
 
       // Load the first built-in model — this applies the Default preset
       if (STANDARD_OBJECTS.length > 0) {
@@ -1348,7 +1348,7 @@ function selectPart(mesh) {
     }
   }
   uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
-  cameraManager.frameObject(activeMesh, {mode: 'corner'});
+  cameraManager.reframeObject(activeMesh);
   const sel = controls.elements.objectPartSelect;
   if (sel) sel.value = mesh.name;
   const designSel = document.getElementById('design-part-select');
@@ -1362,7 +1362,7 @@ function getCurrentModelName() {
 }
 
 function getCurrentMaterialPreset() {
-  return document.getElementById('material-select')?.value || 'Default — White';
+  return controls.getMaterialPresetValue();
 }
 
 function waitForModelReady(timeoutMs = 12000) {
@@ -1393,6 +1393,7 @@ function saveSessionState() {
       partName: activeMesh?.name || null,
       sceneName: controls?.elements?.sceneSelect?.value || null,
       materialPreset: uvEditor.currentMaterialPreset || getCurrentMaterialPreset() || null,
+      isCustomMaterial: materialManager.isUserPreset(uvEditor.currentMaterialPreset || getCurrentMaterialPreset()),
       materialProperties: (() => {
         if (!activeMesh?.material) return null;
         const mat = activeMesh.material;
@@ -1529,11 +1530,18 @@ async function restoreSessionState() {
       }
     } catch (_) { /* ignore */ }
     if (restoredPreset) {
-      applyMaterialPreset(restoredPreset); // also calls setMaterialPresetValue + markNeedsRender
+      const alreadyCorrect = activeMesh?.material?.name === restoredPreset;
+      if (!alreadyCorrect) {
+        applyMaterialPreset(restoredPreset);
+      } else {
+        controls.setMaterialPresetValue(restoredPreset);
+      }
     }
     if (state.materialProperties && activeMesh?.material) {
       materialManager.applySavedProperties(activeMesh.material, state.materialProperties);
+      activeMesh.material.needsUpdate = true;
       controls.syncMaterialUI(activeMesh.material);
+      markNeedsRender(4);
     }
 
     // Restore unsaved design editor overlays
@@ -1606,15 +1614,8 @@ function scheduleThumbnailUpdate(name, mat) {
   const render = () => {
     _pendingThumbUpdates.delete(name);
     _ensureThumbRenderer();
-    const env = sceneManager.getScene().environment;
-    // If no live material was supplied, create a fresh disposable copy
     const owned = !!mat;
     const m = owned ? mat : materialManager.createFreshPreset(name);
-    if (env) {
-      _thumbScene.environment          = env;
-      _thumbScene.environmentIntensity = 0.6;
-      materialManager.applyEnvironment(m, env);
-    }
     _thumbSphereMesh.material = m;
     _thumbRenderer.render(_thumbScene, _thumbCamera);
     _matThumbCache.set(name, _thumbRenderer.domElement.toDataURL());
@@ -1646,9 +1647,9 @@ function scheduleAllMissingThumbnails() {
 
 function updateMaterialPresetList() {
   controls.updateMaterialPresetSelect(
-    materialManager.getPresetNames(),
+    materialManager.getPresetNamesByCategory(),
     getMaterialThumbnail,
-    () => currentEnvironment   // env key — triggers re-render on hover when env changes
+    () => currentEnvironment
   );
 }
 
@@ -1661,7 +1662,7 @@ document.getElementById('add-new-material')?.addEventListener('click', () => {
   const env     = sceneManager.getScene().environment;
   materialManager.applyEnvironment(forked, env);
   activeMesh.material = forked;
-  materialManager.addUserPreset(newName, materialManager.extractProperties(forked));
+  materialManager.addUserPreset(newName, extractPropertiesForPreset(forked));
   updateMaterialPresetList();
   controls.setMaterialPresetValue(newName);
   setMaterialNameField(newName);
@@ -1686,7 +1687,7 @@ function _resetRenameField() {
 }
 
 function _commitRename() {
-  const current = activeMesh?.material?.name;
+  const current = controls.getMaterialPresetValue();
   const newName = _renameInput.value.trim();
   if (!newName || !current || newName === current) { _resetRenameField(); return; }
   if (materialManager.getPresetNames().includes(newName)) {
@@ -1701,7 +1702,7 @@ function _commitRename() {
     const forked = materialManager.forkMaterial(activeMesh.material, newName);
     materialManager.applyEnvironment(forked, sceneManager.getScene().environment);
     activeMesh.material = forked;
-    materialManager.addUserPreset(newName, materialManager.extractProperties(forked));
+    materialManager.addUserPreset(newName, extractPropertiesForPreset(forked));
     scheduleThumbnailUpdate(newName, forked);
     log(`Forked "${current}" → "${newName}"`);
   } else {
@@ -1717,6 +1718,7 @@ function _commitRename() {
   updateMaterialPresetList();
   controls.setMaterialPresetValue(newName);
   setMaterialNameField(newName);
+  uvEditor.currentMaterialPreset = newName;
 }
 
 // Rename button → focus + select so the user can start typing immediately
@@ -1734,19 +1736,16 @@ _renameInput?.addEventListener('keydown', (e) => {
 });
 
 document.getElementById('delete-current-material')?.addEventListener('click', () => {
-  const current = activeMesh?.material?.name;
+  const current = controls.getMaterialPresetValue();
   if (!current) return;
   if (!confirm(`Remove "${current}" from the list?`)) return;
 
-  // Switch away first so the mesh isn't left with a dead material
   const fallback = materialManager.getPresetNames().find(n => n !== current);
   if (fallback) applyMaterialPreset(fallback);
 
   if (materialManager.isStandardPreset(current)) {
-    // Standard presets are soft-deleted (hidden) — restored via Load Standard Materials
     materialManager.hideStandardPreset(current);
   } else if (!materialManager.deleteUserPreset(current)) {
-    // Untracked forked material — dispose directly
     materialManager.dispose(activeMesh?.material);
   }
   _matThumbCache.delete(current);
@@ -1759,6 +1758,15 @@ document.getElementById('load-standard-materials')?.addEventListener('click', ()
   updateMaterialPresetList();
   scheduleAllMissingThumbnails();
   log('Standard materials restored');
+});
+
+document.getElementById('reset-cache-btn')?.addEventListener('click', () => {
+  if (!confirm('Clear all caches? This will remove custom materials and saved models. The page will reload.')) return;
+  localStorage.removeItem('rd_user_presets');
+  localStorage.removeItem('rd_hidden_presets');
+  localStorage.removeItem('rd_session_boot');
+  indexedDB.deleteDatabase('renderDeck_customModels');
+  location.reload();
 });
 
 window.updateModelSelect = updateModelList;

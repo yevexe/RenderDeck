@@ -410,6 +410,51 @@ export class UVEditor {
     if (wasCheckUVActive) this._toggleCheckUV();
   }
 
+  // ─── Open with already-decoded overlay images (skips DB read + image decode) ─
+  openWithPreloadedData(mesh, originalModelName, modelData, preloadedImages, currentMaterialPreset = 'Default — White') {
+    if (this.activeMesh === mesh && this.activeModelName === (modelData.basedOn || originalModelName)) return;
+
+    const wasCheckUVActive = this._uvCheckActive;
+    this._deactivateCheckUV();
+    this._uvPreviewEnabled = false;
+    this._materialBaseColor = null;
+    this._removeStickerPBRMaps();
+    const pvBtn = document.getElementById('preview-uv-btn');
+    if (pvBtn) pvBtn.classList.remove('button-selected');
+
+    this.activeMesh = mesh;
+    this.activeModelName = modelData.basedOn || originalModelName;
+    this.customModelName = originalModelName;
+    this.currentMaterialPreset = modelData.materialPreset || currentMaterialPreset;
+    this.overlayImages = preloadedImages;
+    this.nextImageId = preloadedImages.length + 1;
+    this.baseTexture = null;
+    this._materialBaseColor = mesh.material?.color
+      ? ('#' + mesh.material.color.getHexString())
+      : '#ffffff';
+    this.liveCanvasTexture = null;
+
+    this._updateLayersList();
+    this._renderPreview();
+    this.log(`Design Editor active for: ${originalModelName}`);
+
+    if (preloadedImages.length > 0) {
+      this._renderComposite();
+      const texture = new THREE.CanvasTexture(this.textureCanvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      this.liveCanvasTexture = texture;
+      if (mesh.material) {
+        mesh.material.map = texture;
+        this._applyStickerPBRMaps(mesh.material);
+        mesh.material.needsUpdate = true;
+      }
+      window.markNeedsRender?.(4);
+    }
+
+    if (wasCheckUVActive) this._toggleCheckUV();
+  }
+
   // ─── Keep old show() as alias for backward compat ────────────
   show(mesh, modelName, preset) {
     return this.open(mesh, modelName, preset);
@@ -1277,12 +1322,18 @@ export class UVEditor {
       };
     }));
 
+    const presetName = this.currentMaterialPreset;
+    const isCustom = this.materialManager
+      ? this.materialManager.isUserPreset(presetName)
+      : false;
+
     await this.modelManager.saveCustomModel(this.customModelName, {
       basedOn: this.activeModelName,
       customName: this.customModelName,
       overlayImages: serializedImages,
       materialProperties,
-      materialPreset: this.currentMaterialPreset,
+      materialPreset: presetName,
+      isCustomMaterial: isCustom,
       sceneState: this.sceneState || null,
     });
 
@@ -1544,12 +1595,7 @@ export class UVEditor {
     else img.flipV = !img.flipV;
     this._renderPreview();
     this._renderComposite();
-    // Update PBR maps so decal area tracks the flipped position
-    if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
-      this._renderStickerPBRMaps();
-      if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
-      if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
-    }
+    this._updateStickerPBRIfActive();
     window.markNeedsRender?.(4);
     this.onCommit?.(`Flipped ${axis === 'h' ? 'horizontal' : 'vertical'}`);
   }

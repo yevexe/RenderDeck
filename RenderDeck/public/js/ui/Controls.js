@@ -132,42 +132,61 @@ export class CustomSelect {
    * @param {() => string} [getEnvKey] — returns a key identifying current environment
    */
   populate(items, getThumbnail, getEnvKey) {
-    this._items          = items;
+    this._items          = Array.isArray(items) ? items
+                           : (items.groups || []).flatMap(g => g.items);
     this._getThumbnailFn = getThumbnail ?? null;
     this._getEnvKeyFn    = getEnvKey   ?? null;
     this._lastEnvKey     = getEnvKey?.();
     this._thumbMap.clear();
     this._dropdown.innerHTML = '';
 
-    items.forEach(name => {
-      const opt = document.createElement('div');
-      opt.className = 'custom-select__option';
-      opt.dataset.value = name;
-      if (name === this._value) opt.classList.add('is-active');
+    // Support grouped items: { groups: [{ label, items }] } or flat string[]
+    const groups = Array.isArray(items)
+      ? [{ label: null, items }]
+      : (items.groups || []);
 
-      // Thumbnail LEFT, label RIGHT  — initial render at 32 px (low cost)
-      if (getThumbnail) {
-        const dataUrl = getThumbnail(name, 32);
-        if (dataUrl) {
-          this._thumbMap.set(name, dataUrl);
-          const img = document.createElement('img');
-          img.className = 'custom-select__thumb';
-          img.src = dataUrl;
-          img.alt = '';
-          opt.appendChild(img);
-        }
+    groups.forEach((group, gi) => {
+      if (group.label && group.items.length > 0) {
+        const header = document.createElement('div');
+        header.className = 'custom-select__group-label';
+        header.textContent = group.label;
+        this._dropdown.appendChild(header);
       }
 
-      const label = document.createElement('span');
-      label.className = 'custom-select__option-label';
-      label.textContent = name;
-      opt.appendChild(label);
+      group.items.forEach(name => {
+        const opt = document.createElement('div');
+        opt.className = 'custom-select__option';
+        opt.dataset.value = name;
+        if (name === this._value) opt.classList.add('is-active');
 
-      opt.addEventListener('click', () => this._select(name));
-      this._dropdown.appendChild(opt);
+        if (getThumbnail) {
+          const dataUrl = getThumbnail(name, 32);
+          if (dataUrl) {
+            this._thumbMap.set(name, dataUrl);
+            const img = document.createElement('img');
+            img.className = 'custom-select__thumb';
+            img.src = dataUrl;
+            img.alt = '';
+            opt.appendChild(img);
+          }
+        }
+
+        const label = document.createElement('span');
+        label.className = 'custom-select__option-label';
+        label.textContent = name;
+        opt.appendChild(label);
+
+        opt.addEventListener('click', () => this._select(name));
+        this._dropdown.appendChild(opt);
+      });
+
+      if (gi < groups.length - 1 && group.items.length > 0) {
+        const sep = document.createElement('div');
+        sep.className = 'custom-select__separator';
+        this._dropdown.appendChild(sep);
+      }
     });
 
-    // Refresh trigger thumbnail in case value was already set before populate
     this._setTriggerThumb(this._value);
   }
 
@@ -762,12 +781,16 @@ export class ControlsManager {
 
   /**
    * Populate the material preset dropdown (Setting 3).
-   * @param {string[]} presetNames
-   * @param {(name: string) => string|null} [getThumbnail] — optional thumbnail data-URL factory
+   * @param {{ user: string[], standard: string[] }} categories
+   * @param {(name: string) => string|null} [getThumbnail]
+   * @param {() => string} [getEnvKey]
    */
-  updateMaterialPresetSelect(presetNames, getThumbnail, getEnvKey) {
+  updateMaterialPresetSelect(categories, getThumbnail, getEnvKey) {
     if (!this._matSelect) return;
-    this._matSelect.populate(presetNames, getThumbnail, getEnvKey);
+    const groups = [];
+    if (categories.user?.length)     groups.push({ label: 'Custom Materials',  items: categories.user });
+    if (categories.standard?.length) groups.push({ label: 'Standard Materials', items: categories.standard });
+    this._matSelect.populate({ groups }, getThumbnail, getEnvKey);
   }
 
   /**
@@ -850,6 +873,11 @@ export class ControlsManager {
   /** Sync the custom material dropdown to show a preset without firing onChange. */
   setMaterialPresetValue(name) {
     if (this._matSelect) this._matSelect.value = name;
+  }
+
+  /** Read the currently selected material preset name from the dropdown. */
+  getMaterialPresetValue() {
+    return this._matSelect ? this._matSelect.value : 'Default — White';
   }
 
   setEnabled(elementName, enabled) {

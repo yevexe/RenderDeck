@@ -94,7 +94,7 @@ export const FEATURES = {
   ENABLE_CUSTOM_MODELS: true,
   ENABLE_MODEL_EXPORT: true,
   ENABLE_MODEL_IMPORT: true,
-  ENABLE_UNDO_REDO: false,
+  ENABLE_UNDO_REDO: true,
   ENABLE_LAYER_ORDERING: false
 };
 

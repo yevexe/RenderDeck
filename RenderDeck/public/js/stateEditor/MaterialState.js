@@ -115,10 +115,9 @@ export class MaterialStateManager {
         if (mesh.material.color) mesh.material.color.set(0xffffff);
       }
 
-      // Update preset dropdown to match restored state
       if (state.presetName) {
-        const matSel = document.getElementById('material-select');
-        if (matSel) matSel.value = state.presetName;
+        mesh.material.name = state.presetName;
+        this.getControls()?.setMaterialPresetValue(state.presetName);
       }
 
       this.markNeedsRender(4);

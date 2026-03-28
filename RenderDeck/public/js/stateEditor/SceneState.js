@@ -1,4 +1,4 @@
-// SceneState.js — undo/redo for scene: environment, background, props, main model transform
+// SceneState.js — undo/redo for scene: environment, background, props, main model, object selection
 
 import { HistoryManager } from '../ui/HistoryManager.js';
 import { renderHistoryList } from './historyUtils.js';
@@ -13,8 +13,10 @@ export class SceneStateManager {
    * @param {function} deps.markNeedsRender  - markNeedsRender(frames)
    * @param {function} deps.getEnv           - () => { currentEnvironment, currentEnvTexture, showEnvBackground, gradientBgEnabled, currentGradientBg }
    * @param {function} deps.setEnv           - (updates) => void  — writes back into main.js scope
+   * @param {function} deps.getModelName     - () => string  — current object/model name
+   * @param {function} deps.loadModel        - (name) => void — switch to a different object
    */
-  constructor({ propManager, sceneManager, loadScene, applyBackground, markNeedsRender, getEnv, setEnv }) {
+  constructor({ propManager, sceneManager, loadScene, applyBackground, markNeedsRender, getEnv, setEnv, getModelName, loadModel }) {
     this.propManager     = propManager;
     this.sceneManager    = sceneManager;
     this.loadScene       = loadScene;
@@ -22,6 +24,10 @@ export class SceneStateManager {
     this.markNeedsRender = markNeedsRender;
     this.getEnv          = getEnv;
     this.setEnv          = setEnv;
+    this.getModelName    = getModelName  || (() => '');
+    this.loadModel       = loadModel     || (() => {});
+
+    this._restoringModel = false;
 
     this.history = new HistoryManager(50);
     this.history.onChange(() => this.updateUI());
@@ -31,6 +37,7 @@ export class SceneStateManager {
   snapshot() {
     const env = this.getEnv();
     return {
+      modelName:          this.getModelName(),
       sceneName:          env.currentEnvironment,
       showEnvBackground:  env.showEnvBackground,
       gradientBgEnabled:  env.gradientBgEnabled,
@@ -46,12 +53,23 @@ export class SceneStateManager {
   }
 
   push(label) {
+    if (this._restoringModel) return;
     this.history.push(this.snapshot(), label);
   }
 
   // ── Restore ─────────────────────────────────────────────────────
   async restore(state) {
     if (!state) return;
+
+    // Restore object selection if changed
+    const currentModel = this.getModelName();
+    if (state.modelName && state.modelName !== currentModel) {
+      const modelSel = document.getElementById('object-select') || document.getElementById('model-select');
+      if (modelSel) modelSel.value = state.modelName;
+      this._restoringModel = true;
+      await this.loadModel(state.modelName);
+      this._restoringModel = false;
+    }
 
     const env = this.getEnv();
     const envChanged = state.sceneName && state.sceneName !== env.currentEnvironment;
