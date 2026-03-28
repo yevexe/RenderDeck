@@ -47,8 +47,9 @@ export class CustomModelStorage {
       const metadata = {
         basedOn: modelData.basedOn,
         customName: modelData.customName,
-        materialPreset: modelData.materialPreset || 'Default — White', // Save the preset!
-        materialProperties: modelData.materialProperties || {}, // Save properties too
+        materialPreset: modelData.materialPreset || 'Default — White',
+        materialProperties: modelData.materialProperties || {},
+        isCustomMaterial: modelData.isCustomMaterial || false,
         createdDate: new Date().toISOString(),
         lastModified: new Date().toISOString(),
         version: 2, // v2 = overlay-based, not baked
@@ -125,8 +126,9 @@ export class CustomModelStorage {
       return {
         basedOn: metadata.basedOn,
         customName: metadata.customName,
-        materialPreset: metadata.materialPreset, // Return the preset!
-        materialProperties: metadata.materialProperties, // Return properties!
+        materialPreset: metadata.materialPreset,
+        materialProperties: metadata.materialProperties,
+        isCustomMaterial: metadata.isCustomMaterial || false,
         createdDate: metadata.createdDate,
         lastModified: metadata.lastModified,
         overlayImages: overlayImages,

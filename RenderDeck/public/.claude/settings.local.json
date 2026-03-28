@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -rn \"material-delete\\\\|onMaterialDelete\\\\|deleteUserPreset\\\\|preset.*delete\" c:Usersgeorgeg12OneDriveDesktopRenderDeck-mainRenderDeckRenderDeckpublicjs --include=*.js)",
+      "Bash(grep -rn \"onMaterialSave\\\\|onMaterialRename\\\\|material.*save\\\\|material.*rename\" c:Usersgeorgeg12OneDriveDesktopRenderDeck-mainRenderDeckRenderDeckpublicjs --include=*.js)",
+      "Bash(find c:Usersgeorgeg12OneDriveDesktopRenderDeck-mainRenderDeckRenderDeckpublic -name *.html)"
+    ]
+  }
+}
