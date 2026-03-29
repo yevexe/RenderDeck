@@ -712,6 +712,80 @@
                   <span class="material-section-chevron" aria-hidden="true"></span>
                 </button>
                 <div class="material-section-content" id="material-advanced-content">
+
+                  <!-- Anisotropy -->
+                  <h4>Anisotropy</h4>
+                  <div class="control-row">
+                    <p class="control-label">Strength</p>
+                    <input id="anisotropy-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
+                    <input id="anisotropy-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+                  </div>
+                  <div class="control-row">
+                    <p class="control-label">Rotation</p>
+                    <input id="anisotropy-rotation-slider" class="slider" type="range" min="0" max="6.283" step="0.01" value="0.00">
+                    <input id="anisotropy-rotation-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="6.283" value="0.00">
+                  </div>
+                  <div class="control-row material-map-row">
+                    <p class="control-label">Anisotropy Map</p>
+                    <span id="anisotropyMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+
+                  <!-- Iridescence -->
+                  <h4>Iridescence</h4>
+                  <div class="control-row">
+                    <p class="control-label">Intensity</p>
+                    <input id="iridescence-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
+                    <input id="iridescence-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+                  </div>
+                  <div class="control-row">
+                    <p class="control-label">IOR</p>
+                    <input id="iridescence-ior-slider" class="slider" type="range" min="1.0" max="2.333" step="0.001" value="1.30">
+                    <input id="iridescence-ior-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="1.0" max="2.333" value="1.30">
+                  </div>
+                  <div class="control-row">
+                    <p class="control-label">Thickness Min</p>
+                    <input id="iridescence-thickness-min-slider" class="slider" type="range" min="0" max="1000" step="1" value="100">
+                    <input id="iridescence-thickness-min-input" class="value-input" type="number" inputmode="decimal" step="1" min="0" max="1000" value="100">
+                  </div>
+                  <div class="control-row">
+                    <p class="control-label">Thickness Max</p>
+                    <input id="iridescence-thickness-max-slider" class="slider" type="range" min="0" max="1000" step="1" value="400">
+                    <input id="iridescence-thickness-max-input" class="value-input" type="number" inputmode="decimal" step="1" min="0" max="1000" value="400">
+                  </div>
+                  <div class="control-row material-map-row">
+                    <p class="control-label">Iridescence Map</p>
+                    <span id="iridescenceMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+                  <div class="control-row material-map-row">
+                    <p class="control-label">Thickness Map</p>
+                    <span id="iridescenceThicknessMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+
+                  <!-- Dispersion -->
+                  <h4>Dispersion</h4>
+                  <div class="control-row">
+                    <p class="control-label">Dispersion</p>
+                    <input id="dispersion-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
+                    <input id="dispersion-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+                  </div>
+
+                  <!-- Reflectivity -->
+                  <h4>Reflectivity</h4>
+                  <div class="control-row">
+                    <p class="control-label">Reflectivity</p>
+                    <input id="reflectivity-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.50">
+                    <input id="reflectivity-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.50">
+                  </div>
+
+                  <!-- Sheen intensity -->
+                  <h4>Sheen</h4>
+                  <div class="control-row">
+                    <p class="control-label">Sheen</p>
+                    <input id="sheen-slider" class="slider" type="range" min="0" max="1" step="0.01" value="0.00">
+                    <input id="sheen-input" class="value-input" type="number" inputmode="decimal" step="0.01" min="0" max="1" value="0.00">
+                  </div>
+
+                  <!-- Channel Maps -->
                   <h4>Channel Maps</h4>
 
                   <div class="control-row material-map-row">
@@ -725,8 +799,23 @@
                   </div>
 
                   <div class="control-row material-map-row">
+                    <p class="control-label">Specular Intensity</p>
+                    <span id="specularIntensityMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+
+                  <div class="control-row material-map-row">
                     <p class="control-label">Clearcoat</p>
                     <span id="clearcoatMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+
+                  <div class="control-row material-map-row">
+                    <p class="control-label">Clearcoat Roughness</p>
+                    <span id="clearcoatRoughnessMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+
+                  <div class="control-row material-map-row">
+                    <p class="control-label">Clearcoat Normal</p>
+                    <span id="clearcoatNormalMap-channel-anchor" class="channel-anchor"></span>
                   </div>
 
                   <div class="control-row material-map-row">
@@ -740,8 +829,18 @@
                   </div>
 
                   <div class="control-row material-map-row">
+                    <p class="control-label">Thickness</p>
+                    <span id="thicknessMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+
+                  <div class="control-row material-map-row">
                     <p class="control-label">Sheen Color</p>
                     <span id="sheenColorMap-channel-anchor" class="channel-anchor"></span>
+                  </div>
+
+                  <div class="control-row material-map-row">
+                    <p class="control-label">Sheen Roughness</p>
+                    <span id="sheenRoughnessMap-channel-anchor" class="channel-anchor"></span>
                   </div>
 
                   <div class="control-row material-map-row">
