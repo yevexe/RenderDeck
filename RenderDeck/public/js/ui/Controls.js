@@ -332,6 +332,10 @@ export class ControlsManager {
       sheenSlider: document.getElementById('sheen-slider'),
       sheenInput: document.getElementById('sheen-input'),
 
+      // Normal scale
+      normalScaleSlider: document.getElementById('normal-scale-slider'),
+      normalScaleInput: document.getElementById('normal-scale-input'),
+
       // Old model management buttons (kept for compatibility)
       uploadModelBtn: document.getElementById('upload-model-btn'),
       modelFileInput: document.getElementById('model-file-input'),
@@ -640,6 +644,11 @@ export class ControlsManager {
       v => cb.onMaterialPropertyChange?.('sheen', v));
 
     // ──────────────────────────────────────────────────────────────
+    // NORMAL SCALE
+    this.linkSliderInput(el.normalScaleSlider, el.normalScaleInput,
+      v => cb.onMaterialPropertyChange?.('normalScale', v));
+
+    // ──────────────────────────────────────────────────────────────
     // MATERIAL PROPERTY COMMIT — fires onMaterialPropertyCommit after slider release
     // or color picker commit. Used for history snapshots (no live-preview impact).
     {
@@ -719,6 +728,12 @@ export class ControlsManager {
     // [mapKey, insertBeforeElementId]
     const CHANNELS = [
       ['map',                    'map-channel-anchor'],
+      ['normalMap',              'normalMap-channel-anchor'],
+      ['roughnessMap',           'roughnessMap-channel-anchor'],
+      ['metalnessMap',           'metalnessMap-channel-anchor'],
+      ['aoMap',                  'aoMap-channel-anchor'],
+      ['bumpMap',                'bumpMap-channel-anchor'],
+      ['displacementMap',        'displacementMap-channel-anchor'],
       ['specularColorMap',       'specularColorMap-channel-anchor'],
       ['specularIntensityMap',   'specularIntensityMap-channel-anchor'],
       ['clearcoatMap',           'clearcoatMap-channel-anchor'],
@@ -973,9 +988,13 @@ export class ControlsManager {
     set(el.reflectivitySlider, el.reflectivityInput, material.reflectivity ?? 0.5);
     set(el.sheenSlider, el.sheenInput, material.sheen ?? 0);
 
+    // Normal scale (Vector2 — use x component)
+    set(el.normalScaleSlider, el.normalScaleInput, material.normalScale?.x ?? 1);
+
     // Update channel texture thumbnails
     const CHANNEL_KEYS = [
-      'map', 'specularColorMap', 'specularIntensityMap',
+      'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'bumpMap', 'displacementMap',
+      'specularColorMap', 'specularIntensityMap',
       'clearcoatMap', 'clearcoatRoughnessMap', 'clearcoatNormalMap',
       'alphaMap', 'transmissionMap', 'thicknessMap',
       'sheenColorMap', 'sheenRoughnessMap', 'emissiveMap',

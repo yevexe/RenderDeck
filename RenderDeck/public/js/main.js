@@ -72,6 +72,7 @@ const propManager = new PropManager(
 
 let activeModel = null;
 let activeMesh = null;
+const _channelMapData = new Map(); // channel key → base64 data URL (persists original file data)
 let meshMap = {}; // name → mesh reference for multi‑part models
 
 // Texture quality: track current anisotropy so every loaded texture gets the right setting
@@ -922,6 +923,34 @@ function applyMaterialPreset(presetName) {
 }
 
 
+const COLOR_CHANNEL_KEYS = new Set(['map', 'emissiveMap', 'sheenColorMap', 'specularColorMap']);
+
+function serializeChannelMaps() {
+  if (_channelMapData.size === 0) return null;
+  const maps = {};
+  for (const [key, dataUrl] of _channelMapData) maps[key] = dataUrl;
+  return maps;
+}
+
+async function restoreChannelMaps(mat, maps) {
+  if (!maps) return;
+  const loader = new THREE.TextureLoader();
+  for (const [key, dataUrl] of Object.entries(maps)) {
+    _channelMapData.set(key, dataUrl);
+    await new Promise(resolve => {
+      loader.load(dataUrl, (tex) => {
+        tex.colorSpace = COLOR_CHANNEL_KEYS.has(key) ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+        applyTexQuality(tex);
+        const old = mat[key];
+        if (old?.isTexture) old.dispose();
+        mat[key] = tex;
+        mat.needsUpdate = true;
+        resolve();
+      }, undefined, resolve);
+    });
+  }
+}
+
 // Extract material properties with sticker PBR overrides temporarily restored
 // so the saved preset reflects real values, not the sticker-overridden ones.
 function extractPropertiesForPreset(mat) {
@@ -950,6 +979,8 @@ function updateMaterialProperty(property, value) {
   if (colorProps.includes(property)) {
     if (property === 'color') { const h = uvEditor.updateMaterialColor(value); if (!h) mat.color.set(value); }
     else mat[property].set(value);
+  } else if (property === 'normalScale') {
+    if (mat.normalScale) mat.normalScale.set(value, value);
   } else {
     const h = uvEditor.updateMaterialPBR(property, value);
     if (!h) mat[property] = value;
@@ -1337,25 +1368,29 @@ const controls = new ControlsManager({
 
   onChannelTextureUpload: (channel, file) => {
     if (!activeMesh?.material) { logError('No active mesh'); return; }
-    const url = URL.createObjectURL(file);
-    const loader = new THREE.TextureLoader();
-    // Color maps need SRGB encoding; data/non-color maps must use Linear
     const COLOR_CHANNELS = new Set(['map', 'emissiveMap', 'sheenColorMap', 'specularColorMap', 'attenuationColorMap']);
-    loader.load(url, (tex) => {
-      URL.revokeObjectURL(url);
-      tex.colorSpace = COLOR_CHANNELS.has(channel) ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
-      applyTexQuality(tex);
-      const old = activeMesh.material[channel];
-      if (old && old.isTexture) old.dispose();
-      activeMesh.material[channel] = tex;
-      activeMesh.material.needsUpdate = true;
-      controls.syncMaterialUI(activeMesh.material);
-      log(`Channel "${channel}" texture set: ${file.name}`);
-    }, undefined, () => logError(`Failed to load texture: ${file.name}`));
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      _channelMapData.set(channel, dataUrl);
+      const loader = new THREE.TextureLoader();
+      loader.load(dataUrl, (tex) => {
+        tex.colorSpace = COLOR_CHANNELS.has(channel) ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+        applyTexQuality(tex);
+        const old = activeMesh.material[channel];
+        if (old && old.isTexture) old.dispose();
+        activeMesh.material[channel] = tex;
+        activeMesh.material.needsUpdate = true;
+        controls.syncMaterialUI(activeMesh.material);
+        log(`Channel "${channel}" texture set: ${file.name}`);
+      }, undefined, () => logError(`Failed to load texture: ${file.name}`));
+    };
+    reader.readAsDataURL(file);
   },
 
   onChannelTextureClear: (channel) => {
     if (!activeMesh?.material) return;
+    _channelMapData.delete(channel);
     const old = activeMesh.material[channel];
     if (old && old.isTexture) old.dispose();
     activeMesh.material[channel] = null;
@@ -1519,6 +1554,7 @@ function saveSessionState() {
           if (uvEditor._origColor && mat.color) mat.color.set(uvEditor._origColor);
         }
         const props = materialManager.extractProperties(mat);
+        props.channelMaps = serializeChannelMaps();
         if (stickerActive) {
           mat.metalness = 1.0;
           mat.roughness = 1.0;
@@ -1661,6 +1697,9 @@ async function restoreSessionState() {
     }
     if (state.materialProperties && activeMesh?.material) {
       materialManager.applySavedProperties(activeMesh.material, state.materialProperties);
+      if (state.materialProperties.channelMaps) {
+        await restoreChannelMaps(activeMesh.material, state.materialProperties.channelMaps);
+      }
       activeMesh.material.needsUpdate = true;
       controls.syncMaterialUI(activeMesh.material);
       markNeedsRender(4);
