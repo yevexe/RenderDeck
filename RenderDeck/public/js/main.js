@@ -96,13 +96,99 @@ function applyTexQualityToObject(root) {
     'map','normalMap','roughnessMap','metalnessMap','aoMap',
     'emissiveMap','displacementMap','alphaMap','bumpMap',
     'clearcoatMap','clearcoatNormalMap','clearcoatRoughnessMap',
-    'specularColorMap','transmissionMap','sheenColorMap','sheenRoughnessMap',
+    'specularColorMap','specularIntensityMap','transmissionMap','thicknessMap',
+    'sheenColorMap','sheenRoughnessMap',
+    'anisotropyMap','iridescenceMap','iridescenceThicknessMap',
   ];
   root.traverse(child => {
     if (!child.isMesh) return;
     const mats = Array.isArray(child.material) ? child.material : [child.material];
     mats.forEach(mat => { if (mat) TEX_SLOTS.forEach(s => applyTexQuality(mat[s])); });
   });
+}
+
+/**
+ * Convert a single material to MeshPhysicalMaterial, preserving all compatible
+ * textures and properties. Does NOT dispose the source — caller handles that.
+ */
+function convertToPhysical(sourceMat) {
+  if (sourceMat.isMeshPhysicalMaterial) return sourceMat;
+
+  const props = {
+    name:              sourceMat.name       || '',
+    side:              sourceMat.side       ?? THREE.FrontSide,
+    opacity:           sourceMat.opacity    ?? 1.0,
+    transparent:       sourceMat.transparent ?? false,
+    color:             sourceMat.color      ? sourceMat.color.clone() : new THREE.Color(0xffffff),
+    map:               sourceMat.map        || null,
+    emissive:          sourceMat.emissive   ? sourceMat.emissive.clone() : new THREE.Color(0x000000),
+    emissiveIntensity: sourceMat.emissiveIntensity ?? 1.0,
+    emissiveMap:       sourceMat.emissiveMap  || null,
+    alphaMap:          sourceMat.alphaMap    || null,
+    bumpMap:           sourceMat.bumpMap     || null,
+    bumpScale:         sourceMat.bumpScale   ?? 1,
+    displacementMap:   sourceMat.displacementMap   || null,
+    displacementScale: sourceMat.displacementScale ?? 1,
+    displacementBias:  sourceMat.displacementBias  ?? 0,
+  };
+
+  if (sourceMat.isMeshStandardMaterial) {
+    // Standard → Physical: direct property mapping (Physical extends Standard)
+    Object.assign(props, {
+      metalness:       sourceMat.metalness       ?? 0,
+      roughness:       sourceMat.roughness       ?? 1,
+      metalnessMap:    sourceMat.metalnessMap    || null,
+      roughnessMap:    sourceMat.roughnessMap    || null,
+      normalMap:       sourceMat.normalMap       || null,
+      normalScale:     sourceMat.normalScale ? sourceMat.normalScale.clone() : new THREE.Vector2(1, 1),
+      aoMap:           sourceMat.aoMap           || null,
+      aoMapIntensity:  sourceMat.aoMapIntensity  ?? 1,
+      envMapIntensity: sourceMat.envMapIntensity ?? 1,
+    });
+  } else if (sourceMat.isMeshPhongMaterial || sourceMat.isMeshLambertMaterial) {
+    // Phong/Lambert → Physical: approximate PBR values
+    const shininess = sourceMat.shininess ?? 30;
+    Object.assign(props, {
+      metalness:       0,
+      roughness:       Math.max(0.2, 1 - Math.sqrt(shininess / 1000)),
+      normalMap:       sourceMat.normalMap || null,
+      normalScale:     sourceMat.normalScale ? sourceMat.normalScale.clone() : new THREE.Vector2(1, 1),
+      envMapIntensity: 1.0,
+    });
+    if (sourceMat.specular)    props.specularColor    = sourceMat.specular.clone();
+    if (sourceMat.specularMap) props.specularColorMap = sourceMat.specularMap;
+  }
+
+  return new THREE.MeshPhysicalMaterial(props);
+}
+
+/**
+ * Traverse all meshes in an object and upgrade non-Physical materials to
+ * MeshPhysicalMaterial. Shared materials are converted once; originals disposed.
+ */
+function convertObjectToPhysical(object) {
+  const env = sceneManager.getScene().environment;
+  const seen = new Map(); // originalMat → physicalMat
+
+  object.traverse(child => {
+    if (!child.isMesh) return;
+    const isArray = Array.isArray(child.material);
+    const mats = isArray ? child.material : [child.material];
+    const newMats = mats.map(m => {
+      if (!m) return m;
+      if (m.isMeshPhysicalMaterial) { materialManager.applyEnvironment(m, env); return m; }
+      if (seen.has(m)) return seen.get(m);
+      const p = convertToPhysical(m);
+      materialManager.applyEnvironment(p, env);
+      seen.set(m, p);
+      return p;
+    });
+    child.material = isArray ? newMats : newMats[0];
+    (isArray ? newMats : [newMats[0]]).forEach(m => { if (m) m.needsUpdate = true; });
+  });
+
+  // Dispose originals that were actually replaced
+  seen.forEach((physMat, origMat) => { if (origMat !== physMat) origMat.dispose(); });
 }
 
 // Background / environment state
@@ -503,7 +589,9 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       sceneManager.add(object);
       activeModel = object;
       propManager.setMainModel(activeModel);
+      convertObjectToPhysical(object);
       applyTexQualityToObject(object);
+      if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
       const _glbBootLoad = !!_bootCamera;
       if (_bootCamera) {
         cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
@@ -513,7 +601,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       if (!_glbBootLoad) cameraManager.reframeObject(object);
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
-      if (activeMesh) uvEditor.open(activeMesh, name, 'Default — White');
+      if (activeMesh) uvEditor.open(activeMesh, name, activeMesh.material?.name || 'Default — White');
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
     },
@@ -525,6 +613,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
   function loadOBJ(materials = null) {
     if (materials) objLoader.setMaterials(materials);
     const objPath = loadingPaths.obj;
+    const hasMtl = !!materials; // track whether MTL materials were provided
 
     objLoader.load(objPath, (object) => {
       const meshList = [];
@@ -557,7 +646,18 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       sceneManager.add(object);
       activeModel = object;
       propManager.setMainModel(activeModel);
-      applyTexQualityToObject(object);
+
+      if (hasMtl) {
+        // MTL materials loaded — convert Phong → Physical, preserve all textures
+        convertObjectToPhysical(object);
+        applyTexQualityToObject(object);
+        if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+      } else {
+        // No MTL — apply the default blank material
+        applyTexQualityToObject(object);
+        applyMaterialPreset('Default — White');
+      }
+
       const _objBootLoad = !!_bootCamera;
       if (_bootCamera) {
         cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
@@ -565,14 +665,13 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
         _bootCamera = null;
       }
       if (!_objBootLoad) cameraManager.reframeObject(object);
-      applyMaterialPreset('Default — White');
       // Pre-compile the real mesh shader variants so the first rendered frame
       // doesn't stall on onFirstUse (absorbs the cost into the loading wait).
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
       // Initialize UV editor for this model
       if (activeMesh) {
-        uvEditor.open(activeMesh, name, 'Default — White');
+        uvEditor.open(activeMesh, name, activeMesh.material?.name || 'Default — White');
       }
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
@@ -1147,7 +1246,13 @@ const controls = new ControlsManager({
     const mesh = meshMap[partName];
     if (mesh) {
       activeMesh = mesh;
-      if (activeMesh.material) controls.syncMaterialUI(activeMesh.material);
+      if (activeMesh.material) {
+        controls.syncMaterialUI(activeMesh.material);
+        if (activeMesh.material.name) {
+          controls.setMaterialPresetValue(activeMesh.material.name);
+          setMaterialNameField(activeMesh.material.name);
+        }
+      }
       uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
       cameraManager.reframeObject(activeMesh);
     }
@@ -1234,9 +1339,11 @@ const controls = new ControlsManager({
     if (!activeMesh?.material) { logError('No active mesh'); return; }
     const url = URL.createObjectURL(file);
     const loader = new THREE.TextureLoader();
+    // Color maps need SRGB encoding; data/non-color maps must use Linear
+    const COLOR_CHANNELS = new Set(['map', 'emissiveMap', 'sheenColorMap', 'specularColorMap', 'attenuationColorMap']);
     loader.load(url, (tex) => {
       URL.revokeObjectURL(url);
-      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.colorSpace = COLOR_CHANNELS.has(channel) ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
       applyTexQuality(tex);
       const old = activeMesh.material[channel];
       if (old && old.isTexture) old.dispose();

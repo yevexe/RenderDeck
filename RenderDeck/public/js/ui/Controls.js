@@ -304,6 +304,34 @@ export class ControlsManager {
       envintSlider: document.getElementById('envint-slider'),
       envintInput: document.getElementById('envint-input'),
 
+      // Anisotropy
+      anisotropySlider: document.getElementById('anisotropy-slider'),
+      anisotropyInput: document.getElementById('anisotropy-input'),
+      anisotropyRotationSlider: document.getElementById('anisotropy-rotation-slider'),
+      anisotropyRotationInput: document.getElementById('anisotropy-rotation-input'),
+
+      // Iridescence
+      iridescenceSlider: document.getElementById('iridescence-slider'),
+      iridescenceInput: document.getElementById('iridescence-input'),
+      iridescenceIorSlider: document.getElementById('iridescence-ior-slider'),
+      iridescenceIorInput: document.getElementById('iridescence-ior-input'),
+      iridescenceThicknessMinSlider: document.getElementById('iridescence-thickness-min-slider'),
+      iridescenceThicknessMinInput: document.getElementById('iridescence-thickness-min-input'),
+      iridescenceThicknessMaxSlider: document.getElementById('iridescence-thickness-max-slider'),
+      iridescenceThicknessMaxInput: document.getElementById('iridescence-thickness-max-input'),
+
+      // Dispersion
+      dispersionSlider: document.getElementById('dispersion-slider'),
+      dispersionInput: document.getElementById('dispersion-input'),
+
+      // Reflectivity
+      reflectivitySlider: document.getElementById('reflectivity-slider'),
+      reflectivityInput: document.getElementById('reflectivity-input'),
+
+      // Sheen intensity (explicit)
+      sheenSlider: document.getElementById('sheen-slider'),
+      sheenInput: document.getElementById('sheen-input'),
+
       // Old model management buttons (kept for compatibility)
       uploadModelBtn: document.getElementById('upload-model-btn'),
       modelFileInput: document.getElementById('model-file-input'),
@@ -575,6 +603,43 @@ export class ControlsManager {
       v => cb.onMaterialPropertyChange?.('envMapIntensity', v));
 
     // ──────────────────────────────────────────────────────────────
+    // ANISOTROPY
+    this.linkSliderInput(el.anisotropySlider, el.anisotropyInput,
+      v => cb.onMaterialPropertyChange?.('anisotropy', v));
+    this.linkSliderInput(el.anisotropyRotationSlider, el.anisotropyRotationInput,
+      v => cb.onMaterialPropertyChange?.('anisotropyRotation', v));
+
+    // ──────────────────────────────────────────────────────────────
+    // IRIDESCENCE
+    this.linkSliderInput(el.iridescenceSlider, el.iridescenceInput,
+      v => cb.onMaterialPropertyChange?.('iridescence', v));
+    this.linkSliderInput(el.iridescenceIorSlider, el.iridescenceIorInput,
+      v => cb.onMaterialPropertyChange?.('iridescenceIOR', v));
+    // Thickness range — both sliders write the full [min, max] array
+    const _syncIridescenceRange = () => {
+      const min = parseFloat(el.iridescenceThicknessMinInput?.value ?? 100);
+      const max = parseFloat(el.iridescenceThicknessMaxInput?.value ?? 400);
+      cb.onMaterialPropertyChange?.('iridescenceThicknessRange', [min, max]);
+    };
+    this.linkSliderInput(el.iridescenceThicknessMinSlider, el.iridescenceThicknessMinInput, _syncIridescenceRange);
+    this.linkSliderInput(el.iridescenceThicknessMaxSlider, el.iridescenceThicknessMaxInput, _syncIridescenceRange);
+
+    // ──────────────────────────────────────────────────────────────
+    // DISPERSION
+    this.linkSliderInput(el.dispersionSlider, el.dispersionInput,
+      v => cb.onMaterialPropertyChange?.('dispersion', v));
+
+    // ──────────────────────────────────────────────────────────────
+    // REFLECTIVITY
+    this.linkSliderInput(el.reflectivitySlider, el.reflectivityInput,
+      v => cb.onMaterialPropertyChange?.('reflectivity', v));
+
+    // ──────────────────────────────────────────────────────────────
+    // SHEEN (intensity — explicit slider)
+    this.linkSliderInput(el.sheenSlider, el.sheenInput,
+      v => cb.onMaterialPropertyChange?.('sheen', v));
+
+    // ──────────────────────────────────────────────────────────────
     // MATERIAL PROPERTY COMMIT — fires onMaterialPropertyCommit after slider release
     // or color picker commit. Used for history snapshots (no live-preview impact).
     {
@@ -583,12 +648,20 @@ export class ControlsManager {
         el.clearcoatSlider, el.clearcoatroughSlider, el.opacitySlider,
         el.transmissionSlider, el.iorSlider, el.thicknessSlider,
         el.attdistSlider, el.sheenroughSlider, el.emissiveintSlider, el.envintSlider,
+        el.anisotropySlider, el.anisotropyRotationSlider,
+        el.iridescenceSlider, el.iridescenceIorSlider,
+        el.iridescenceThicknessMinSlider, el.iridescenceThicknessMaxSlider,
+        el.dispersionSlider, el.reflectivitySlider, el.sheenSlider,
       ];
       const matInputs = [
         el.metalnessInput, el.roughnessInput, el.specintInput,
         el.clearcoatroughInput, el.opacityInput, el.transmissionInput,
         el.iorInput, el.thicknessInput, el.attdistInput, el.sheenroughInput,
         el.emissiveintInput, el.envintInput,
+        el.anisotropyInput, el.anisotropyRotationInput,
+        el.iridescenceInput, el.iridescenceIorInput,
+        el.iridescenceThicknessMinInput, el.iridescenceThicknessMaxInput,
+        el.dispersionInput, el.reflectivityInput, el.sheenInput,
       ];
       const matColors = [
         el.basecolorPicker, el.speccolorPicker, el.attcolorPicker,
@@ -640,18 +713,26 @@ export class ControlsManager {
   }
 
   // ─── Channel texture pickers ─────────────────────────────────
-  // Dynamically inserts a 22×22 canvas thumbnail next to each channel's first control.
-  // Click opens a file picker; right-click clears the texture.
+  // Inserts a 22×22 canvas thumbnail (inside a wrapper) before each channel anchor.
+  // Click thumbnail → open file picker. Click × button → clear texture.
   _setupChannelPickers() {
     // [mapKey, insertBeforeElementId]
     const CHANNELS = [
-      ['map',              'map-channel-anchor'],
-      ['specularColorMap', 'specularColorMap-channel-anchor'],
-      ['clearcoatMap',     'clearcoatMap-channel-anchor'],
-      ['alphaMap',         'alphaMap-channel-anchor'],
-      ['transmissionMap',  'transmissionMap-channel-anchor'],
-      ['sheenColorMap',    'sheenColorMap-channel-anchor'],
-      ['emissiveMap',      'emissiveMap-channel-anchor'],
+      ['map',                    'map-channel-anchor'],
+      ['specularColorMap',       'specularColorMap-channel-anchor'],
+      ['specularIntensityMap',   'specularIntensityMap-channel-anchor'],
+      ['clearcoatMap',           'clearcoatMap-channel-anchor'],
+      ['clearcoatRoughnessMap',  'clearcoatRoughnessMap-channel-anchor'],
+      ['clearcoatNormalMap',     'clearcoatNormalMap-channel-anchor'],
+      ['alphaMap',               'alphaMap-channel-anchor'],
+      ['transmissionMap',        'transmissionMap-channel-anchor'],
+      ['thicknessMap',           'thicknessMap-channel-anchor'],
+      ['sheenColorMap',          'sheenColorMap-channel-anchor'],
+      ['sheenRoughnessMap',      'sheenRoughnessMap-channel-anchor'],
+      ['emissiveMap',            'emissiveMap-channel-anchor'],
+      ['anisotropyMap',          'anisotropyMap-channel-anchor'],
+      ['iridescenceMap',         'iridescenceMap-channel-anchor'],
+      ['iridescenceThicknessMap','iridescenceThicknessMap-channel-anchor'],
     ];
 
     CHANNELS.forEach(([mapKey, refId]) => {
@@ -664,14 +745,24 @@ export class ControlsManager {
       fileInput.style.display = 'none';
       document.body.appendChild(fileInput);
 
+      // Wrapper holds canvas + clear button
+      const wrapper = document.createElement('div');
+      wrapper.className = 'channel-tex-wrapper';
+
       const thumb = document.createElement('canvas');
       thumb.className = 'channel-tex-thumb';
       thumb.width = 22; thumb.height = 22;
-      thumb.title = 'Click: upload texture  •  Right-click: clear';
+      thumb.title = 'Click to upload texture';
+
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'channel-tex-clear';
+      clearBtn.title = 'Remove texture';
+      clearBtn.innerHTML = '<svg width="6" height="6" viewBox="0 0 6 6" fill="none"><line x1="1" y1="1" x2="5" y2="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="5" y1="1" x2="1" y2="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 
       thumb.addEventListener('click', () => fileInput.click());
-      thumb.addEventListener('contextmenu', e => {
-        e.preventDefault();
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         this.callbacks.onChannelTextureClear?.(mapKey);
       });
       fileInput.addEventListener('change', e => {
@@ -679,7 +770,8 @@ export class ControlsManager {
         e.target.value = '';
       });
 
-      refEl.parentElement.insertBefore(thumb, refEl);
+      wrapper.append(thumb, clearBtn);
+      refEl.parentElement.insertBefore(wrapper, refEl);
       this.elements[`texThumb_${mapKey}`] = thumb;
 
       // Initial empty state
@@ -691,9 +783,11 @@ export class ControlsManager {
   _drawChannelThumb(canvas, texture) {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const wrapper = canvas.parentElement?.classList.contains('channel-tex-wrapper')
+      ? canvas.parentElement : null;
     if (texture?.image) {
       ctx.drawImage(texture.image, 0, 0, canvas.width, canvas.height);
-      canvas.classList.add('has-texture');
+      wrapper?.classList.add('has-texture');
     } else {
       ctx.fillStyle = '#1a1a1a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -703,7 +797,7 @@ export class ControlsManager {
       ctx.moveTo(m, 4); ctx.lineTo(m, canvas.height - 4);
       ctx.moveTo(4, m); ctx.lineTo(canvas.width - 4, m);
       ctx.stroke();
-      canvas.classList.remove('has-texture');
+      wrapper?.classList.remove('has-texture');
     }
   }
 
@@ -862,8 +956,31 @@ export class ControlsManager {
     set(el.emissiveintSlider, el.emissiveintInput, material.emissiveIntensity);
     set(el.envintSlider, el.envintInput, material.envMapIntensity);
 
+    // Anisotropy
+    set(el.anisotropySlider, el.anisotropyInput, material.anisotropy ?? 0);
+    set(el.anisotropyRotationSlider, el.anisotropyRotationInput, material.anisotropyRotation ?? 0);
+
+    // Iridescence
+    set(el.iridescenceSlider, el.iridescenceInput, material.iridescence ?? 0);
+    set(el.iridescenceIorSlider, el.iridescenceIorInput, material.iridescenceIOR ?? 1.3);
+    if (material.iridescenceThicknessRange) {
+      set(el.iridescenceThicknessMinSlider, el.iridescenceThicknessMinInput, material.iridescenceThicknessRange[0]);
+      set(el.iridescenceThicknessMaxSlider, el.iridescenceThicknessMaxInput, material.iridescenceThicknessRange[1]);
+    }
+
+    // Dispersion / Reflectivity / Sheen intensity
+    set(el.dispersionSlider, el.dispersionInput, material.dispersion ?? 0);
+    set(el.reflectivitySlider, el.reflectivityInput, material.reflectivity ?? 0.5);
+    set(el.sheenSlider, el.sheenInput, material.sheen ?? 0);
+
     // Update channel texture thumbnails
-    const CHANNEL_KEYS = ['map', 'specularColorMap', 'clearcoatMap', 'alphaMap', 'transmissionMap', 'sheenColorMap', 'emissiveMap'];
+    const CHANNEL_KEYS = [
+      'map', 'specularColorMap', 'specularIntensityMap',
+      'clearcoatMap', 'clearcoatRoughnessMap', 'clearcoatNormalMap',
+      'alphaMap', 'transmissionMap', 'thicknessMap',
+      'sheenColorMap', 'sheenRoughnessMap', 'emissiveMap',
+      'anisotropyMap', 'iridescenceMap', 'iridescenceThicknessMap',
+    ];
     CHANNEL_KEYS.forEach(ch => {
       const thumb = el[`texThumb_${ch}`];
       if (thumb) this._drawChannelThumb(thumb, material[ch] ?? null);

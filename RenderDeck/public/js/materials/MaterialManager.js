@@ -132,6 +132,13 @@ export class MaterialManager {
       attenuationDistance: Infinity,
       attenuationColor: new THREE.Color(0xffffff),
       envMapIntensity: 1.0,
+      anisotropy: 0.0,
+      anisotropyRotation: 0.0,
+      iridescence: 0.0,
+      iridescenceIOR: 1.3,
+      iridescenceThicknessRange: [100, 400],
+      dispersion: 0.0,
+      reflectivity: 0.5,
       ...properties,
       name,
     };
@@ -371,6 +378,13 @@ export class MaterialManager {
     if (properties.emissive !== undefined) material.emissive.set(properties.emissive);
     if (properties.emissiveIntensity !== undefined) material.emissiveIntensity = properties.emissiveIntensity;
     if (properties.envMapIntensity !== undefined) material.envMapIntensity = properties.envMapIntensity;
+    if (properties.anisotropy !== undefined) material.anisotropy = properties.anisotropy;
+    if (properties.anisotropyRotation !== undefined) material.anisotropyRotation = properties.anisotropyRotation;
+    if (properties.iridescence !== undefined) material.iridescence = properties.iridescence;
+    if (properties.iridescenceIOR !== undefined) material.iridescenceIOR = properties.iridescenceIOR;
+    if (properties.iridescenceThicknessRange !== undefined) material.iridescenceThicknessRange = [...properties.iridescenceThicknessRange];
+    if (properties.dispersion !== undefined) material.dispersion = properties.dispersion;
+    if (properties.reflectivity !== undefined) material.reflectivity = properties.reflectivity;
 
     material.needsUpdate = true;
   }
@@ -401,6 +415,13 @@ export class MaterialManager {
       emissive: '#' + material.emissive.getHexString(),
       emissiveIntensity: material.emissiveIntensity,
       envMapIntensity: material.envMapIntensity,
+      anisotropy: material.anisotropy,
+      anisotropyRotation: material.anisotropyRotation,
+      iridescence: material.iridescence,
+      iridescenceIOR: material.iridescenceIOR,
+      iridescenceThicknessRange: [...material.iridescenceThicknessRange],
+      dispersion: material.dispersion,
+      reflectivity: material.reflectivity,
     };
   }
 
