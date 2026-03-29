@@ -385,6 +385,7 @@ export class MaterialManager {
     if (properties.iridescenceThicknessRange !== undefined) material.iridescenceThicknessRange = [...properties.iridescenceThicknessRange];
     if (properties.dispersion !== undefined) material.dispersion = properties.dispersion;
     if (properties.reflectivity !== undefined) material.reflectivity = properties.reflectivity;
+    if (properties.normalScale !== undefined && material.normalScale) material.normalScale.set(properties.normalScale, properties.normalScale);
 
     material.needsUpdate = true;
   }
@@ -422,6 +423,7 @@ export class MaterialManager {
       iridescenceThicknessRange: [...material.iridescenceThicknessRange],
       dispersion: material.dispersion,
       reflectivity: material.reflectivity,
+      normalScale: material.normalScale?.x ?? 1,
     };
   }
 
