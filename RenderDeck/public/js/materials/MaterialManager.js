@@ -112,6 +112,10 @@ export class MaterialManager {
    * Create a MeshPhysicalMaterial with full defaults
    */
   createMaterial(name, properties) {
+    // normalScale must be excluded from the constructor spread — passing a plain
+    // number overwrites Three.js's Vector2, breaking .set() calls later.
+    const { normalScale: normalScaleValue, ...rest } = properties || {};
+
     const merged = {
       side: THREE.DoubleSide,
       color: 0xffffff,
@@ -139,7 +143,7 @@ export class MaterialManager {
       iridescenceThicknessRange: [100, 400],
       dispersion: 0.0,
       reflectivity: 0.5,
-      ...properties,
+      ...rest,
       name,
     };
     // attenuationDistance: 0 is used as a JSON stand-in for Infinity — restore it
@@ -150,7 +154,10 @@ export class MaterialManager {
     if (merged.transmission > 0) merged.transparent = true;
     // Opacity < 1 also needs transparent
     if (merged.opacity !== undefined && merged.opacity < 1) merged.transparent = true;
-    return new THREE.MeshPhysicalMaterial(merged);
+    const mat = new THREE.MeshPhysicalMaterial(merged);
+    // Apply normalScale via Vector2.set() to preserve the Three.js type
+    if (normalScaleValue !== undefined) mat.normalScale.set(normalScaleValue, normalScaleValue);
+    return mat;
   }
 
   /**

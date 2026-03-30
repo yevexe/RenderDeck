@@ -73,7 +73,7 @@ export class UVEditor {
 
     this.uvCanvas = null;
     this.uvCtx = null;
-    this._checkerCache = null; // cached checkerboard for fast preview redraws
+    this._checkerCache = null; 
 
     // Low-res drag canvases — 512x512 (1MB) instead of 2048x2048 (16MB) per frame
     this._dragCanvas = document.createElement('canvas');
@@ -148,7 +148,7 @@ export class UVEditor {
       this.uvCanvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
       this.uvCanvas.addEventListener('mouseup', () => {
         if (this.isDragging) {
-          // Restore full-res texture after drag
+          
           this._restoreFullResTexture();
           this._renderComposite();
           this._updateStickerPBRIfActive();
@@ -799,7 +799,7 @@ export class UVEditor {
     }
   }
 
-  // ─── Composite for drag preview (low-res for performance) ─────
+  
   // Renders to 512x512 canvas during drag — 16x less GPU upload per frame.
   // Full-res texture is restored on mouseup/mouseleave.
   _renderCompositeDrag() {
@@ -811,13 +811,13 @@ export class UVEditor {
     }
     this._dragTexture.needsUpdate = true;
 
-    // Swap to low-res texture during drag
+    
     if (this.activeMesh?.material && this.activeMesh.material.map !== this._dragTexture) {
       this.activeMesh.material.map = this._dragTexture;
       this.activeMesh.material.needsUpdate = true;
     }
 
-    // Also update sticker PBR maps at low-res so the white underlay follows the decal
+    
     if (this._liveMetalnessTexture || this._liveRoughnessTexture || this._liveTransmissionTexture) {
       this._renderStickerPBRMapsDrag();
     }
