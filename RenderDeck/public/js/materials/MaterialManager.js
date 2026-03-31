@@ -9,6 +9,7 @@ import {
   createGlassTexture,
   createPlasticTexture
 } from './generators.js';
+import { getActiveProjectIdSync } from '../storage/ProjectStorage.js';
 
 export class MaterialManager {
   constructor() {
@@ -313,9 +314,16 @@ export class MaterialManager {
     return true;
   }
 
+  _presetsKey(projectId) {
+    return projectId ? `rd_user_presets:${projectId}` : null;
+  }
+
   _saveUserPresetsToStorage() {
     try {
-      localStorage.setItem('rd_user_presets', JSON.stringify({
+      const projectId = getActiveProjectIdSync();
+      const key = this._presetsKey(projectId);
+      if (!key) return;
+      localStorage.setItem(key, JSON.stringify({
         names:  this._userPresetNames,
         params: this._userPresetParams,
       }));
@@ -324,7 +332,11 @@ export class MaterialManager {
 
   _loadUserPresetsFromStorage() {
     try {
-      const raw = localStorage.getItem('rd_user_presets');
+      const projectId = getActiveProjectIdSync();
+      const key = this._presetsKey(projectId);
+      // Try project-scoped key first, fall back to legacy key for migration
+      const raw = (key ? localStorage.getItem(key) : null)
+               ?? localStorage.getItem('rd_user_presets');
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!data?.names || !data?.params) return;
@@ -335,6 +347,46 @@ export class MaterialManager {
         this._userPresetParams[name] = params;
         this._presetParams[name] = params;
         this.presets[name] = () => this.createMaterial(name, params);
+      }
+      // If we loaded from legacy key, migrate it now
+      if (key && !localStorage.getItem(key)) {
+        this._saveUserPresetsToStorage();
+      }
+    } catch (_) { /* corrupt data — ignore */ }
+  }
+
+  // Called from main.js after ensureActiveProject() resolves.
+  // Reloads user presets for the now-known active project.
+  reloadUserPresetsForProject(projectId) {
+    // Clear in-memory state
+    for (const name of this._userPresetNames) {
+      delete this._presetParams[name];
+      delete this.presets[name];
+    }
+    this._userPresetNames = [];
+    this._userPresetParams = {};
+
+    try {
+      const key = this._presetsKey(projectId);
+      const raw = (key ? localStorage.getItem(key) : null)
+               ?? localStorage.getItem('rd_user_presets');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!data?.names || !data?.params) return;
+      for (const name of data.names) {
+        const params = data.params[name];
+        if (!params) continue;
+        this._userPresetNames.push(name);
+        this._userPresetParams[name] = params;
+        this._presetParams[name] = params;
+        this.presets[name] = () => this.createMaterial(name, params);
+      }
+      // Migrate from legacy key if needed
+      if (key && !localStorage.getItem(key)) {
+        localStorage.setItem(key, JSON.stringify({
+          names:  this._userPresetNames,
+          params: this._userPresetParams,
+        }));
       }
     } catch (_) { /* corrupt data — ignore */ }
   }
