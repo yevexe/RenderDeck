@@ -191,12 +191,41 @@ hr {
 .preview h1 {
   width: 100%;
 }
-/* RENDERDECK HEADER TEXT */
-.site-name-header {
-  width: 100%;
-  text-align: center;
-  font-size: 52px; /* Larger for site title */
-  font-weight: bold;
+/* APP HEADER BAR */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.app-header-logo {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #fff;
+}
+
+.project-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: #252525;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.project-btn:hover {
+  background: #333;
+  border-color: #555;
+  color: #fff;
 }
 /* -----------------------SHARED PANEL STYLES ------------------ */
 .panel {

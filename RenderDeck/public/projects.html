@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Projects — RenderDeck</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="projects.css" />
+</head>
+<body class="projects-page">
+  <div class="projects-layout">
+
+    <!-- Header -->
+    <header class="projects-header">
+      <span class="app-header-logo">RenderDeck</span>
+      <a href="index.html" class="back-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Back to workspace
+      </a>
+    </header>
+
+    <!-- Main content -->
+    <main class="projects-main">
+      <div class="projects-title-row">
+        <h1 class="projects-title">Projects</h1>
+        <button id="new-project-btn" class="new-project-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New Project
+        </button>
+      </div>
+
+      <div id="projects-grid" class="projects-grid">
+        <!-- cards injected by projects.js -->
+      </div>
+
+      <p id="projects-empty" class="projects-empty" style="display:none;">
+        No projects yet. Create one to get started.
+      </p>
+    </main>
+
+  </div>
+
+  <!-- Rename modal -->
+  <div id="rename-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+      <h2 class="modal-title">Rename Project</h2>
+      <input id="rename-input" class="modal-input" type="text" maxlength="80" placeholder="Project name" />
+      <div class="modal-actions">
+        <button id="rename-cancel" class="modal-btn modal-btn--secondary">Cancel</button>
+        <button id="rename-confirm" class="modal-btn modal-btn--primary">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete confirm modal -->
+  <div id="delete-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+      <h2 class="modal-title">Delete Project?</h2>
+      <p class="modal-body">This will permanently delete the project. This cannot be undone.</p>
+      <div class="modal-actions">
+        <button id="delete-cancel" class="modal-btn modal-btn--secondary">Cancel</button>
+        <button id="delete-confirm" class="modal-btn modal-btn--danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">{
+    "imports": {
+      "three": "https://unpkg.com/three@0.183.2/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.183.2/examples/jsm/",
+      "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js"
+    }
+  }</script>
+  <script type="module" src="js/projects.js"></script>
+</body>
+</html>

@@ -39,6 +39,7 @@ import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './c
 // Props
 import { PropManager } from './props/PropManager.js';
 import { CustomSceneStorage } from './scenes/CustomSceneStorage.js';
+import { ensureActiveProject, getActiveProjectId, getActiveProjectIdSync } from './storage/ProjectStorage.js';
 
 // Scenes
 import { initScenes, loadScene, getSceneNames } from './core/SceneLoader.js';
@@ -289,8 +290,16 @@ const GRADIENT_PRESETS = {
   solid_gray:   '#444444',
 };
 
-const SESSION_STORAGE_KEY = 'session:renderdeck.reloadstate.v2';
-const SESSION_BOOT_KEY = 'session:renderdeck.boot.v1';
+const SESSION_STORAGE_BASE = 'session:renderdeck.reloadstate.v2';
+const SESSION_BOOT_BASE    = 'session:renderdeck.boot.v1';
+
+// Project-scoped session keys — each project has its own autosave state.
+function sessionStorageKey(projectId) {
+  return projectId ? `${SESSION_STORAGE_BASE}:${projectId}` : SESSION_STORAGE_BASE;
+}
+function sessionBootKey(projectId) {
+  return projectId ? `${SESSION_BOOT_BASE}:${projectId}` : SESSION_BOOT_BASE;
+}
 
 function applyBackground() {
   const scene = sceneManager.getScene();
@@ -459,6 +468,9 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
   const objPath = loadingPaths.obj;
 
   objLoader.load(objPath, async (object) => {
+    // Ensure standard presets are loaded before applying material
+    await materialPresetsReady;
+
     const meshList = [];
 
     const savedPreset = modelData.materialPreset || 'Default — White';
@@ -715,6 +727,9 @@ function cleanupActiveModel() {
     uvEditor._origColor = null;
     uvEditor._origTransmission = null;
     uvEditor._materialBaseColor = null;
+    // Channel maps belong to the model being unloaded — clear so they don't
+    // bleed into the next model's autosave state via serializeChannelMaps().
+    _channelMapData.clear();
 
     propManager.setMainModel(null);
     sceneManager.remove(activeModel);
@@ -1585,7 +1600,7 @@ function saveSessionState() {
     };
     // Fast startup hint (sync read/write, tiny payload)
     try {
-      localStorage.setItem(SESSION_BOOT_KEY, JSON.stringify({
+      localStorage.setItem(sessionBootKey(getActiveProjectIdSync()), JSON.stringify({
         version: 1,
         savedAt: state.savedAt,
         modelName: state.modelName,
@@ -1599,7 +1614,7 @@ function saveSessionState() {
       // ignore localStorage quota/availability failures
     }
     // Persist in IndexedDB so larger state (overlay images) survives reload reliably.
-    IDBStorage.put('metadata', SESSION_STORAGE_KEY, state).catch((err) => {
+    IDBStorage.put('metadata', sessionStorageKey(getActiveProjectIdSync()), state).catch((err) => {
       console.warn('Session state write failed:', err);
     });
   } catch (err) {
@@ -1610,7 +1625,8 @@ function saveSessionState() {
 async function restoreSessionState() {
   let state = null;
   try {
-    state = await IDBStorage.get('metadata', SESSION_STORAGE_KEY);
+    const pid = await getActiveProjectId();
+    state = await IDBStorage.get('metadata', sessionStorageKey(pid));
     if (!state || state.version !== 1) return false;
   } catch (err) {
     console.warn('Session parse failed:', err);
@@ -1689,7 +1705,7 @@ async function restoreSessionState() {
     // over IDB state which may be stale if the async write didn't finish before unload.
     let restoredPreset = state.materialPreset;
     try {
-      const bootRaw = localStorage.getItem(SESSION_BOOT_KEY);
+      const bootRaw = localStorage.getItem(sessionBootKey(getActiveProjectIdSync()));
       if (bootRaw) {
         const boot = JSON.parse(bootRaw);
         if (boot?.materialPreset) restoredPreset = boot.materialPreset;
@@ -1705,6 +1721,10 @@ async function restoreSessionState() {
     }
     if (state.materialProperties && activeMesh?.material) {
       materialManager.applySavedProperties(activeMesh.material, state.materialProperties);
+      // Use the saved color rather than material.color — sticker mode sets material.color
+      // to white, so reading it here would overwrite _origColor with white.
+      const savedColor = state.materialProperties.color;
+      if (savedColor) uvEditor.updateMaterialColor(savedColor);
       if (state.materialProperties.channelMaps) {
         await restoreChannelMaps(activeMesh.material, state.materialProperties.channelMaps);
       }
@@ -2963,7 +2983,7 @@ function animate() {
 // Restore renderer state from the last session (sync localStorage read) before
 // building the composer, so only the passes the user had enabled get compiled.
 try {
-  const raw = localStorage.getItem(SESSION_BOOT_KEY);
+  const raw = localStorage.getItem(sessionBootKey(getActiveProjectIdSync()));
   if (raw) {
     const boot = JSON.parse(raw);
     if (boot?.rendererState) rendererManager.restoreState(boot.rendererState);
@@ -3116,7 +3136,7 @@ async function refreshDebugPanel() {
   const sessionEl = document.getElementById('dbg-session-table');
   if (sessionEl) {
     try {
-      const s = await IDBStorage.get('metadata', SESSION_STORAGE_KEY);
+      const s = await IDBStorage.get('metadata', sessionStorageKey(getActiveProjectIdSync()));
       sessionEl.innerHTML = s ? _dbgKVRows({
         version:            s.version,
         savedAt:            s.savedAt ? new Date(s.savedAt).toLocaleString() : null,
@@ -3260,7 +3280,7 @@ async function refreshDebugPanel() {
   const lsEl = document.getElementById('dbg-ls-table');
   if (lsEl) {
     const LS_KEYS = [
-      { key: SESSION_BOOT_KEY,              label: SESSION_BOOT_KEY },
+      { key: sessionBootKey(getActiveProjectIdSync()), label: 'session:boot (active project)' },
       { key: 'rd_user_presets',             label: 'rd_user_presets' },
       { key: 'rd_hidden_presets',           label: 'rd_hidden_presets' },
       { key: 'renderdeck_sketchfab_token',  label: 'renderdeck_sketchfab_token', mask: true },
@@ -3307,7 +3327,7 @@ let _bootCamera = null;
 async function initializeApp() {
   // Fast path: preload last edited model immediately (sync localStorage read).
   try {
-    const raw = localStorage.getItem(SESSION_BOOT_KEY);
+    const raw = localStorage.getItem(sessionBootKey(getActiveProjectIdSync()));
     if (raw) {
       const boot = JSON.parse(raw);
       const bootName = boot?.modelName;
@@ -3347,6 +3367,18 @@ async function initializeApp() {
   // Apply initial renderer tone mapping
   rendererManager.getRenderer().toneMapping = THREE.ACESFilmicToneMapping;
   rendererManager.getRenderer().toneMappingExposure = 1.0;
+
+  // Ensure an active project exists and update the header button
+  const activeProject = await ensureActiveProject();
+  const projectBtn = document.getElementById('project-btn');
+  if (projectBtn && activeProject) {
+    projectBtn.querySelector('#project-name').textContent = activeProject.name;
+    projectBtn.addEventListener('click', () => {
+      window.location.href = 'projects.html';
+    });
+  }
+  // Reload material presets now that the active project ID is confirmed
+  materialManager.reloadUserPresetsForProject(activeProject.id);
 
   const restored = await restoreSessionState();
   if (!restored && STANDARD_OBJECTS.length > 0) {
