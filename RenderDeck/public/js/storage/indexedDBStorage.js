@@ -3,7 +3,7 @@
 // Provides Promise-based interface for storing models and blobs
 
 const DB_NAME = 'renderdeck_db';
-const DB_VERSION = 1;
+const DB_VERSION = 4;
 
 let dbInstance = null;
 
@@ -32,15 +32,33 @@ export function openDB() {
       if (!db.objectStoreNames.contains('metadata')) {
         db.createObjectStore('metadata'); // for version tracking and migration flags
       }
+      if (!db.objectStoreNames.contains('projects')) {
+        db.createObjectStore('projects'); // key: project UUID
+      }
+      if (!db.objectStoreNames.contains('scenes')) {
+        db.createObjectStore('scenes'); // key: `${projectId}:${sceneName}`
+      }
     };
 
     request.onsuccess = () => {
       dbInstance = request.result;
+      // Close our connection if another tab wants to upgrade
+      dbInstance.onversionchange = () => {
+        dbInstance.close();
+        dbInstance = null;
+      };
       resolve(dbInstance);
     };
 
     request.onerror = () => {
       reject(new Error(`Failed to open IndexedDB: ${request.error}`));
+    };
+
+    // Another tab holds the DB at an older version — resolve with null
+    // so the app loads with empty data rather than hanging forever.
+    request.onblocked = () => {
+      console.warn('IndexedDB upgrade blocked — close other RenderDeck tabs and reload.');
+      resolve(null);
     };
   });
 }
@@ -52,6 +70,7 @@ export function get(storeName, key) {
   return new Promise(async (resolve, reject) => {
     try {
       const db = await openDB();
+      if (!db || !db.objectStoreNames.contains(storeName)) { resolve(undefined); return; }
       const transaction = db.transaction(storeName, 'readonly');
       const store = transaction.objectStore(storeName);
       const request = store.get(key);
@@ -71,6 +90,7 @@ export function put(storeName, key, value) {
   return new Promise(async (resolve, reject) => {
     try {
       const db = await openDB();
+      if (!db || !db.objectStoreNames.contains(storeName)) { resolve(); return; }
       const transaction = db.transaction(storeName, 'readwrite');
       const store = transaction.objectStore(storeName);
       const request = store.put(value, key);
@@ -110,6 +130,7 @@ export function getAllKeys(storeName) {
   return new Promise(async (resolve, reject) => {
     try {
       const db = await openDB();
+      if (!db || !db.objectStoreNames.contains(storeName)) { resolve([]); return; }
       const transaction = db.transaction(storeName, 'readonly');
       const store = transaction.objectStore(storeName);
       const request = store.getAllKeys();
@@ -129,6 +150,7 @@ export function getAll(storeName) {
   return new Promise(async (resolve, reject) => {
     try {
       const db = await openDB();
+      if (!db || !db.objectStoreNames.contains(storeName)) { resolve([]); return; }
       const transaction = db.transaction(storeName, 'readonly');
       const store = transaction.objectStore(storeName);
       const request = store.getAll();

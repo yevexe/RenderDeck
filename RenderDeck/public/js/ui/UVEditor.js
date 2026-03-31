@@ -318,8 +318,12 @@ export class UVEditor {
   // ─── Open editor for a mesh (called when model loads) ─────────
   // This sets up the editor for a model - NO prompting for names here
   async open(mesh, originalModelName, currentMaterialPreset = 'Default — White') {
-    // If we're already editing this same model, don't reset anything
-    if (this.activeMesh === mesh && this.activeModelName === originalModelName) {
+    // If we're already editing this same model, don't reset anything.
+    // Also check customModelName — openWithPreloadedData stores the base OBJ name in
+    // activeModelName and the custom model's display name in customModelName, so a
+    // subsequent selectPart() call must not tear down the sticker setup.
+    if (this.activeMesh === mesh &&
+        (this.activeModelName === originalModelName || this.customModelName === originalModelName)) {
       return;
     }
 
@@ -975,7 +979,11 @@ export class UVEditor {
     if (this._origColor) {
       this._materialBaseColor = this._origColor;
     } else if (this.activeMesh.material?.color) {
-      this._materialBaseColor = '#' + this.activeMesh.material.color.getHexString();
+      const hex = this.activeMesh.material.color.getHexString();
+      // Don't overwrite a valid base color with sticker-mode white (0xffffff)
+      if (hex !== 'ffffff' || !this._materialBaseColor) {
+        this._materialBaseColor = '#' + hex;
+      }
     }
 
     // If no overlays, no need to create composite - just keep original
