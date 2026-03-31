@@ -1305,13 +1305,133 @@
           <!-- ===== Setting 9: Debug ===== -->
           <div id="Setting9" class="tabcontent">
             <div class="tab-panel tab-panel-setting9">
-            <h3>Debug</h3>
-            <hr>
-            <div class="debug-panel">
-              <p>Ready. Drag and drop OBJ files to add models.</p>
-              <hr>
-              <button id="reset-cache-btn" class="control-btn">Reset Cache</button>
-            </div>
+
+              <!-- Top bar -->
+              <div class="dbg-topbar">
+                <div class="dbg-title">
+                  <span class="dbg-title-label">DEBUG INSPECTOR</span>
+                  <span class="dbg-title-sub">renderdeck_db · localStorage · runtime memory</span>
+                </div>
+                <div class="dbg-topbar-actions">
+                  <button id="dbg-refresh-btn" class="dbg-btn">↻ Refresh</button>
+                  <button id="reset-cache-btn" class="dbg-btn dbg-btn-danger">⊗ Reset Cache</button>
+                </div>
+              </div>
+
+              <!-- Storage architecture diagram -->
+              <div class="dbg-diagram">
+                <div class="dbg-diagram-layer dbg-layer-mem">
+                  <div class="dbg-layer-label">RUNTIME MEMORY — cleared on unload</div>
+                  <div class="dbg-layer-items">
+                    <span class="dbg-chip">_matThumbCache</span>
+                    <span class="dbg-chip">_channelMapData</span>
+                    <span class="dbg-chip">camState</span>
+                    <span class="dbg-chip">rendererState</span>
+                    <span class="dbg-chip">activeModel</span>
+                    <span class="dbg-chip">activeMesh</span>
+                  </div>
+                </div>
+                <div class="dbg-diagram-arrow">▼ persists on unload / page hide</div>
+                <div class="dbg-diagram-row">
+                  <div class="dbg-diagram-layer dbg-layer-ls">
+                    <div class="dbg-layer-label">localStorage — sync, small payload</div>
+                    <div class="dbg-layer-items">
+                      <span class="dbg-chip">boot key (model + camera)</span>
+                      <span class="dbg-chip">user presets</span>
+                      <span class="dbg-chip">hidden presets</span>
+                      <span class="dbg-chip">sketchfab token</span>
+                    </div>
+                  </div>
+                  <div class="dbg-diagram-layer dbg-layer-idb">
+                    <div class="dbg-layer-label">IndexedDB renderdeck_db — async, large</div>
+                    <div class="dbg-layer-items">
+                      <span class="dbg-chip">models</span>
+                      <span class="dbg-chip">blobs / thumbnails</span>
+                      <span class="dbg-chip">metadata / session</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Log output -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">LOG OUTPUT</span>
+                  <span class="dbg-badge dbg-badge-mem">memory · max 100 entries</span>
+                </div>
+                <div id="dbg-log" class="debug-panel"><p style="margin:0;color:#444">Waiting for log entries…</p></div>
+              </div>
+
+              <!-- Active model -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">ACTIVE MODEL</span>
+                  <span class="dbg-badge dbg-badge-mem" id="dbg-model-badge">—</span>
+                </div>
+                <div id="dbg-model-table"></div>
+              </div>
+
+              <!-- Session state -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">SESSION STATE</span>
+                  <span class="dbg-badge dbg-badge-idb">IDB · metadata store</span>
+                </div>
+                <div id="dbg-session-table"></div>
+              </div>
+
+              <!-- Camera state -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">CAMERA STATE</span>
+                  <span class="dbg-badge dbg-badge-mem">memory · camState</span>
+                </div>
+                <div id="dbg-camera-table"></div>
+              </div>
+
+              <!-- Renderer / post-FX state -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">RENDERER / POST-FX STATE</span>
+                  <span class="dbg-badge dbg-badge-mem">memory · RendererManager</span>
+                </div>
+                <div id="dbg-renderer-table"></div>
+              </div>
+
+              <!-- Thumbnail cache -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">THUMBNAIL CACHE</span>
+                  <span class="dbg-badge dbg-badge-idb" id="dbg-thumb-badge">0 cached</span>
+                </div>
+                <div class="dbg-thumb-grid" id="dbg-thumb-grid"></div>
+              </div>
+
+              <!-- Channel maps -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">ACTIVE CHANNEL MAPS</span>
+                  <span class="dbg-badge dbg-badge-mem" id="dbg-channels-badge">0 active</span>
+                </div>
+                <div id="dbg-channels-table"></div>
+              </div>
+
+              <!-- IndexedDB inspector -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">INDEXEDDB — renderdeck_db</span>
+                </div>
+                <div id="dbg-idb-content"></div>
+              </div>
+
+              <!-- LocalStorage -->
+              <div class="dbg-section">
+                <div class="dbg-section-hdr">
+                  <span class="dbg-section-title">LOCALSTORAGE</span>
+                </div>
+                <div id="dbg-ls-table"></div>
+              </div>
+
             </div>
           </div>
 

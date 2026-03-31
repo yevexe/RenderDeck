@@ -1026,3 +1026,19 @@ export class ControlsManager {
     if (el) el.style.display = visible ? '' : 'none';
   }
 }
+
+/**
+ * Wire up tab buttons so the debug panel (Setting9) expands the sidebar
+ * leftward while all other panels use the standard width.
+ */
+export function initDebugPanelWidth() {
+  const panel = document.querySelector('.scene-settings');
+  if (!panel) return;
+
+  document.querySelectorAll('.tablinks').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const isDebug = btn.getAttribute('onclick')?.includes('Setting9');
+      panel.classList.toggle('scene-settings--wide', !!isDebug);
+    });
+  });
+}
