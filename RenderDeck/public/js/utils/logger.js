@@ -4,7 +4,7 @@
 import { FEATURES } from '../config.js';
 
 export class Logger {
-  constructor(debugPanelSelector = '.debug p') {
+  constructor(debugPanelSelector = '#dbg-log') {
     this.panel = document.querySelector(debugPanelSelector);
     this.logs = [];
     this.maxLogs = 100;

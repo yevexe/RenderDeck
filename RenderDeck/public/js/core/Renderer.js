@@ -48,14 +48,31 @@ export class RendererManager {
     this.bokehPass      = null;
     this.outputPass     = null;
 
-    // Effect state
+    // Effect state flags
     this.postFXEnabled      = false;
     this.bloomEnabled       = false;
     this.vignetteEnabled    = false;
     this.ssaoEnabled        = false;
     this.motionBlurEnabled  = false;
     this.dofEnabled         = false;
-    this.aaMode             = 'smaa'; // default AA when post-FX is on
+    this.aaMode             = 'smaa';
+
+    // Raw slider param values — used to initialise passes when they are first built
+    // and persisted to session state so the user's settings survive a reload.
+    this._params = {
+      bloom:      { strength: 0.35, radius: 0.20, threshold: 0.85 },
+      vignette:   { intensity: 0.125, softness: 0.3125, color: '#000000', blendMode: 0 },
+      ssao:       { intensity: 0.667, radius: 1.0 },
+      motionBlur: { strength: 0.844 },
+    };
+
+    // Stored scene/camera refs so we can rebuild the composer lazily
+    // when the user enables a pass that hasn't been added yet.
+    this._scene  = null;
+    this._camera = null;
+
+    // Which optional passes have been added to the composer
+    this._builtPasses = new Set();
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -63,8 +80,6 @@ export class RendererManager {
 
   // ─── Resize renderer + composer ──────────────────────────────
   resize() {
-    // If a custom resolution is set, keep the drawing buffer at that size
-    // but fit the canvas CSS to the container.
     if (this._customResolution) {
       const { w, h } = this._customResolution;
       this.renderer.setPixelRatio(1);
@@ -74,7 +89,7 @@ export class RendererManager {
       const w = this.container.clientWidth  || 1;
       const h = this.container.clientHeight || 1;
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      this.renderer.setSize(w, h, false); // false = don't overwrite CSS (handled by stylesheet)
+      this.renderer.setSize(w, h, false);
       this.resizeComposer(w, h);
     }
   }
@@ -104,87 +119,224 @@ export class RendererManager {
     this.resize();
   }
 
-  // ─── Build EffectComposer (called once on first render) ──────
+  // ─── Build (or rebuild) the EffectComposer ───────────────────
+  // Only adds the passes that are currently enabled, so shader
+  // compilation is deferred until each effect is actually needed.
   buildComposer(scene, camera) {
     const w  = this.container.clientWidth  || 1;
     const h  = this.container.clientHeight || 1;
     const pr = this.renderer.getPixelRatio();
 
+    this._scene  = scene;
+    this._camera = camera;
+
+    // Dispose existing composer when rebuilding
+    if (this.composer) {
+      this.composer.dispose();
+      this.composer = null;
+      this._builtPasses.clear();
+      this.taaPass = this.ssaaPass = this.renderPass = null;
+      this.ssaoPass = this.bloomPass = this.afterimagePass = null;
+      this.vignettePass = this.bokehPass = this.fxaaPass = this.smaaPass = this.outputPass = null;
+    }
+
     this.composer = new EffectComposer(this.renderer);
+    const on = this.postFXEnabled;
+    const aa = this.aaMode;
 
-    // 1. TAA — replaces RenderPass when aaMode === 'taa'
+    // ── Scene render passes (always added, only one active at a time) ─
     this.taaPass = new TAARenderPass(scene, camera);
-    this.taaPass.sampleLevel = 2;    // 4 jittered samples
+    this.taaPass.sampleLevel = 2;
     this.taaPass.accumulate  = true;
-    this.taaPass.enabled     = false;
+    this.taaPass.enabled     = on && aa === 'taa';
     this.composer.addPass(this.taaPass);
+    this._builtPasses.add('taa');
 
-    // 2. SSAA — replaces RenderPass when aaMode === 'ssaa'
     this.ssaaPass = new SSAARenderPass(scene, camera);
-    this.ssaaPass.sampleLevel = 2; // 4 supersamples per frame
-    this.ssaaPass.enabled     = false;
+    this.ssaaPass.sampleLevel = 2;
+    this.ssaaPass.enabled     = on && aa === 'ssaa';
     this.composer.addPass(this.ssaaPass);
+    this._builtPasses.add('ssaa');
 
-    // 3. Standard scene render (used for off / fxaa / smaa)
     this.renderPass = new RenderPass(scene, camera);
+    this.renderPass.enabled = !(on && (aa === 'taa' || aa === 'ssaa'));
     this.composer.addPass(this.renderPass);
 
-    // 4. SSAO
-    this.ssaoPass = new SSAOPass(scene, camera, w, h);
-    this.ssaoPass.kernelRadius = 16;
-    this.ssaoPass.minDistance  = 0.005;
-    this.ssaoPass.maxDistance  = 0.1;
-    this.ssaoPass.enabled = false;
-    this.composer.addPass(this.ssaoPass);
+    // ── Optional passes — only added when currently enabled ──────────
+    // This avoids compiling shaders for effects the user hasn't turned on.
+    // If the user enables a new effect later, _ensureOptionalPasses rebuilds.
 
-    // 5. Bloom
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.35, 0.20, 0.85);
-    this.bloomPass.enabled = false;
-    this.composer.addPass(this.bloomPass);
+    if (on && this.ssaoEnabled) {
+      this.ssaoPass = new SSAOPass(scene, camera, w, h);
+      this.ssaoPass.kernelRadius = Math.max(1, this._params.ssao.intensity * 24);
+      this.ssaoPass.minDistance  = 0.005;
+      this.ssaoPass.maxDistance  = Math.max(0.005, this._params.ssao.radius * 0.03);
+      this.ssaoPass.enabled = true;
+      this.composer.addPass(this.ssaoPass);
+      this._builtPasses.add('ssao');
+    }
 
-    // 6. Motion blur (afterimage)
-    this.afterimagePass = new AfterimagePass(0.88);
-    this.afterimagePass.enabled = false;
-    this.composer.addPass(this.afterimagePass);
+    if (on && this.bloomEnabled) {
+      this.bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(w, h),
+        this._params.bloom.strength,
+        this._params.bloom.radius,
+        this._params.bloom.threshold
+      );
+      this.bloomPass.enabled = true;
+      this.composer.addPass(this.bloomPass);
+      this._builtPasses.add('bloom');
+    }
 
-    // 7. Vignette (custom shader with color + blend-mode support)
-    this.vignettePass = new ShaderPass(CustomVignetteShader);
-    this.vignettePass.uniforms['offset'].value        = 0.75;
-    this.vignettePass.uniforms['darkness'].value      = 1.25;
-    this.vignettePass.uniforms['vignetteColor'].value = new THREE.Color(0x000000);
-    this.vignettePass.uniforms['blendMode'].value     = 0;
-    this.vignettePass.enabled = false;
-    this.composer.addPass(this.vignettePass);
+    if (on && this.motionBlurEnabled) {
+      this.afterimagePass = new AfterimagePass(0.5 + this._params.motionBlur.strength * 0.45);
+      this.afterimagePass.enabled = true;
+      this.composer.addPass(this.afterimagePass);
+      this._builtPasses.add('motionBlur');
+    }
 
-    // 8. Depth of Field (Bokeh)
-    this.bokehPass = new BokehPass(scene, camera, {
-      focus:    5.0,
-      aperture: 0.01,
-      maxblur:  0.01,
-    });
-    this.bokehPass.materialBokeh.fragmentShader = HQBokehFragmentShader;
-    this.bokehPass.materialBokeh.uniforms.uRings = { value: 6 };
-    this.bokehPass.materialBokeh.needsUpdate = true;
-    this.bokehPass.enabled = false;
-    this.composer.addPass(this.bokehPass);
+    if (on && this.vignetteEnabled) {
+      this.vignettePass = new ShaderPass(CustomVignetteShader);
+      this.vignettePass.uniforms['offset'].value        = 1.0 - this._params.vignette.softness * 0.8;
+      this.vignettePass.uniforms['darkness'].value      = 1.0 + this._params.vignette.intensity * 2.0;
+      this.vignettePass.uniforms['vignetteColor'].value = new THREE.Color(this._params.vignette.color);
+      this.vignettePass.uniforms['blendMode'].value     = this._params.vignette.blendMode;
+      this.vignettePass.enabled = true;
+      this.composer.addPass(this.vignettePass);
+      this._builtPasses.add('vignette');
+    }
 
-    // 9. FXAA
-    this.fxaaPass = new ShaderPass(FXAAShader);
-    this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
-    this.fxaaPass.enabled = false;
-    this.composer.addPass(this.fxaaPass);
+    if (on && this.dofEnabled) {
+      this.bokehPass = new BokehPass(scene, camera, {
+        focus:    5.0,
+        aperture: 0.01,
+        maxblur:  0.01,
+      });
+      this.bokehPass.materialBokeh.fragmentShader = HQBokehFragmentShader;
+      this.bokehPass.materialBokeh.uniforms.uRings = { value: 6 };
+      this.bokehPass.materialBokeh.needsUpdate = true;
+      this.bokehPass.enabled = true;
+      this.composer.addPass(this.bokehPass);
+      this._builtPasses.add('dof');
+    }
 
-    // 10. SMAA (better than FXAA — default post-AA choice)
-    this.smaaPass = new SMAAPass(w * pr, h * pr);
-    this.smaaPass.enabled = false;
-    this.composer.addPass(this.smaaPass);
+    if (on && aa === 'fxaa') {
+      this.fxaaPass = new ShaderPass(FXAAShader);
+      this.fxaaPass.material.uniforms['resolution'].value.set(1 / (w * pr), 1 / (h * pr));
+      this.fxaaPass.enabled = true;
+      this.composer.addPass(this.fxaaPass);
+      this._builtPasses.add('fxaa');
+    }
 
-    // 11. OutputPass — final tone mapping + sRGB encoding
+    if (on && aa === 'smaa') {
+      this.smaaPass = new SMAAPass(w * pr, h * pr);
+      this.smaaPass.enabled = true;
+      this.composer.addPass(this.smaaPass);
+      this._builtPasses.add('smaa');
+    }
+
+    // OutputPass — always last
     this.outputPass = new OutputPass();
     this.composer.addPass(this.outputPass);
+  }
 
-    // Apply initial AA state
-    this._syncPasses();
+  // ─── Pre-build composer + pre-compile scene shaders ──────────
+  // Call this after restoreState() so the right passes are built up-front.
+  // Returns a Promise — uses KHR_parallel_shader_compile in r163+ (Chrome/Edge)
+  // so compilation runs off the main thread and doesn't freeze the first frame.
+  async initComposer(scene, camera) {
+    if (!this.composer) this.buildComposer(scene, camera);
+    await this.renderer.compileAsync(scene, camera);
+  }
+
+  // ─── Serialise / restore renderer state ──────────────────────
+
+  getState() {
+    return {
+      postFXEnabled:     this.postFXEnabled,
+      bloomEnabled:      this.bloomEnabled,
+      vignetteEnabled:   this.vignetteEnabled,
+      ssaoEnabled:       this.ssaoEnabled,
+      motionBlurEnabled: this.motionBlurEnabled,
+      aaMode:            this.aaMode,
+      params: {
+        bloom:      { ...this._params.bloom },
+        vignette:   { ...this._params.vignette },
+        ssao:       { ...this._params.ssao },
+        motionBlur: { ...this._params.motionBlur },
+      },
+    };
+  }
+
+  // Applies saved state to internal flags + _params without touching the DOM
+  // or building the composer. Call syncUI() afterwards to push values to DOM.
+  restoreState(state) {
+    if (!state) return;
+    if (typeof state.postFXEnabled    === 'boolean') this.postFXEnabled    = state.postFXEnabled;
+    if (typeof state.bloomEnabled     === 'boolean') this.bloomEnabled     = state.bloomEnabled;
+    if (typeof state.vignetteEnabled  === 'boolean') this.vignetteEnabled  = state.vignetteEnabled;
+    if (typeof state.ssaoEnabled      === 'boolean') this.ssaoEnabled      = state.ssaoEnabled;
+    if (typeof state.motionBlurEnabled=== 'boolean') this.motionBlurEnabled= state.motionBlurEnabled;
+    if (typeof state.aaMode           === 'string')  this.aaMode           = state.aaMode;
+    if (state.params) {
+      if (state.params.bloom)      Object.assign(this._params.bloom,      state.params.bloom);
+      if (state.params.vignette)   Object.assign(this._params.vignette,   state.params.vignette);
+      if (state.params.ssao)       Object.assign(this._params.ssao,       state.params.ssao);
+      if (state.params.motionBlur) Object.assign(this._params.motionBlur, state.params.motionBlur);
+    }
+  }
+
+  // Push all internal state to the DOM (checkboxes, sliders, inputs, color pickers).
+  // Call this after restoreState() once the UI has been set up.
+  syncUI() {
+    const set    = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    const setCSS = (id, prop, val) => { const el = document.getElementById(id); if (el) el.style[prop] = val; };
+
+    // Global post-FX toggle
+    set('preview-toggle-postfx', this.postFXEnabled);
+
+    // Individual effect checkboxes
+    set('post-toggle-bloom',      this.bloomEnabled);
+    set('post-toggle-vignette',   this.vignetteEnabled);
+    set('post-toggle-ao',         this.ssaoEnabled);
+    set('post-toggle-motionblur', this.motionBlurEnabled);
+
+    // AA mode — activate the matching button in the row
+    const aaGroup = document.getElementById('aa-mode-buttons');
+    if (aaGroup) {
+      aaGroup.querySelectorAll('button').forEach(b => b.classList.remove('button-selected'));
+      const activeBtn = aaGroup.querySelector(`button[data-value="${this.aaMode}"]`);
+      if (activeBtn) activeBtn.classList.add('button-selected');
+    }
+
+    // Bloom sliders
+    setVal('bloom-strength-slider',  this._params.bloom.strength);
+    setVal('bloom-strength-input',   this._params.bloom.strength);
+    setVal('bloom-radius-slider',    this._params.bloom.radius);
+    setVal('bloom-radius-input',     this._params.bloom.radius);
+    setVal('bloom-threshold-slider', this._params.bloom.threshold);
+    setVal('bloom-threshold-input',  this._params.bloom.threshold);
+
+    // Vignette sliders + color
+    setVal('vignette-intensity-slider', this._params.vignette.intensity);
+    setVal('vignette-intensity-input',  this._params.vignette.intensity);
+    setVal('vignette-softness-slider',  this._params.vignette.softness);
+    setVal('vignette-softness-input',   this._params.vignette.softness);
+    setVal('vignette-color-picker',     this._params.vignette.color);
+    setVal('vignette-color-hex',        this._params.vignette.color);
+    setCSS('vignette-color-swatch', 'backgroundColor', this._params.vignette.color);
+    setVal('vignette-blend-mode',       this._params.vignette.blendMode);
+
+    // AO sliders
+    setVal('ao-intensity-slider', this._params.ssao.intensity);
+    setVal('ao-intensity-input',  this._params.ssao.intensity);
+    setVal('ao-radius-slider',    this._params.ssao.radius);
+    setVal('ao-radius-input',     this._params.ssao.radius);
+
+    // Motion blur slider
+    setVal('motionblur-strength-slider', this._params.motionBlur.strength);
+    setVal('motionblur-strength-input',  this._params.motionBlur.strength);
   }
 
   // ─── Global post-FX on/off ────────────────────────────────────
@@ -208,41 +360,45 @@ export class RendererManager {
   setFXAA(enabled) { this.setAA(enabled ? 'fxaa' : 'off'); }
 
   // ─── Bloom params ─────────────────────────────────────────────
-  setBloomStrength(v)  { if (this.bloomPass) this.bloomPass.strength  = v; }
-  setBloomRadius(v)    { if (this.bloomPass) this.bloomPass.radius    = v; }
-  setBloomThreshold(v) { if (this.bloomPass) this.bloomPass.threshold = v; }
+  setBloomStrength(v)  { this._params.bloom.strength  = v; if (this.bloomPass) this.bloomPass.strength  = v; }
+  setBloomRadius(v)    { this._params.bloom.radius    = v; if (this.bloomPass) this.bloomPass.radius    = v; }
+  setBloomThreshold(v) { this._params.bloom.threshold = v; if (this.bloomPass) this.bloomPass.threshold = v; }
 
   // ─── Vignette params ──────────────────────────────────────────
   setVignetteIntensity(v) {
-    // darkness: 1.0 = none, 2.5 = strong
+    this._params.vignette.intensity = v;
     if (this.vignettePass) this.vignettePass.uniforms['darkness'].value = 1.0 + v * 2.0;
   }
 
   setVignetteSoftness(v) {
-    // offset: 1.0 = soft edge, 0.2 = sharp vignette ring
+    this._params.vignette.softness = v;
     if (this.vignettePass) this.vignettePass.uniforms['offset'].value = 1.0 - v * 0.8;
   }
 
   setVignetteColor(hex) {
+    this._params.vignette.color = hex;
     if (this.vignettePass) this.vignettePass.uniforms['vignetteColor'].value.set(hex);
   }
 
   setVignetteBlendMode(mode) {
+    this._params.vignette.blendMode = mode | 0;
     if (this.vignettePass) this.vignettePass.uniforms['blendMode'].value = mode | 0;
   }
 
   // ─── SSAO params ─────────────────────────────────────────────
   setSSAOIntensity(v) {
+    this._params.ssao.intensity = v;
     if (this.ssaoPass) this.ssaoPass.kernelRadius = Math.max(1, v * 24);
   }
 
   setSSAORadius(v) {
+    this._params.ssao.radius = v;
     if (this.ssaoPass) this.ssaoPass.maxDistance = Math.max(0.005, v * 0.03);
   }
 
   // ─── Motion blur param ────────────────────────────────────────
   setMotionBlurStrength(v) {
-    // afterimage damp: 0 = no trail, 1 = permanent ghost
+    this._params.motionBlur.strength = v;
     if (this.afterimagePass) this.afterimagePass.uniforms['damp'].value = 0.5 + v * 0.45;
   }
 
@@ -251,7 +407,6 @@ export class RendererManager {
     this.dofEnabled = enabled;
     if (this.bokehPass) {
       this.bokehPass.uniforms['focus'].value    = focus;
-      // aperture: slider 0..1 → small range that looks good (0.0001 to 0.003)
       this.bokehPass.uniforms['aperture'].value = aperture * 0.003;
       this.bokehPass.uniforms['maxblur'].value  = maxblur;
       this.bokehPass.materialBokeh.uniforms.uRings.value = Math.round(rings);
@@ -275,22 +430,22 @@ export class RendererManager {
         this.postFXEnabled = true;
         this.bloomEnabled = true; this.vignetteEnabled = false;
         this.ssaoEnabled = false; this.motionBlurEnabled = false;
-        if (this.bloomPass) { this.bloomPass.strength = 0.20; this.bloomPass.radius = 0.10; this.bloomPass.threshold = 0.90; }
+        this.setBloomStrength(0.20); this.setBloomRadius(0.10); this.setBloomThreshold(0.90);
         break;
 
       case 'pretty':
         this.postFXEnabled = true;
         this.bloomEnabled = true; this.ssaoEnabled = true;
         this.vignetteEnabled = false; this.motionBlurEnabled = false;
-        if (this.bloomPass) { this.bloomPass.strength = 0.35; this.bloomPass.radius = 0.20; this.bloomPass.threshold = 0.85; }
+        this.setBloomStrength(0.35); this.setBloomRadius(0.20); this.setBloomThreshold(0.85);
         break;
 
       case 'cinema':
         this.postFXEnabled = true;
         this.bloomEnabled = true; this.vignetteEnabled = true;
         this.ssaoEnabled = false; this.motionBlurEnabled = false;
-        if (this.bloomPass) { this.bloomPass.strength = 0.50; this.bloomPass.radius = 0.30; this.bloomPass.threshold = 0.80; }
-        if (this.vignettePass) { this.vignettePass.uniforms['darkness'].value = 1.5; this.vignettePass.uniforms['offset'].value = 0.65; }
+        this.setBloomStrength(0.50); this.setBloomRadius(0.30); this.setBloomThreshold(0.80);
+        this.setVignetteIntensity(0.25); this.setVignetteSoftness(0.4375);
         break;
     }
 
@@ -298,31 +453,52 @@ export class RendererManager {
     this._syncCheckboxes();
   }
 
-  // Internal: sync every pass's .enabled to current state flags
-  _syncPasses() {
-    const on    = this.postFXEnabled;
-    const aa    = this.aaMode;
+  // ─── Internal: rebuild if newly-enabled passes are missing ───
+  _ensureOptionalPasses() {
+    if (!this.composer || !this._scene) return;
+    const on = this.postFXEnabled;
+    const aa = this.aaMode;
 
-    // Exactly one scene-render pass active: TAA/SSAA replace RenderPass
+    const needsRebuild =
+      (on && this.ssaoEnabled       && !this._builtPasses.has('ssao'))       ||
+      (on && this.bloomEnabled      && !this._builtPasses.has('bloom'))      ||
+      (on && this.motionBlurEnabled && !this._builtPasses.has('motionBlur')) ||
+      (on && this.vignetteEnabled   && !this._builtPasses.has('vignette'))   ||
+      (on && this.dofEnabled        && !this._builtPasses.has('dof'))        ||
+      (on && aa === 'fxaa'          && !this._builtPasses.has('fxaa'))       ||
+      (on && aa === 'smaa'          && !this._builtPasses.has('smaa'));
+
+    if (needsRebuild) {
+      this.buildComposer(this._scene, this._camera);
+      // Pre-compile the newly-added pass shaders so the first rendered frame doesn't stall.
+      this.renderer.compile(this._scene, this._camera);
+    }
+  }
+
+  // ─── Internal: sync every pass's .enabled to current state flags ─
+  _syncPasses() {
+    // If a newly-enabled pass isn't in the composer yet, rebuild first.
+    this._ensureOptionalPasses();
+
+    const on = this.postFXEnabled;
+    const aa = this.aaMode;
+
     const useTAA  = on && aa === 'taa';
     const useSSAA = on && aa === 'ssaa';
     if (this.taaPass)        this.taaPass.enabled        = useTAA;
     if (this.ssaaPass)       this.ssaaPass.enabled       = useSSAA;
     if (this.renderPass)     this.renderPass.enabled     = !(useTAA || useSSAA);
 
-    // Effect passes — only when post-FX is on
     if (this.bloomPass)       this.bloomPass.enabled       = on && this.bloomEnabled;
     if (this.ssaoPass)        this.ssaoPass.enabled        = on && this.ssaoEnabled;
     if (this.afterimagePass)  this.afterimagePass.enabled  = on && this.motionBlurEnabled;
     if (this.vignettePass)    this.vignettePass.enabled    = on && this.vignetteEnabled;
     if (this.bokehPass)       this.bokehPass.enabled       = on && this.dofEnabled;
-
-    // Post-AA passes — only when post-FX is on
-    if (this.fxaaPass)  this.fxaaPass.enabled  = on && aa === 'fxaa';
-    if (this.smaaPass)  this.smaaPass.enabled  = on && aa === 'smaa';
+    if (this.fxaaPass)        this.fxaaPass.enabled        = on && aa === 'fxaa';
+    if (this.smaaPass)        this.smaaPass.enabled        = on && aa === 'smaa';
   }
 
-  // Internal: push state back into the Setting 6 checkboxes
+  // ─── Internal: push enabled flags back into Setting 6 checkboxes ─
   _syncCheckboxes() {
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val; };
     set('post-toggle-bloom',      this.bloomEnabled);

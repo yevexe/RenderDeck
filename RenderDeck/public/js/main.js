@@ -17,7 +17,7 @@ import { MaterialManager } from './materials/MaterialManager.js';
 import { ModelManager } from './models/ModelManager.js';
 
 import { UVEditor } from './ui/UVEditor.js';
-import { ControlsManager } from './ui/Controls.js';
+import { ControlsManager, initDebugPanelWidth } from './ui/Controls.js';
 import { SceneStateManager }    from './stateEditor/SceneState.js';
 import { DesignStateManager }   from './stateEditor/DesignState.js';
 import { MaterialStateManager } from './stateEditor/MaterialState.js';
@@ -756,6 +756,27 @@ function cleanupActiveModel() {
 
 const _matThumbCache = new Map(); // presetName → dataUrl
 
+// IDB thumbnail cache — persists rendered thumbnails across page loads.
+// Bump THUMB_CACHE_VERSION when standard preset visuals change to force a re-render.
+const THUMB_CACHE_VERSION = 1;
+const THUMB_IDB_PREFIX    = `thumb:v${THUMB_CACHE_VERSION}:`;
+
+async function loadCachedThumbnails() {
+  try {
+    const keys = await IDBStorage.getAllKeys('blobs');
+    await Promise.all(
+      keys
+        .filter(k => k.startsWith(THUMB_IDB_PREFIX))
+        .map(async (key) => {
+          const dataUrl = await IDBStorage.get('blobs', key);
+          if (dataUrl) _matThumbCache.set(key.slice(THUMB_IDB_PREFIX.length), dataUrl);
+        })
+    );
+  } catch (err) {
+    console.warn('Thumbnail cache load failed:', err);
+  }
+}
+
 // ── Warmup (main renderer) ──────────────────────────────────────────────────
 let _warmupScene      = null;
 let _warmupCamera     = null;
@@ -809,12 +830,12 @@ function _ensureThumbRenderer() {
 
 /**
  * For each preset:
- *  - render its cached material instance with the MAIN renderer (tiny target) so
- *    onFirstUse fires and getUniforms is cached — material switches are instant.
- *  - render a fresh copy with the dedicated antialias renderer and cache the dataUrl.
+ *  - compile its shader asynchronously via compileAsync (uses KHR_parallel_shader_compile
+ *    on Chrome/Edge so gl.linkProgram runs on the GPU thread, not the main thread).
+ *  - render a thumbnail with the dedicated antialias renderer if not already cached.
  *
- * Runs asynchronously, yielding one rAF between each preset so shader compilation
- * is spread across frames instead of blocking the main thread all at once.
+ * compileAsync suspends the async function while the GPU compiles, so the main
+ * thread stays responsive — no more 350ms+ frame stalls per preset.
  */
 async function warmupAndGenerateThumbnails() {
   const renderer = rendererManager.getRenderer();
@@ -829,46 +850,31 @@ async function warmupAndGenerateThumbnails() {
   _thumbScene.environment           = env ?? null;
   _thumbScene.environmentIntensity  = env ? 0.4 : 0;
 
-  const warmupTarget = new THREE.WebGLRenderTarget(1, 1);
-
   for (const name of materialManager.getPresetNames()) {
-    // Yield to the main thread before each preset so the render loop stays responsive
-    await new Promise(resolve => requestAnimationFrame(resolve));
-
-    // Save renderer state
-    const prevTarget   = renderer.getRenderTarget();
-    const prevToneMap  = renderer.toneMapping;
-    const prevExposure = renderer.toneMappingExposure;
-    const prevClearCol = new THREE.Color();
-    const prevClearA   = renderer.getClearAlpha();
-    renderer.getClearColor(prevClearCol);
-
-    renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.4;
-    renderer.setRenderTarget(warmupTarget);
-    renderer.setClearColor(0x252525, 1);
-
+    // Assign fresh material and compile its shader asynchronously.
+    // compileAsync uses KHR_parallel_shader_compile if available: the GPU links
+    // the program in parallel while JS is suspended, then the Promise resolves.
+    // On browsers without the extension it falls back to synchronous compile.
     const mat = materialManager.createFreshPreset(name);
     if (env) materialManager.applyEnvironment(mat, env);
     _warmupSphereMesh.material = mat;
-    renderer.render(_warmupScene, _warmupCamera);
+    await renderer.compileAsync(_warmupScene, _warmupCamera);
     mat.dispose();
 
-    // Restore renderer state
-    renderer.setRenderTarget(prevTarget);
-    renderer.toneMapping         = prevToneMap;
-    renderer.toneMappingExposure = prevExposure;
-    renderer.setClearColor(prevClearCol, prevClearA);
+    // Thumbnail — skip if already loaded from IDB cache
+    if (!_matThumbCache.has(name)) {
+      const thumbMat = materialManager.createFreshPreset(name);
+      _thumbSphereMesh.material = thumbMat;
+      _thumbRenderer.render(_thumbScene, _thumbCamera);
+      const dataUrl = _thumbRenderer.domElement.toDataURL();
+      _matThumbCache.set(name, dataUrl);
+      IDBStorage.put('blobs', THUMB_IDB_PREFIX + name, dataUrl).catch(() => {});
+      thumbMat.dispose();
+    }
 
-    // Thumbnail uses a separate renderer — no state conflict
-    const thumbMat = materialManager.createFreshPreset(name);
-    _thumbSphereMesh.material = thumbMat;
-    _thumbRenderer.render(_thumbScene, _thumbCamera);
-    _matThumbCache.set(name, _thumbRenderer.domElement.toDataURL());
-    thumbMat.dispose();
+    // Yield to keep the render loop responsive between presets
+    await new Promise(resolve => requestAnimationFrame(resolve));
   }
-
-  warmupTarget.dispose();
 
   // Warmup resets cached preset instances — re-apply sticker state
   uvEditor.reapplyDecalState();
@@ -1575,6 +1581,7 @@ function saveSessionState() {
       },
       uvEditor: uvEditor.getSessionState?.() || null,
       props: propManager.getSceneData(),
+      rendererState: rendererManager.getState(),
     };
     // Fast startup hint (sync read/write, tiny payload)
     try {
@@ -1586,6 +1593,7 @@ function saveSessionState() {
         sceneName: state.sceneName,
         materialPreset: state.materialPreset,
         camera: state.camera,
+        rendererState: state.rendererState,
       }));
     } catch (_) {
       // ignore localStorage quota/availability failures
@@ -1716,6 +1724,16 @@ async function restoreSessionState() {
       await propManager.loadSceneData(state.props);
     }
 
+    // Restore renderer/post-FX settings from the authoritative IDB state.
+    // Also syncs DOM sliders/checkboxes to match.
+    if (state.rendererState) {
+      rendererManager.restoreState(state.rendererState);
+      rendererManager.syncUI();
+      // _syncPasses is not called here — initComposer already ran with the
+      // correct state from the localStorage boot key (which is written in sync).
+      // If for any reason they differ, the next _syncPasses call will rebuild.
+    }
+
     // Restore camera model/settings last so model framing doesn't override it.
     if (state.camState && typeof state.camState === 'object') {
       Object.assign(camState, state.camState);
@@ -1780,7 +1798,9 @@ function scheduleThumbnailUpdate(name, mat) {
     const m = owned ? mat : materialManager.createFreshPreset(name);
     _thumbSphereMesh.material = m;
     _thumbRenderer.render(_thumbScene, _thumbCamera);
-    _matThumbCache.set(name, _thumbRenderer.domElement.toDataURL());
+    const dataUrl = _thumbRenderer.domElement.toDataURL();
+    _matThumbCache.set(name, dataUrl);
+    IDBStorage.put('blobs', THUMB_IDB_PREFIX + name, dataUrl).catch(() => {});
     if (!owned) m.dispose();
     updateMaterialPresetList();
   };
@@ -1871,8 +1891,11 @@ function _commitRename() {
     // User preset — rename in place
     materialManager.renamePreset(current, newName);
     if (_matThumbCache.has(current)) {
-      _matThumbCache.set(newName, _matThumbCache.get(current));
+      const dataUrl = _matThumbCache.get(current);
+      _matThumbCache.set(newName, dataUrl);
       _matThumbCache.delete(current);
+      IDBStorage.put('blobs', THUMB_IDB_PREFIX + newName, dataUrl).catch(() => {});
+      IDBStorage.del('blobs', THUMB_IDB_PREFIX + current).catch(() => {});
     }
     log(`Renamed "${current}" → "${newName}"`);
   }
@@ -1911,6 +1934,7 @@ document.getElementById('delete-current-material')?.addEventListener('click', ()
     materialManager.dispose(activeMesh?.material);
   }
   _matThumbCache.delete(current);
+  IDBStorage.del('blobs', THUMB_IDB_PREFIX + current).catch(() => {});
   updateMaterialPresetList();
   log(`Removed material: "${current}"`);
 });
@@ -1928,6 +1952,10 @@ document.getElementById('reset-cache-btn')?.addEventListener('click', () => {
   localStorage.removeItem('rd_hidden_presets');
   localStorage.removeItem('rd_session_boot');
   indexedDB.deleteDatabase('renderDeck_customModels');
+  // Clear persisted thumbnail cache from IDB
+  IDBStorage.getAllKeys('blobs').then(keys => {
+    keys.filter(k => k.startsWith('thumb:')).forEach(k => IDBStorage.del('blobs', k).catch(() => {}));
+  }).catch(() => {});
   location.reload();
 });
 
@@ -2932,7 +2960,21 @@ function animate() {
     _renderBurst--;
   }
 }
+// Restore renderer state from the last session (sync localStorage read) before
+// building the composer, so only the passes the user had enabled get compiled.
+try {
+  const raw = localStorage.getItem(SESSION_BOOT_KEY);
+  if (raw) {
+    const boot = JSON.parse(raw);
+    if (boot?.rendererState) rendererManager.restoreState(boot.rendererState);
+  }
+} catch (_) { /* ignore malformed/blocked localStorage */ }
+
 animate();
+
+// Pre-build the EffectComposer with only the restored passes and compile
+// their shaders before the first rendered frame.
+rendererManager.initComposer(sceneManager.getScene(), cameraManager.getCamera());
 
 //═══════════════════════════════════════════════════════════════
 // VALUE-INPUT SPINNER ARROWS
@@ -3007,6 +3049,255 @@ function setupValueInputSpinners() {
 }
 
 //═══════════════════════════════════════════════════════════════
+// DEBUG INSPECTOR
+//═══════════════════════════════════════════════════════════════
+
+function _dbgBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(2) + ' MB';
+}
+
+function _dbgFmtVal(val) {
+  if (val === null || val === undefined) return '<span class="dbg-val-null">null</span>';
+  if (typeof val === 'boolean') return `<span class="dbg-val-bool">${val}</span>`;
+  if (typeof val === 'number')  return `<span class="dbg-val-num">${Number.isInteger(val) ? val : val.toFixed(4)}</span>`;
+  if (typeof val === 'object')  return `<span class="dbg-val-obj">{…}</span>`;
+  const s = String(val);
+  // hex color swatch
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) {
+    return `<span class="dbg-color-swatch" style="background:${s}"></span><span class="dbg-val-str">${s}</span>`;
+  }
+  const display = s.length > 72 ? s.slice(0, 69) + '…' : s;
+  return `<span class="dbg-val-str" title="${s.replace(/"/g,'&quot;')}">${display}</span>`;
+}
+
+function _dbgKVRows(obj) {
+  if (!obj || typeof obj !== 'object') return '<div class="dbg-empty">—</div>';
+  return '<div class="dbg-kv">' +
+    Object.entries(obj).map(([k, v]) =>
+      `<div class="dbg-row"><span class="dbg-key">${k}</span><span class="dbg-val">${_dbgFmtVal(v)}</span></div>`
+    ).join('') +
+  '</div>';
+}
+
+async function refreshDebugPanel() {
+
+  // ── Active model ──────────────────────────────────────────────
+  const modelEl    = document.getElementById('dbg-model-table');
+  const modelBadge = document.getElementById('dbg-model-badge');
+  if (modelEl) {
+    let meshCount = 0, vertCount = 0, triCount = 0;
+    if (activeModel) {
+      activeModel.traverse(c => {
+        if (!c.isMesh) return;
+        meshCount++;
+        const pos = c.geometry?.attributes?.position;
+        if (pos) vertCount += pos.count;
+        const idx = c.geometry?.index;
+        triCount += idx ? idx.count / 3 : (pos ? pos.count / 3 : 0);
+      });
+    }
+    if (modelBadge) modelBadge.textContent = activeModel ? activeModel.name || 'unnamed' : 'none';
+    modelEl.innerHTML = _dbgKVRows({
+      name:         activeModel?.name             ?? null,
+      meshCount:    activeModel ? meshCount        : null,
+      vertices:     activeModel ? vertCount        : null,
+      triangles:    activeModel ? Math.round(triCount) : null,
+      activeMesh:   activeMesh?.name              ?? null,
+      material:     activeMesh?.material?.name    ?? null,
+      transmission: activeMesh?.material?.transmission ?? null,
+      metalness:    activeMesh?.material?.metalness    ?? null,
+      roughness:    activeMesh?.material?.roughness    ?? null,
+    });
+  }
+
+  // ── Session state (IDB) ───────────────────────────────────────
+  const sessionEl = document.getElementById('dbg-session-table');
+  if (sessionEl) {
+    try {
+      const s = await IDBStorage.get('metadata', SESSION_STORAGE_KEY);
+      sessionEl.innerHTML = s ? _dbgKVRows({
+        version:            s.version,
+        savedAt:            s.savedAt ? new Date(s.savedAt).toLocaleString() : null,
+        modelName:          s.modelName,
+        partName:           s.partName,
+        sceneName:          s.sceneName,
+        activeCustomScene:  s.activeCustomScene,
+        materialPreset:     s.materialPreset,
+        isCustomMaterial:   s.isCustomMaterial,
+        showEnvBackground:  s.showEnvBackground,
+        gradientBgEnabled:  s.gradientBgEnabled,
+        currentGradientBg:  s.currentGradientBg,
+        hasMaterialProps:   !!s.materialProperties,
+        channelMapCount:    Object.keys(s.materialProperties?.channelMaps ?? {}).length,
+        hasUVEditor:        !!s.uvEditor,
+        propCount:          s.props?.length ?? 0,
+        hasRendererState:   !!s.rendererState,
+        'cam.type':         s.camState?.type,
+        'cam.focalLength':  s.camState?.focalLength,
+        'cam.toneMapping':  s.camState?.toneMapping,
+        'cam.dofEnabled':   s.camState?.dofEnabled,
+      }) : '<div class="dbg-empty">No session state in IDB</div>';
+    } catch (e) {
+      sessionEl.innerHTML = `<div class="dbg-error">${e.message}</div>`;
+    }
+  }
+
+  // ── Camera state ──────────────────────────────────────────────
+  const cameraEl = document.getElementById('dbg-camera-table');
+  if (cameraEl) cameraEl.innerHTML = _dbgKVRows(camState);
+
+  // ── Renderer / post-FX state ──────────────────────────────────
+  const rendererEl = document.getElementById('dbg-renderer-table');
+  if (rendererEl) {
+    const rs = rendererManager.getState();
+    rendererEl.innerHTML = _dbgKVRows({
+      postFXEnabled:           rs.postFXEnabled,
+      aaMode:                  rs.aaMode,
+      bloomEnabled:            rs.bloomEnabled,
+      vignetteEnabled:         rs.vignetteEnabled,
+      ssaoEnabled:             rs.ssaoEnabled,
+      motionBlurEnabled:       rs.motionBlurEnabled,
+      'bloom.strength':        rs.params.bloom.strength,
+      'bloom.radius':          rs.params.bloom.radius,
+      'bloom.threshold':       rs.params.bloom.threshold,
+      'vignette.intensity':    rs.params.vignette.intensity,
+      'vignette.softness':     rs.params.vignette.softness,
+      'vignette.color':        rs.params.vignette.color,
+      'vignette.blendMode':    rs.params.vignette.blendMode,
+      'ssao.intensity':        rs.params.ssao.intensity,
+      'ssao.radius':           rs.params.ssao.radius,
+      'motionBlur.strength':   rs.params.motionBlur.strength,
+    });
+  }
+
+  // ── Thumbnail cache ───────────────────────────────────────────
+  const thumbGrid  = document.getElementById('dbg-thumb-grid');
+  const thumbBadge = document.getElementById('dbg-thumb-badge');
+  if (thumbGrid) {
+    if (thumbBadge) thumbBadge.textContent = `${_matThumbCache.size} cached`;
+    thumbGrid.innerHTML = _matThumbCache.size === 0
+      ? '<div class="dbg-empty">No thumbnails in memory</div>'
+      : [..._matThumbCache.entries()].map(([name, url]) =>
+          `<div class="dbg-thumb-item">
+            <img src="${url}" class="dbg-thumb-img" title="${name}">
+            <div class="dbg-thumb-label">${name}</div>
+          </div>`
+        ).join('');
+  }
+
+  // ── Active channel maps ───────────────────────────────────────
+  const channelsEl    = document.getElementById('dbg-channels-table');
+  const channelsBadge = document.getElementById('dbg-channels-badge');
+  if (channelsEl) {
+    if (channelsBadge) channelsBadge.textContent = `${_channelMapData.size} active`;
+    if (_channelMapData.size === 0) {
+      channelsEl.innerHTML = '<div class="dbg-empty">No channel maps loaded</div>';
+    } else {
+      channelsEl.innerHTML = '<div class="dbg-kv">' +
+        [..._channelMapData.entries()].map(([key, dataUrl]) => {
+          const bytes = _dbgBytes(Math.round(dataUrl.length * 0.75));
+          const fmt   = dataUrl.slice(5, dataUrl.indexOf(';')) || 'unknown';
+          return `<div class="dbg-row">
+            <span class="dbg-key">${key}</span>
+            <span class="dbg-val">
+              <img src="${dataUrl}" class="dbg-channel-preview">
+              <span class="dbg-val-num">${bytes}</span>
+              <span class="dbg-val-null"> · ${fmt}</span>
+            </span>
+          </div>`;
+        }).join('') +
+      '</div>';
+    }
+  }
+
+  // ── IndexedDB inspector ───────────────────────────────────────
+  const idbEl = document.getElementById('dbg-idb-content');
+  if (idbEl) {
+    try {
+      const [modelKeys, blobKeys, metaKeys] = await Promise.all([
+        IDBStorage.getAllKeys('models'),
+        IDBStorage.getAllKeys('blobs'),
+        IDBStorage.getAllKeys('metadata'),
+      ]);
+      const thumbKeys = blobKeys.filter(k => k.startsWith('thumb:'));
+      const otherBlob = blobKeys.filter(k => !k.startsWith('thumb:'));
+
+      const storeBlock = (name, badge, rows) =>
+        `<div class="dbg-idb-store">
+          <div class="dbg-store-header">
+            <span class="dbg-store-name">${name}</span>
+            <span class="dbg-badge dbg-badge-idb">${badge}</span>
+          </div>
+          ${rows}
+        </div>`;
+
+      const keyRows = (keys, valLabel) => keys.length
+        ? '<div class="dbg-kv">' + keys.map(k =>
+            `<div class="dbg-row">
+              <span class="dbg-key">${k}</span>
+              <span class="dbg-val dbg-val-null">${valLabel}</span>
+            </div>`).join('') + '</div>'
+        : '<div class="dbg-empty">empty</div>';
+
+      idbEl.innerHTML =
+        storeBlock('models', `${modelKeys.length} entries`,
+          keyRows(modelKeys, 'custom model binary')) +
+        storeBlock('blobs', `${blobKeys.length} entries`,
+          `<div class="dbg-store-subheader">material thumbnails (${thumbKeys.length})</div>` +
+          keyRows(thumbKeys, 'dataURL · 64×64 PNG') +
+          `<div class="dbg-store-subheader">other blobs (${otherBlob.length})</div>` +
+          keyRows(otherBlob, 'blob')) +
+        storeBlock('metadata', `${metaKeys.length} entries`,
+          keyRows(metaKeys, 'JSON'));
+    } catch (e) {
+      idbEl.innerHTML = `<div class="dbg-error">${e.message}</div>`;
+    }
+  }
+
+  // ── LocalStorage ──────────────────────────────────────────────
+  const lsEl = document.getElementById('dbg-ls-table');
+  if (lsEl) {
+    const LS_KEYS = [
+      { key: SESSION_BOOT_KEY,              label: SESSION_BOOT_KEY },
+      { key: 'rd_user_presets',             label: 'rd_user_presets' },
+      { key: 'rd_hidden_presets',           label: 'rd_hidden_presets' },
+      { key: 'renderdeck_sketchfab_token',  label: 'renderdeck_sketchfab_token', mask: true },
+    ];
+    lsEl.innerHTML = '<div class="dbg-kv">' +
+      LS_KEYS.map(({ key, label, mask }) => {
+        const raw = localStorage.getItem(key);
+        let display;
+        if (raw === null) {
+          display = '<span class="dbg-val-null">not set</span>';
+        } else if (mask) {
+          display = `<span class="dbg-val-str">${raw.slice(0, 8)}… <span class="dbg-val-null">(${_dbgBytes(raw.length)})</span></span>`;
+        } else {
+          let parsed = null;
+          try { parsed = JSON.parse(raw); } catch (_) {}
+          const size = _dbgBytes(raw.length);
+          if (parsed && typeof parsed === 'object') {
+            const count = Array.isArray(parsed) ? `${parsed.length} items` : `${Object.keys(parsed).length} keys`;
+            display = `<span class="dbg-val-obj">${count} <span class="dbg-val-null">· ${size}</span></span>`;
+          } else {
+            display = `<span class="dbg-val-str">${size}</span>`;
+          }
+        }
+        return `<div class="dbg-row"><span class="dbg-key">${label}</span><span class="dbg-val">${display}</span></div>`;
+      }).join('') +
+    '</div>';
+  }
+}
+
+function setupDebugPanel() {
+  document.getElementById('dbg-refresh-btn')?.addEventListener('click', refreshDebugPanel);
+  // Auto-refresh when the debug tab is opened
+  document.querySelector('button[title="Debug"]')
+    ?.addEventListener('click', () => setTimeout(refreshDebugPanel, 60));
+}
+
+//═══════════════════════════════════════════════════════════════
 // INITIAL SETUP
 //═══════════════════════════════════════════════════════════════
 
@@ -3031,6 +3322,10 @@ async function initializeApp() {
     // ignore malformed/blocked localStorage
   }
 
+  // Load persisted thumbnails before building the preset list so they appear
+  // immediately without waiting for warmupAndGenerateThumbnails to re-render them.
+  await loadCachedThumbnails();
+
   await materialPresetsReady;
   warmupAndGenerateThumbnails();
   await updateModelList();
@@ -3046,6 +3341,8 @@ async function initializeApp() {
   await setupSceneSetupUI();
   setupHistoryUI();
   setupValueInputSpinners();
+  setupDebugPanel();
+  initDebugPanelWidth();
 
   // Apply initial renderer tone mapping
   rendererManager.getRenderer().toneMapping = THREE.ACESFilmicToneMapping;

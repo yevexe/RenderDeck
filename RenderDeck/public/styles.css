@@ -1160,6 +1160,11 @@ hr {
   flex-direction: column;
 }
 
+.scene-settings--wide {
+  flex: 0 0 520px;
+  width: 520px;
+}
+
 .scene-settings-controls {
   flex: 1;
   overflow-y: auto;
@@ -1523,20 +1528,174 @@ hr {
 .sc-arrow-up { transform: rotate(-90deg); }
 .sc-arrow-down { transform: rotate(90deg); }
 
-/* Debug panel (Tab 8) */
-.debug-panel {
-  background-color: #1a1a1a;
-  border: 1px solid #444;
-  border-radius: 4px;
-  padding: 10px;
-  max-height: 500px;
-  overflow-y: auto;
-  font-size: 12px;
-  line-height: 1.6;
+/* ═══════════════════════════════════════════════════════════
+   DEBUG INSPECTOR (Setting 9)
+═══════════════════════════════════════════════════════════ */
+
+.tab-panel-setting9 {
+  padding: 0;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  color: #c0c0c0;
+  background: #090909;
 }
-.debug-panel::-webkit-scrollbar { width: 6px; }
-.debug-panel::-webkit-scrollbar-track { background: #111; }
-.debug-panel::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+/* Top bar */
+.dbg-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid #1c1c1c;
+  background: #0d0d0d;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dbg-title { display: flex; flex-direction: column; gap: 3px; }
+.dbg-title-label {
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.14em; color: #00cc88;
+}
+.dbg-title-sub { font-size: 9px; color: #686868; letter-spacing: 0.06em; }
+.dbg-topbar-actions { display: flex; gap: 6px; }
+
+.dbg-btn {
+  font-family: inherit; font-size: 10px;
+  padding: 4px 10px; border-radius: 3px; cursor: pointer;
+  border: 1px solid #2a2a2a; background: #131313; color: #888;
+  letter-spacing: 0.05em; transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.dbg-btn:hover { background: #1e1e1e; color: #ccc; border-color: #444; }
+.dbg-btn-danger { border-color: #4a1a1a; color: #c05050; }
+.dbg-btn-danger:hover { background: #1e0a0a; color: #e07070; border-color: #7a2a2a; }
+
+/* Storage architecture diagram */
+.dbg-diagram {
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid #141414;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.dbg-diagram-row { display: flex; gap: 6px; }
+.dbg-diagram-layer {
+  border: 1px solid #1e1e1e; border-radius: 3px;
+  padding: 4px 8px; flex: 1;
+}
+.dbg-layer-mem  { border-color: #0e2a1a; background: #070f0c; }
+.dbg-layer-ls   { border-color: #0e1e2e; background: #060c12; }
+.dbg-layer-idb  { border-color: #221e0a; background: #0d0b04; }
+.dbg-layer-label {
+  font-size: 8.5px; letter-spacing: 0.1em;
+  margin-bottom: 3px; text-transform: uppercase;
+}
+.dbg-layer-mem .dbg-layer-label { color: #3aaa70; }
+.dbg-layer-ls  .dbg-layer-label { color: #3a7aba; }
+.dbg-layer-idb .dbg-layer-label { color: #aaa030; }
+.dbg-layer-items { display: flex; flex-wrap: wrap; gap: 3px; }
+.dbg-chip {
+  font-size: 9px; padding: 2px 6px; border-radius: 2px;
+  background: #141414; color: #888;
+  border: 1px solid #222; white-space: nowrap;
+}
+.dbg-diagram-arrow {
+  text-align: center; font-size: 9px; color: #555;
+  letter-spacing: 0.08em; padding: 1px 0;
+}
+
+/* Sections */
+.dbg-section { border-bottom: 1px solid #111; }
+.dbg-section-hdr {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px; background: #0c0c0c;
+  border-bottom: 1px solid #161616;
+}
+.dbg-section-title {
+  font-size: 9px; font-weight: 700;
+  letter-spacing: 0.15em; color: #707070; text-transform: uppercase;
+}
+
+/* Badges */
+.dbg-badge {
+  font-size: 8.5px; padding: 1px 6px; border-radius: 2px;
+  background: #141414; color: #686868;
+  border: 1px solid #1e1e1e; letter-spacing: 0.04em;
+}
+.dbg-badge-idb { background: #120f00; border-color: #2e2800; color: #908030; }
+.dbg-badge-mem { background: #001208; border-color: #002818; color: #309060; }
+
+/* Key–value rows */
+.dbg-kv { padding: 1px 0; }
+.dbg-row {
+  display: flex; align-items: center; gap: 0;
+  padding: 1px 10px; border-bottom: 1px solid #0e0e0e; min-height: 18px;
+}
+.dbg-row:last-child { border-bottom: none; }
+.dbg-row:hover { background: #0e0e0e; }
+.dbg-key {
+  flex: 0 0 175px; color: #7a8898; font-size: 10px;
+  padding-right: 8px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.dbg-val { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+
+/* Value type colours */
+.dbg-val-str  { color: #5eaa80; }
+.dbg-val-num  { color: #4a9edd; }
+.dbg-val-bool { color: #c89040; }
+.dbg-val-null { color: #585858; font-style: italic; }
+.dbg-val-obj  { color: #808080; }
+.dbg-color-swatch {
+  display: inline-block; width: 9px; height: 9px;
+  border-radius: 1px; border: 1px solid #333;
+  vertical-align: middle; margin-right: 4px;
+}
+
+/* IDB sub-sections */
+.dbg-idb-store { border-bottom: 1px solid #111; }
+.dbg-idb-store:last-child { border-bottom: none; }
+.dbg-store-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 10px; background: #0a0a0a;
+}
+.dbg-store-name { font-size: 10px; color: #c09040; font-weight: 600; letter-spacing: 0.08em; }
+.dbg-store-subheader {
+  font-size: 8.5px; color: #606060; padding: 2px 10px 1px; letter-spacing: 0.07em; text-transform: uppercase;
+}
+
+/* Thumbnail grid */
+.dbg-thumb-grid { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 10px; }
+.dbg-thumb-item { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 52px; }
+.dbg-thumb-img {
+  width: 52px; height: 52px; border-radius: 3px;
+  border: 1px solid #1e1e1e; display: block;
+  background: #111;
+}
+.dbg-thumb-label {
+  font-size: 8px; color: #848484; text-align: center;
+  word-break: break-all; line-height: 1.3; max-width: 52px;
+  overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+
+/* Channel map rows */
+.dbg-channel-preview {
+  display: inline-block; width: 32px; height: 32px;
+  border-radius: 2px; border: 1px solid #222;
+  object-fit: cover; vertical-align: middle; margin-right: 8px;
+}
+
+/* Empty / error states */
+.dbg-empty { padding: 4px 10px; color: #585858; font-size: 10px; font-style: italic; }
+.dbg-error { padding: 4px 10px; color: #904040; font-size: 10px; }
+
+/* Log output (overrides legacy .debug-panel) */
+.debug-panel {
+  background: #080808; border: none; border-radius: 0;
+  padding: 4px 10px; max-height: 200px; overflow-y: auto;
+  font-size: 10.5px; line-height: 1.6; color: #909090;
+}
+.debug-panel::-webkit-scrollbar { width: 4px; }
+.debug-panel::-webkit-scrollbar-track { background: #080808; }
+.debug-panel::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
 
 /* Tab 2: Design canvas fills the container properly */
 .design-canvas-container {
