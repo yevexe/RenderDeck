@@ -76,6 +76,13 @@ let activeMesh = null;
 const _channelMapData = new Map(); // channel key → base64 data URL (persists original file data)
 let meshMap = {}; // name → mesh reference for multi‑part models
 
+// ── Performance mode ──────────────────────────────────────────
+const HIGH_POLY_THRESHOLD = 100_000; // faces
+let performanceModeEnabled = false;  // auto-set on high-poly load; user can override
+let _activeModelFaceCount  = 0;
+let _isOrbiting       = false; // true while OrbitControls drag is active
+let _orbitFrameSkip   = 0;    // frame counter for skip-every-other logic
+
 // Texture quality: track current anisotropy so every loaded texture gets the right setting
 let currentAnisotropy = 16;
 
@@ -420,6 +427,11 @@ async function loadModel(name, onLoaded = null) {
 
   const modelData = await modelManager.getModel(name);
   if (!modelData) { logError(`Model not found: ${name}`); return; }
+
+  // Keep the object selector in sync with whatever is actually loading
+  const _sel = document.getElementById('object-select') || document.getElementById('model-select');
+  if (_sel && _sel.value !== name) _sel.value = name;
+
   cleanupActiveModel();
   if (modelData.type === 'custom') {
     await loadCustomModel(name, modelData, onLoaded);
@@ -555,6 +567,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
       _bootCamera = null;
     }
     if (!_customBootLoad) cameraManager.reframeObject(object);
+    checkAndApplyPolyPerf(object);
     markNeedsRender(60);
     if (onLoaded) onLoaded(object);
   },
@@ -614,6 +627,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       if (!_glbBootLoad) cameraManager.reframeObject(object);
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
+      checkAndApplyPolyPerf(object);
       if (activeMesh) uvEditor.open(activeMesh, name, activeMesh.material?.name || 'Default — White');
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
@@ -682,6 +696,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       // doesn't stall on onFirstUse (absorbs the cost into the loading wait).
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
+      checkAndApplyPolyPerf(object);
       // Initialize UV editor for this model
       if (activeMesh) {
         uvEditor.open(activeMesh, name, activeMesh.material?.name || 'Default — White');
@@ -713,6 +728,57 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
   }
 }
 
+// ── Count total triangles across a loaded Three.js object ────
+function countModelFaces(model) {
+  let faces = 0;
+  model.traverse(child => {
+    if (!child.isMesh) return;
+    const geo = child.geometry;
+    if (geo.index) faces += geo.index.count / 3;
+    else if (geo.attributes.position) faces += geo.attributes.position.count / 3;
+  });
+  return Math.round(faces);
+}
+
+// ── Show/hide perf mode indicators (viewport label + tab warning) ──
+function updatePerfModeUI() {
+  // Viewport label follows the toggle (manual or auto)
+  const label = document.getElementById('perf-mode-label');
+  if (label) label.style.display = performanceModeEnabled ? '' : 'none';
+  // Tab warning only shows when an actual high-poly model is loaded
+  const tabWarning = document.getElementById('perf-warning-tab');
+  if (tabWarning) tabWarning.style.display = _activeModelFaceCount > HIGH_POLY_THRESHOLD ? '' : 'none';
+}
+
+// ── Show/hide the high-poly warning banner ────────────────────
+function updatePolyWarning(faceCount) {
+  const banner = document.getElementById('high-poly-warning');
+  if (!banner) return;
+  if (faceCount > HIGH_POLY_THRESHOLD) {
+    banner.style.display = '';
+    banner.querySelector('#poly-count-display').textContent =
+      `${faceCount.toLocaleString()} faces`;
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+// ── Run after any model finishes loading ─────────────────────
+function checkAndApplyPolyPerf(model) {
+  _activeModelFaceCount = countModelFaces(model);
+  const toggle = document.getElementById('perf-mode-toggle');
+  if (_activeModelFaceCount > HIGH_POLY_THRESHOLD) {
+    performanceModeEnabled = true;
+    if (toggle) toggle.checked = true;
+  } else {
+    performanceModeEnabled = false;
+    if (toggle) toggle.checked = false;
+    rendererManager.exitOrbitPerfMode();
+  }
+  updatePolyWarning(_activeModelFaceCount);
+  updatePerfModeUI();
+}
+
 function cleanupActiveModel() {
   if (activeModel) {
     // Clear UV editor state before disposing mesh so sticker PBR maps don't leak
@@ -730,6 +796,10 @@ function cleanupActiveModel() {
     // Channel maps belong to the model being unloaded — clear so they don't
     // bleed into the next model's autosave state via serializeChannelMaps().
     _channelMapData.clear();
+
+    // Reset performance mode state
+    _activeModelFaceCount = 0;
+    updatePolyWarning(0);
 
     propManager.setMainModel(null);
     sceneManager.remove(activeModel);
@@ -2410,6 +2480,19 @@ function setupPreviewQualityUI() {
     log(`Texture filtering: Aniso ${clamped}`);
   });
 
+  // ── Performance mode toggle ──
+  const perfToggle = document.getElementById('perf-mode-toggle');
+  if (perfToggle) {
+    perfToggle.addEventListener('change', (e) => {
+      performanceModeEnabled = e.target.checked;
+      if (!performanceModeEnabled) {
+        rendererManager.exitOrbitPerfMode();
+      }
+      updatePerfModeUI();
+      log(`Performance mode: ${performanceModeEnabled ? 'on' : 'off'}`);
+    });
+  }
+
   log('Preview quality UI ready.');
 }
 
@@ -2975,6 +3058,11 @@ function animate() {
   if (cameraMoved && _renderBurst < 4) _renderBurst = 4;
 
   if (_renderBurst > 0) {
+    // Skip every other frame during orbit perf mode to halve vertex workload
+    if (_isOrbiting && performanceModeEnabled) {
+      _orbitFrameSkip++;
+      if (_orbitFrameSkip % 2 !== 0) return;
+    }
     if (propManager.hasOutlines()) propManager.updateOutlines();
     rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
     _renderBurst--;
@@ -3393,6 +3481,20 @@ async function initializeApp() {
       overlay.addEventListener('transitionend', () => overlay.remove(), { once: true });
     }
   }));
+
+  // ── Half-res orbit performance mode ──────────────────────────
+  const orbitControls = cameraManager.getControls();
+  if (orbitControls) {
+    orbitControls.addEventListener('start', () => {
+      _isOrbiting = true;
+      if (performanceModeEnabled) rendererManager.enterOrbitPerfMode();
+    });
+    orbitControls.addEventListener('end', () => {
+      _isOrbiting = false;
+      _orbitFrameSkip = 0;
+      rendererManager.exitOrbitPerfMode();
+    });
+  }
 
   // Record initial history states after everything is loaded
   setTimeout(() => {

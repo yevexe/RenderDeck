@@ -37,7 +37,10 @@
 
       <!-- LEFT: Scene View -->
       <div class="panel scene-view">
-        <h2>Scene Controls</h2>
+        <div class="scene-view-titlebar">
+          <h2>Scene Controls</h2>
+          <span id="perf-mode-label" class="perf-mode-label" style="display:none;">&#9889; Performance Mode</span>
+        </div>
         <div class="editor-stage editor-stage--scene">
           <div class="editor-stage-toolbar">
             <div id="transform-toolbar" class="transform-toolbar">
@@ -253,6 +256,12 @@
             <select id="object-select" class="dropdown">
               <!-- populated by JS with optgroups; no static placeholders needed -->
             </select>
+
+            <!-- High-poly performance warning -->
+            <div id="high-poly-warning" class="high-poly-warning" style="display:none;">
+              <span class="high-poly-warning-icon">&#9888;&#65039;</span>
+              <span>High poly count detected (<span id="poly-count-display"></span>). Performance mode enabled.</span>
+            </div>
 
             <!-- Upload / manage models -->
             <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj or .glb)</label>
@@ -1020,6 +1029,10 @@
             <h3>Preview Quality</h3>
             <hr>
 
+            <div id="perf-warning-tab" class="perf-warning-tab" style="display:none;">
+              &#9888;&#65039; High poly model detected — Performance Mode is active. Half-resolution is used during camera orbit.
+            </div>
+
             <h4>Output</h4>
             <p class="control-label">Current Resolution</p>
             <p id="current-resolution-display" class="current-resolution-display">— × —</p>
@@ -1092,6 +1105,10 @@
               <label class="toggle-row">
                 <input type="checkbox" id="preview-toggle-vertexcolors">
                 <span>Vertex Colors</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="perf-mode-toggle">
+                <span>Performance Mode (half-res during orbit)</span>
               </label>
             </div>
             </div>
