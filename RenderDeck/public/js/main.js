@@ -3059,7 +3059,7 @@ function animate() {
   if (cameraMoved && _renderBurst < 4) _renderBurst = 4;
 
   if (_renderBurst > 0) {
-    if (propManager.hasOutlines()) propManager.updateOutlines();
+    if (propManager.hasOutlines()) propManager.updateOutlines(performanceModeEnabled);
     rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
     _renderBurst--;
   }

@@ -38,6 +38,8 @@ export class PropManager {
     this._measureUnit = 'cm'; // 'cm' | 'in'
     this._labelCanvas = null;
     this._labelCtx = null;
+    this._outlineDirty = true;    // recompute OBB on first updateOutlines call
+    this._cachedOBBCorners = null; // last computed corners, reused for label projection
 
     this._setupTransformControls();
     this._setupEventListeners();
@@ -71,6 +73,7 @@ export class PropManager {
       if (this.selectedProp) {
         this._updatePropTransform(this.selectedProp);
       }
+      this._outlineDirty = true;
       window.markNeedsRender?.(4);
     });
   }
@@ -320,6 +323,7 @@ export class PropManager {
 
   _selectMainModel() {
     if (!this.mainModel) return;
+    this._outlineDirty = true;
     if (this._mainModelHelper) {
       this.scene.remove(this._mainModelHelper);
       this._disposeThickOutline(this._mainModelHelper);
@@ -353,6 +357,7 @@ export class PropManager {
     if (this.selectedProp) this._removeOutline(this.selectedProp);
 
     this.selectedProp = prop;
+    this._outlineDirty = true;
     this._addOutline(prop);
     this.transformControls.attach(prop.object3D);
     if (this._tcHelper) this._tcHelper.visible = this._editModeEnabled;
@@ -398,6 +403,19 @@ export class PropManager {
       new THREE.Vector3(x.x, x.y, x.z).applyMatrix4(wm), // 6 top-back-right
       new THREE.Vector3(n.x, x.y, x.z).applyMatrix4(wm), // 7 top-back-left
     ];
+  }
+
+  _boxPositionsFromCorners(c) {
+    const edges = [
+      [0,1],[1,2],[2,3],[3,0],
+      [4,5],[5,6],[6,7],[7,4],
+      [0,4],[1,5],[2,6],[3,7],
+    ];
+    const pos = [];
+    for (const [a, b] of edges) {
+      pos.push(c[a].x, c[a].y, c[a].z, c[b].x, c[b].y, c[b].z);
+    }
+    return pos;
   }
 
   _boxPositions(object3D) {
@@ -467,7 +485,7 @@ export class PropManager {
     return `${(cm * 10).toFixed(1)} mm`;
   }
 
-  _updateSizeLabels(object3D) {
+  _updateSizeLabels(c) {
     if (!this._labelCanvas) this._createLabelCanvas();
     if (!this._labelCanvas) return;
 
@@ -479,8 +497,6 @@ export class PropManager {
 
     const ctx = this._labelCtx;
     ctx.clearRect(0, 0, w, h);
-
-    const c = this._getOBBCorners(object3D);
     // Measure along OBB local axes (world distances between adjacent corners)
     const W = c[0].distanceTo(c[1]);
     const H = c[0].distanceTo(c[4]);
@@ -560,23 +576,30 @@ export class PropManager {
   }
 
   /** Call every frame from the animate loop to keep outlines tracking moving objects */
-  updateOutlines() {
+  updateOutlines(perfMode = false) {
     const { dw, dh, linewidth } = this._outlineMetrics();
+    const obbRecomputed = perfMode ? this._outlineDirty : true;
     let labelTarget = null;
     const refresh = (outline) => {
       if (!outline) return;
       const obj = outline.userData?.trackedObject;
       if (!obj) return;
-      outline.geometry.setPositions(this._boxPositions(obj));
+      // Only recompute OBB geometry when the object has actually moved
+      if (obbRecomputed) {
+        this._cachedOBBCorners = this._getOBBCorners(obj);
+        outline.geometry.setPositions(this._boxPositionsFromCorners(this._cachedOBBCorners));
+      }
       outline.material.resolution.set(dw, dh);
       outline.material.linewidth = linewidth;
       labelTarget = obj;
     };
     if (this.selectedProp?._outlineHelper) refresh(this.selectedProp._outlineHelper);
     if (this._mainModelHelper)             refresh(this._mainModelHelper);
+    this._outlineDirty = false;
 
-    if (labelTarget && this._editModeEnabled && this._showLabels) {
-      this._updateSizeLabels(labelTarget);
+    if (labelTarget && this._editModeEnabled && this._showLabels && this._cachedOBBCorners) {
+      // Always re-project cached corners to screen space — cheap matrix math, no vertex traversal
+      this._updateSizeLabels(this._cachedOBBCorners);
     } else {
       this._clearSizeLabels();
     }
