@@ -33,6 +33,7 @@ export class RendererManager {
     this.renderer.toneMappingExposure = 1.0;
 
     this._customResolution = null;
+    this._inOrbitPerf = false;
 
     // Post-processing passes
     this.composer       = null;
@@ -116,6 +117,23 @@ export class RendererManager {
   // ─── Clear custom resolution (revert to container-fit) ───────
   clearCustomResolution() {
     this._customResolution = null;
+    this.resize();
+  }
+
+  // ─── Half-res mode during orbit drag ─────────────────────────
+  enterOrbitPerfMode() {
+    if (this._inOrbitPerf || this._customResolution) return;
+    this._inOrbitPerf = true;
+    const w = this.container.clientWidth  || 1;
+    const h = this.container.clientHeight || 1;
+    this.renderer.setPixelRatio(0.5);
+    this.renderer.setSize(w, h, false);
+    this.resizeComposer(w * 0.5, h * 0.5);
+  }
+
+  exitOrbitPerfMode() {
+    if (!this._inOrbitPerf) return;
+    this._inOrbitPerf = false;
     this.resize();
   }
 
