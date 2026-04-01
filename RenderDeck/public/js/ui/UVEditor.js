@@ -31,6 +31,7 @@ export class UVEditor {
     this._uvPreviewEnabled = false;
     this._partSelectCallback = null;
     this._wrapImages = true;
+    this._uvWireframeCache = null; // offscreen canvas — rebuilt once per mesh, reused every frame
 
     // Stored material base color (captured at open/apply time for composite background)
     this._materialBaseColor = null;
@@ -331,6 +332,7 @@ export class UVEditor {
     const wasCheckUVActive = this._uvCheckActive;
     this._deactivateCheckUV();
     this._uvPreviewEnabled = false;
+    this._uvWireframeCache = null;
     this._materialBaseColor = null;
     this._removeStickerPBRMaps();
     const pvBtn = document.getElementById('preview-uv-btn');
@@ -421,6 +423,7 @@ export class UVEditor {
     const wasCheckUVActive = this._uvCheckActive;
     this._deactivateCheckUV();
     this._uvPreviewEnabled = false;
+    this._uvWireframeCache = null;
     this._materialBaseColor = null;
     this._removeStickerPBRMaps();
     const pvBtn = document.getElementById('preview-uv-btn');
@@ -708,6 +711,9 @@ export class UVEditor {
       ctx.beginPath(); ctx.moveTo(0, p * h); ctx.lineTo(w, p * h); ctx.stroke();
     }
 
+    // UV wireframe — drawn before decals so decals render on top
+    if (this._uvPreviewEnabled) this._drawUVWireframe(ctx, w, h);
+
     // Overlays
     const wrapOffsets = this._wrapImages
       ? [[-w,-h],[-w,0],[-w,h],[0,-h],[0,0],[0,h],[w,-h],[w,0],[w,h]]
@@ -756,8 +762,6 @@ export class UVEditor {
       });
     });
 
-    // UV wireframe overlay
-    if (this._uvPreviewEnabled) this._drawUVWireframe(ctx, w, h);
   }
 
   // ─── Composite render (shared logic) ─────────────────────────
@@ -1809,38 +1813,52 @@ export class UVEditor {
   }
 
   // ─── Draw UV wireframe triangles on the preview canvas ───────
+  // Renders once into an offscreen canvas, then reuses it every subsequent
+  // frame via drawImage — avoids re-stroking thousands of triangles on drag.
   _drawUVWireframe(ctx, w, h) {
     if (!this.activeMesh?.geometry) return;
-    const geo = this.activeMesh.geometry;
-    const uvAttr = geo.attributes.uv;
-    if (!uvAttr) return;
 
-    const uvs = uvAttr.array;
-    const index = geo.index;
+    // Rebuild cache if missing or canvas size changed
+    if (!this._uvWireframeCache ||
+        this._uvWireframeCache.width !== w ||
+        this._uvWireframeCache.height !== h) {
 
-    ctx.save();
-    ctx.strokeStyle = 'rgba(120, 210, 255, 0.65)';
-    ctx.lineWidth = 1.5;
-    ctx.lineJoin = 'round';
+      const geo = this.activeMesh.geometry;
+      const uvAttr = geo.attributes.uv;
+      if (!uvAttr) return;
 
-    const drawTri = (i0, i1, i2) => {
-      // UV V axis is flipped relative to canvas Y (UV 0=bottom, canvas 0=top)
-      ctx.beginPath();
-      ctx.moveTo(uvs[i0 * 2] * w,       (1 - uvs[i0 * 2 + 1]) * h);
-      ctx.lineTo(uvs[i1 * 2] * w,       (1 - uvs[i1 * 2 + 1]) * h);
-      ctx.lineTo(uvs[i2 * 2] * w,       (1 - uvs[i2 * 2 + 1]) * h);
-      ctx.closePath();
-      ctx.stroke();
-    };
+      const offscreen = document.createElement('canvas');
+      offscreen.width  = w;
+      offscreen.height = h;
+      const oc = offscreen.getContext('2d');
 
-    if (index) {
-      const idx = index.array;
-      for (let i = 0; i < idx.length; i += 3) drawTri(idx[i], idx[i + 1], idx[i + 2]);
-    } else {
-      for (let i = 0; i < uvAttr.count; i += 3) drawTri(i, i + 1, i + 2);
+      const uvs   = uvAttr.array;
+      const index = geo.index;
+
+      oc.strokeStyle = 'rgba(120, 210, 255, 0.65)';
+      oc.lineWidth   = 1.5;
+      oc.lineJoin    = 'round';
+
+      const drawTri = (i0, i1, i2) => {
+        oc.beginPath();
+        oc.moveTo(uvs[i0 * 2] * w,     (1 - uvs[i0 * 2 + 1]) * h);
+        oc.lineTo(uvs[i1 * 2] * w,     (1 - uvs[i1 * 2 + 1]) * h);
+        oc.lineTo(uvs[i2 * 2] * w,     (1 - uvs[i2 * 2 + 1]) * h);
+        oc.closePath();
+        oc.stroke();
+      };
+
+      if (index) {
+        const idx = index.array;
+        for (let i = 0; i < idx.length; i += 3) drawTri(idx[i], idx[i + 1], idx[i + 2]);
+      } else {
+        for (let i = 0; i < uvAttr.count; i += 3) drawTri(i, i + 1, i + 2);
+      }
+
+      this._uvWireframeCache = offscreen;
     }
 
-    ctx.restore();
+    ctx.drawImage(this._uvWireframeCache, 0, 0);
   }
 
   // ─── History restore (called by main.js on undo/redo) ────────
