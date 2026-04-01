@@ -80,6 +80,7 @@ let meshMap = {}; // name → mesh reference for multi‑part models
 const HIGH_POLY_THRESHOLD = 100_000; // faces
 let performanceModeEnabled = false;  // auto-set on high-poly load; user can override
 let _activeModelFaceCount  = 0;
+let _isOrbiting = false; // true while OrbitControls drag is active
 
 // Texture quality: track current anisotropy so every loaded texture gets the right setting
 let currentAnisotropy = 16;
@@ -1550,6 +1551,8 @@ function clearHighlight() {
 }
 
 function onPointerMove(event) {
+  // Skip expensive raycast during orbit drag on high-poly models
+  if (performanceModeEnabled && _isOrbiting) { clearHighlight(); return; }
   const rect = canvas.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -3479,9 +3482,11 @@ async function initializeApp() {
   const orbitControls = cameraManager.getControls();
   if (orbitControls) {
     orbitControls.addEventListener('start', () => {
+      _isOrbiting = true;
       if (performanceModeEnabled) rendererManager.enterOrbitPerfMode();
     });
     orbitControls.addEventListener('end', () => {
+      _isOrbiting = false;
       rendererManager.exitOrbitPerfMode();
     });
   }
