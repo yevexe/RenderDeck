@@ -80,8 +80,6 @@ let meshMap = {}; // name → mesh reference for multi‑part models
 const HIGH_POLY_THRESHOLD = 100_000; // faces
 let performanceModeEnabled = false;  // auto-set on high-poly load; user can override
 let _activeModelFaceCount  = 0;
-let _isOrbiting       = false; // true while OrbitControls drag is active
-let _orbitFrameSkip   = 0;    // frame counter for skip-every-other logic
 
 // Texture quality: track current anisotropy so every loaded texture gets the right setting
 let currentAnisotropy = 16;
@@ -3058,11 +3056,6 @@ function animate() {
   if (cameraMoved && _renderBurst < 4) _renderBurst = 4;
 
   if (_renderBurst > 0) {
-    // Skip every other frame during orbit perf mode to halve vertex workload
-    if (_isOrbiting && performanceModeEnabled) {
-      _orbitFrameSkip++;
-      if (_orbitFrameSkip % 2 !== 0) return;
-    }
     if (propManager.hasOutlines()) propManager.updateOutlines();
     rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
     _renderBurst--;
@@ -3486,12 +3479,9 @@ async function initializeApp() {
   const orbitControls = cameraManager.getControls();
   if (orbitControls) {
     orbitControls.addEventListener('start', () => {
-      _isOrbiting = true;
       if (performanceModeEnabled) rendererManager.enterOrbitPerfMode();
     });
     orbitControls.addEventListener('end', () => {
-      _isOrbiting = false;
-      _orbitFrameSkip = 0;
       rendererManager.exitOrbitPerfMode();
     });
   }
