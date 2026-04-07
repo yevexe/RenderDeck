@@ -57,14 +57,21 @@ export class CustomModelStorage {
         }
       }
 
+      // Preserve existing ID on re-save; generate a new one for first save
+      const existingMeta = await IDBStorage.get('models', modelKey(projectId, name));
+      const modelId = modelData.id || existingMeta?.id || crypto.randomUUID();
+
       const metadata = {
+        id: modelId,
         projectId,
         basedOn: modelData.basedOn,
         customName: modelData.customName,
         materialPreset: modelData.materialPreset || 'Default — White',
+        materialPresetId: modelData.materialPresetId || null,
         materialProperties: modelData.materialProperties || {},
+        channelMaps: modelData.channelMaps || null,
         isCustomMaterial: modelData.isCustomMaterial || false,
-        createdDate: new Date().toISOString(),
+        createdDate: existingMeta?.createdDate || new Date().toISOString(),
         lastModified: new Date().toISOString(),
         version: 2,
         overlayKeys,
@@ -130,10 +137,13 @@ export class CustomModelStorage {
     }
 
     return {
+      id: metadata.id || null,
       basedOn: metadata.basedOn,
       customName: metadata.customName,
       materialPreset: metadata.materialPreset,
+      materialPresetId: metadata.materialPresetId || null,
       materialProperties: metadata.materialProperties,
+      channelMaps: metadata.channelMaps || null,
       isCustomMaterial: metadata.isCustomMaterial || false,
       createdDate: metadata.createdDate,
       lastModified: metadata.lastModified,

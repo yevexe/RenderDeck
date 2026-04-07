@@ -58,6 +58,8 @@ cameraManager.setupControls(rendererManager.getDomElement());
 const materialManager = new MaterialManager();
 const modelManager = new ModelManager(log);
 const uvEditor = new UVEditor(rendererManager, log, modelManager, materialManager);
+// Wire channel map serialization so uvEditor can include them in custom model saves
+uvEditor.getChannelMaps = () => serializeChannelMaps();
 
 const objLoader = new OBJLoader();
 const mtlLoader = new MTLLoader();
@@ -484,7 +486,12 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
 
     const meshList = [];
 
-    const savedPreset = modelData.materialPreset || 'Default — White';
+    // Resolve material preset: prefer stable ID lookup so renamed presets still work
+    let savedPreset = modelData.materialPreset || 'Default — White';
+    if (modelData.materialPresetId) {
+      const nameById = materialManager.getPresetNameById(modelData.materialPresetId);
+      if (nameById) savedPreset = nameById;
+    }
     // Explicit flag, or infer: if the preset name isn't a known standard preset, treat as custom
     const isCustom = modelData.isCustomMaterial === true
       || (modelData.isCustomMaterial === undefined && !materialManager.isStandardPreset(savedPreset) && savedPreset !== 'Default — White');
@@ -550,10 +557,18 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
     updateMaterialPresetList();
     controls.setMaterialPresetValue(savedPreset);
     log(`${name} loaded.`);
+    // Restore channel maps BEFORE opening UV editor so the channel map
+    // is captured as baseTexture and composited underneath decals correctly.
+    if (modelData.channelMaps && activeMesh?.material) {
+      await restoreChannelMaps(activeMesh.material, modelData.channelMaps);
+    }
     // Initialize UV editor — images were pre-decoded in parallel with OBJ load
     if (activeMesh) {
       const preloadedImages = await overlayPreload;
       uvEditor.openWithPreloadedData(activeMesh, name, modelData, preloadedImages, savedPreset);
+    }
+    if (modelData.channelMaps && activeMesh?.material) {
+      controls.syncMaterialUI(activeMesh.material);
     }
     // Restore the scene/background that was active when this custom model was saved
     if (modelData.sceneState) {
@@ -967,7 +982,7 @@ async function warmupAndGenerateThumbnails() {
   updateMaterialPresetList();
 }
 
-function applyMaterialPreset(presetName) {
+async function applyMaterialPreset(presetName) {
   if (!activeModel) return;
   const env = sceneManager.getScene().environment;
 
@@ -992,6 +1007,13 @@ function applyMaterialPreset(presetName) {
       applyToMesh(child);
       if (!activeMesh) activeMesh = child;
     });
+  }
+
+  // Restore channel maps saved with this user preset (clear if switching to standard preset)
+  _channelMapData.clear();
+  if (activeMesh?.material) {
+    const savedChannelMaps = materialManager.getPresetChannelMaps(presetName);
+    if (savedChannelMaps) await restoreChannelMaps(activeMesh.material, savedChannelMaps);
   }
 
   if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
@@ -1471,6 +1493,12 @@ const controls = new ControlsManager({
         if (old && old.isTexture) old.dispose();
         activeMesh.material[channel] = tex;
         activeMesh.material.needsUpdate = true;
+        // Sync UV editor so decals and channel maps don't conflict
+        if (channel === 'map' && uvEditor.overlayImages?.length > 0) {
+          uvEditor.notifyBaseMapChanged(tex);
+        } else if ((channel === 'roughnessMap' || channel === 'metalnessMap') && uvEditor._liveRoughnessTexture) {
+          uvEditor.notifyPBRMapChanged(channel, tex);
+        }
         controls.syncMaterialUI(activeMesh.material);
         log(`Channel "${channel}" texture set: ${file.name}`);
       }, undefined, () => logError(`Failed to load texture: ${file.name}`));
@@ -1485,6 +1513,12 @@ const controls = new ControlsManager({
     if (old && old.isTexture) old.dispose();
     activeMesh.material[channel] = null;
     activeMesh.material.needsUpdate = true;
+    // Sync UV editor so decals and channel maps don't conflict
+    if (channel === 'map' && uvEditor.overlayImages?.length > 0) {
+      uvEditor.notifyBaseMapChanged(null);
+    } else if ((channel === 'roughnessMap' || channel === 'metalnessMap') && uvEditor._liveRoughnessTexture) {
+      uvEditor.notifyPBRMapChanged(channel, null);
+    }
     controls.syncMaterialUI(activeMesh.material);
     log(`Channel "${channel}" texture cleared`);
   },
@@ -1935,7 +1969,7 @@ document.getElementById('add-new-material')?.addEventListener('click', () => {
   const env     = sceneManager.getScene().environment;
   materialManager.applyEnvironment(forked, env);
   activeMesh.material = forked;
-  materialManager.addUserPreset(newName, extractPropertiesForPreset(forked));
+  materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked), _channelMaps: serializeChannelMaps() || undefined });
   updateMaterialPresetList();
   controls.setMaterialPresetValue(newName);
   setMaterialNameField(newName);
@@ -1975,7 +2009,7 @@ function _commitRename() {
     const forked = materialManager.forkMaterial(activeMesh.material, newName);
     materialManager.applyEnvironment(forked, sceneManager.getScene().environment);
     activeMesh.material = forked;
-    materialManager.addUserPreset(newName, extractPropertiesForPreset(forked));
+    materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked), _channelMaps: serializeChannelMaps() || undefined });
     scheduleThumbnailUpdate(newName, forked);
     log(`Forked "${current}" → "${newName}"`);
   } else {
@@ -2047,6 +2081,16 @@ document.getElementById('reset-cache-btn')?.addEventListener('click', () => {
   IDBStorage.getAllKeys('blobs').then(keys => {
     keys.filter(k => k.startsWith('thumb:')).forEach(k => IDBStorage.del('blobs', k).catch(() => {}));
   }).catch(() => {});
+  location.reload();
+});
+
+document.getElementById('reset-all-data-btn')?.addEventListener('click', () => {
+  if (!confirm('Delete ALL custom data?\n\nThis will permanently remove:\n• All custom models\n• All custom materials\n• All saved scenes and projects\n• All uploaded props and channel maps\n• All session state\n\nThis cannot be undone. The page will reload.')) return;
+  // Wipe both IDB databases (current + legacy)
+  indexedDB.deleteDatabase('renderdeck_db');
+  indexedDB.deleteDatabase('renderDeck_customModels');
+  // Wipe all localStorage — clears session boot keys, user presets, hidden presets, everything
+  localStorage.clear();
   location.reload();
 });
 

@@ -264,11 +264,15 @@ export class MaterialManager {
 
   /** Register a user preset from the given property object (no Three.js material needed). */
   addUserPreset(name, params) {
+    // Preserve existing ID if re-saving, otherwise generate a new one
+    const existingId = this._userPresetParams[name]?._id;
+    const id = params._id || existingId || crypto.randomUUID();
     // Remove if already exists (re-add at top)
     this._userPresetNames = this._userPresetNames.filter(n => n !== name);
     this._userPresetNames.unshift(name);
-    this._userPresetParams[name] = { ...params };
-    this._presetParams[name] = { ...params };
+    const stored = { ...params, _id: id };
+    this._userPresetParams[name] = stored;
+    this._presetParams[name] = stored;
     this.presets[name] = () => this.createMaterial(name, params);
     this._saveUserPresetsToStorage();
   }
@@ -276,11 +280,16 @@ export class MaterialManager {
   /**
    * Update a user preset's stored params in-place (no reordering, no cached instance reset).
    * Used to persist live slider edits so switching away and back keeps the edits.
+   * Preserves the existing _id and _channelMaps — only visual params are replaced.
    */
   updateUserPresetParams(name, params) {
     if (!this._userPresetNames.includes(name)) return;
-    this._userPresetParams[name] = { ...params };
-    this._presetParams[name] = { ...params };
+    const existingId = this._userPresetParams[name]?._id;
+    const existingChannelMaps = this._userPresetParams[name]?._channelMaps;
+    const stored = { ...params, _id: existingId || crypto.randomUUID() };
+    if (existingChannelMaps) stored._channelMaps = existingChannelMaps;
+    this._userPresetParams[name] = stored;
+    this._presetParams[name] = stored;
     this.presets[name] = () => this.createMaterial(name, params);
     this._saveUserPresetsToStorage();
   }
@@ -289,7 +298,7 @@ export class MaterialManager {
   renamePreset(oldName, newName) {
     if (!this.isUserPreset(oldName)) return false;
     if (this.getPresetNames().includes(newName)) return false;
-    const params = this._userPresetParams[oldName];
+    const params = this._userPresetParams[oldName]; // _id is preserved inside params
     // Update all tracking structures
     const idx = this._userPresetNames.indexOf(oldName);
     this._userPresetNames[idx] = newName;
@@ -301,6 +310,32 @@ export class MaterialManager {
     this.presets[newName] = () => this.createMaterial(newName, params);
     this._saveUserPresetsToStorage();
     return true;
+  }
+
+  /** Return the stable UUID for a user preset (null for standard presets). */
+  getPresetId(name) {
+    return this._userPresetParams[name]?._id ?? null;
+  }
+
+  /** Find a user preset name by its stable UUID. Returns null if not found. */
+  getPresetNameById(id) {
+    if (!id) return null;
+    for (const [name, params] of Object.entries(this._userPresetParams)) {
+      if (params._id === id) return name;
+    }
+    return null;
+  }
+
+  /** Return saved channel maps for a user preset (null if none). */
+  getPresetChannelMaps(name) {
+    return this._userPresetParams[name]?._channelMaps ?? null;
+  }
+
+  /** Attach channel maps to an existing user preset without changing its params or order. */
+  setPresetChannelMaps(name, channelMaps) {
+    if (!this._userPresetParams[name]) return;
+    this._userPresetParams[name]._channelMaps = channelMaps || null;
+    this._saveUserPresetsToStorage();
   }
 
   /** Delete a user preset. Returns false if it's a standard preset. */
@@ -340,18 +375,18 @@ export class MaterialManager {
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!data?.names || !data?.params) return;
+      let needsResave = !key || !localStorage.getItem(key); // legacy migration
       for (const name of data.names) {
         const params = data.params[name];
         if (!params) continue;
+        // Assign stable ID to presets that predate the ID system
+        if (!params._id) { params._id = crypto.randomUUID(); needsResave = true; }
         this._userPresetNames.push(name);
         this._userPresetParams[name] = params;
         this._presetParams[name] = params;
         this.presets[name] = () => this.createMaterial(name, params);
       }
-      // If we loaded from legacy key, migrate it now
-      if (key && !localStorage.getItem(key)) {
-        this._saveUserPresetsToStorage();
-      }
+      if (needsResave) this._saveUserPresetsToStorage();
     } catch (_) { /* corrupt data — ignore */ }
   }
 
@@ -373,20 +408,19 @@ export class MaterialManager {
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!data?.names || !data?.params) return;
+      let needsResave = false;
       for (const name of data.names) {
         const params = data.params[name];
         if (!params) continue;
+        if (!params._id) { params._id = crypto.randomUUID(); needsResave = true; }
         this._userPresetNames.push(name);
         this._userPresetParams[name] = params;
         this._presetParams[name] = params;
         this.presets[name] = () => this.createMaterial(name, params);
       }
-      // Migrate from legacy key if needed
-      if (key && !localStorage.getItem(key)) {
-        localStorage.setItem(key, JSON.stringify({
-          names:  this._userPresetNames,
-          params: this._userPresetParams,
-        }));
+      // Migrate from legacy key or assign missing IDs
+      if ((key && !localStorage.getItem(key)) || needsResave) {
+        this._saveUserPresetsToStorage();
       }
     } catch (_) { /* corrupt data — ignore */ }
   }
