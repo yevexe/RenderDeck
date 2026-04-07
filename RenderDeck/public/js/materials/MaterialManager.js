@@ -358,11 +358,38 @@ export class MaterialManager {
       const projectId = getActiveProjectIdSync();
       const key = this._presetsKey(projectId);
       if (!key) return;
+      // Strip _channelMaps — they contain large data URLs that overflow localStorage quota.
+      // Channel maps are stored separately in IDB (see savePresetChannelMapsToIDB in main.js).
+      const paramsForStorage = {};
+      for (const [name, params] of Object.entries(this._userPresetParams)) {
+        const { _channelMaps, ...rest } = params;
+        paramsForStorage[name] = rest;
+      }
       localStorage.setItem(key, JSON.stringify({
         names:  this._userPresetNames,
-        params: this._userPresetParams,
+        params: paramsForStorage,
       }));
     } catch (_) { /* quota exceeded — ignore */ }
+  }
+
+  /** Returns {presetId: channelMaps} for all user presets that have channel maps. */
+  getAllPresetChannelMaps() {
+    const result = {};
+    for (const params of Object.values(this._userPresetParams)) {
+      if (params._id && params._channelMaps) {
+        result[params._id] = params._channelMaps;
+      }
+    }
+    return result;
+  }
+
+  /** Merges channel maps (keyed by preset ID) back into in-memory params after IDB load. */
+  applyPresetChannelMaps(channelMapsById) {
+    for (const params of Object.values(this._userPresetParams)) {
+      if (params._id && channelMapsById[params._id]) {
+        params._channelMaps = channelMapsById[params._id];
+      }
+    }
   }
 
   _loadUserPresetsFromStorage() {

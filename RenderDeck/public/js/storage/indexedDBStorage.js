@@ -3,7 +3,7 @@
 // Provides Promise-based interface for storing models and blobs
 
 const DB_NAME = 'renderdeck_db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbInstance = null;
 
@@ -37,6 +37,12 @@ export function openDB() {
       }
       if (!db.objectStoreNames.contains('scenes')) {
         db.createObjectStore('scenes'); // key: `${projectId}:${sceneName}`
+      }
+      // Material preset library — mirrors the backend `materials` table.
+      // key: `${projectId}:${presetUuid}`
+      // value: { id, projectId, name, materialData: { ...params, channelMaps: { ch: dataUrl } }, thumbnailData }
+      if (!db.objectStoreNames.contains('materials')) {
+        db.createObjectStore('materials');
       }
     };
 
