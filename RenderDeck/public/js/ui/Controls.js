@@ -794,14 +794,28 @@ export class ControlsManager {
     });
   }
 
-  /** Draw a texture preview into a channel thumbnail canvas, or show empty state. */
-  _drawChannelThumb(canvas, texture) {
+  /** Draw a texture preview into a channel thumbnail canvas, or show empty state.
+   *  source can be a THREE.Texture or a data URL string. */
+  _drawChannelThumb(canvas, source) {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const wrapper = canvas.parentElement?.classList.contains('channel-tex-wrapper')
       ? canvas.parentElement : null;
-    if (texture?.image) {
-      ctx.drawImage(texture.image, 0, 0, canvas.width, canvas.height);
+
+    if (typeof source === 'string') {
+      // Data URL — draw via an Image element
+      const img = new Image();
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        wrapper?.classList.add('has-texture');
+      };
+      img.src = source;
+      return; // async — wrapper state set on load
+    }
+
+    if (source?.image) {
+      ctx.drawImage(source.image, 0, 0, canvas.width, canvas.height);
       wrapper?.classList.add('has-texture');
     } else {
       ctx.fillStyle = '#1a1a1a';
@@ -937,7 +951,7 @@ export class ControlsManager {
    * Sync all Setting 3 controls to reflect the current material state.
    * Call this whenever a new model is loaded or a preset is applied.
    */
-  syncMaterialUI(material) {
+  syncMaterialUI(material, uploadedMaps = {}) {
     if (!material) return;
     const el = this.elements;
     const set = (slider, input, val) => {
@@ -991,7 +1005,9 @@ export class ControlsManager {
     // Normal scale (Vector2 — use x component)
     set(el.normalScaleSlider, el.normalScaleInput, material.normalScale?.x ?? 1);
 
-    // Update channel texture thumbnails
+    // Update channel texture thumbnails.
+    // uploadedMaps (channel → data URL) takes priority so sticker PBR composites
+    // and the live decal canvas don't appear in the channel slots.
     const CHANNEL_KEYS = [
       'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'bumpMap', 'displacementMap',
       'specularColorMap', 'specularIntensityMap',
@@ -1002,7 +1018,14 @@ export class ControlsManager {
     ];
     CHANNEL_KEYS.forEach(ch => {
       const thumb = el[`texThumb_${ch}`];
-      if (thumb) this._drawChannelThumb(thumb, material[ch] ?? null);
+      if (!thumb) return;
+      if (Object.prototype.hasOwnProperty.call(uploadedMaps, ch)) {
+        // Explicit override: data URL string (user upload) or null (no upload / sticker-owned)
+        this._drawChannelThumb(thumb, uploadedMaps[ch] ?? null);
+      } else {
+        // No override — safe to read from material (not a system-composite slot)
+        this._drawChannelThumb(thumb, material[ch] ?? null);
+      }
     });
   }
 

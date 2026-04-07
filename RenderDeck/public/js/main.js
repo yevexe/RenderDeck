@@ -553,7 +553,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
     const multi = names.length > 1;
     controls.setEnabled('objectPartSelect', multi);
     controls.setVisible('objectPartSelect', multi);
-    if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+    if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     updateMaterialPresetList();
     controls.setMaterialPresetValue(savedPreset);
     log(`${name} loaded.`);
@@ -568,7 +568,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
       uvEditor.openWithPreloadedData(activeMesh, name, modelData, preloadedImages, savedPreset);
     }
     if (modelData.channelMaps && activeMesh?.material) {
-      controls.syncMaterialUI(activeMesh.material);
+      controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     }
     // Restore the scene/background that was active when this custom model was saved
     if (modelData.sceneState) {
@@ -631,7 +631,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       propManager.setMainModel(activeModel);
       convertObjectToPhysical(object);
       applyTexQualityToObject(object);
-      if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+      if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
       const _glbBootLoad = !!_bootCamera;
       if (_bootCamera) {
         cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
@@ -692,7 +692,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
         // MTL materials loaded — convert Phong → Physical, preserve all textures
         convertObjectToPhysical(object);
         applyTexQualityToObject(object);
-        if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+        if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
       } else {
         // No MTL — apply the default blank material
         applyTexQualityToObject(object);
@@ -986,17 +986,14 @@ async function applyMaterialPreset(presetName) {
   if (!activeModel) return;
   const env = sceneManager.getScene().environment;
 
+  // Step 1: Swap material (also removes sticker PBR maps and resets _orig* state)
   const applyToMesh = (mesh) => {
-    // Remove sticker PBR maps before swapping material so originals are cleared
     uvEditor._removeStickerPBRMaps();
-
     const material = materialManager.getPreset(presetName);
     materialManager.applyEnvironment(material, env);
     if (mesh.material) materialManager.dispose(mesh.material);
     mesh.material = material;
     mesh.material.needsUpdate = true;
-
-    uvEditor.onMaterialPresetApplied(mesh);
   };
 
   if (activeMesh) {
@@ -1009,17 +1006,28 @@ async function applyMaterialPreset(presetName) {
     });
   }
 
-  // Restore channel maps saved with this user preset (clear if switching to standard preset)
+  // Step 2: Restore channel maps BEFORE telling the UV editor about the new material.
+  // onMaterialPresetApplied calls _applyStickerPBRMaps which captures _origRoughnessMap
+  // from material.roughnessMap — that must already be the restored channel map texture.
   _channelMapData.clear();
   if (activeMesh?.material) {
     const savedChannelMaps = materialManager.getPresetChannelMaps(presetName);
     if (savedChannelMaps) await restoreChannelMaps(activeMesh.material, savedChannelMaps);
   }
 
-  if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material);
+  // Step 3: Set baseTexture from the restored channel map so the composite
+  // renders correctly (channel map underneath decals, not plain material color).
+  if (activeMesh?.material) {
+    const matMap = activeMesh.material.map || null;
+    uvEditor.baseTexture = (matMap && matMap !== uvEditor.liveCanvasTexture) ? matMap : null;
+  }
 
-  const matMap = activeMesh?.material?.map || null;
-  uvEditor.baseTexture = (matMap && matMap !== uvEditor.liveCanvasTexture) ? matMap : null;
+  // Step 4: Tell UV editor about new material — now _origRoughnessMap captures the
+  // correct restored map, and baseTexture is already set for the composite render.
+  if (activeMesh) uvEditor.onMaterialPresetApplied(activeMesh);
+
+  if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+
   uvEditor.currentMaterialPreset = presetName;
   uvEditor._renderPreview();
 
@@ -1042,6 +1050,72 @@ function serializeChannelMaps() {
   const maps = {};
   for (const [key, dataUrl] of _channelMapData) maps[key] = dataUrl;
   return maps;
+}
+
+// Returns a channel → (dataURL | null) map for syncMaterialUI channel thumbnails.
+// Channels with user uploads get the data URL. Channels that are sticker-PBR-owned
+// (internal composites) get explicit null so the sticker canvas never shows in the UI.
+function getChannelThumbnailOverrides() {
+  const overrides = Object.fromEntries(_channelMapData);
+  // If sticker PBR has replaced roughness/metalness and user didn't upload one, show empty.
+  if (uvEditor._liveRoughnessTexture && !('roughnessMap' in overrides)) overrides.roughnessMap = null;
+  if (uvEditor._liveMetalnessTexture && !('metalnessMap' in overrides)) overrides.metalnessMap = null;
+  // The live decal composite must never show as the base color map slot.
+  if (uvEditor.liveCanvasTexture && !('map' in overrides)) overrides.map = null;
+  return overrides;
+}
+
+// ─── Preset channel map IDB persistence ──────────────────────────────────────
+// Channel maps are too large for localStorage (data URLs, 1-3 MB each).
+// Each preset is stored as its own entry in the 'materials' IDB store, mirroring
+// the backend `materials` table shape so migration is a straight row-by-row upload.
+//
+// IDB key:   `${projectId}:${presetUuid}`
+// IDB value: { id, projectId, name, materialData: { channelMaps: { ch: dataUrl } } }
+//
+// Backend equivalent:
+//   POST /api/projects/:projectId/materials
+//   { id, name, materialData: { channelMaps: { ch: storageAssetUuid } } }
+
+async function savePresetChannelMapsToIDB() {
+  try {
+    const projectId = await getActiveProjectId();
+    const allByUuid = materialManager.getAllPresetChannelMaps(); // { uuid: { ch: dataUrl } }
+    const allNames  = materialManager.getPresetNamesByCategory().user;
+
+    for (const name of allNames) {
+      const uuid = materialManager.getPresetId(name);
+      if (!uuid) continue;
+      const key = `${projectId}:${uuid}`;
+      const channelMaps = allByUuid[uuid] ?? null;
+      if (channelMaps) {
+        const entry = { id: uuid, projectId, name, materialData: { channelMaps } };
+        await IDBStorage.put('materials', key, entry);
+      } else {
+        // No channel maps for this preset — remove any stale entry
+        await IDBStorage.del('materials', key);
+      }
+    }
+  } catch (e) { log(`Failed to save preset channel maps: ${e.message}`, true); }
+}
+
+async function loadPresetChannelMapsFromIDB(projectId) {
+  try {
+    const allKeys = await IDBStorage.getAllKeys('materials');
+    const prefix  = `${projectId}:`;
+    const relevant = allKeys.filter(k => k.startsWith(prefix));
+    // Rebuild the { uuid: channelMaps } map that applyPresetChannelMaps expects
+    const channelMapsById = {};
+    for (const key of relevant) {
+      const entry = await IDBStorage.get('materials', key);
+      if (entry?.id && entry?.materialData?.channelMaps) {
+        channelMapsById[entry.id] = entry.materialData.channelMaps;
+      }
+    }
+    if (Object.keys(channelMapsById).length > 0) {
+      materialManager.applyPresetChannelMaps(channelMapsById);
+    }
+  } catch (e) { log(`Failed to load preset channel maps: ${e.message}`, true); }
 }
 
 async function restoreChannelMaps(mat, maps) {
@@ -1390,7 +1464,7 @@ const controls = new ControlsManager({
     if (mesh) {
       activeMesh = mesh;
       if (activeMesh.material) {
-        controls.syncMaterialUI(activeMesh.material);
+        controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
         if (activeMesh.material.name) {
           controls.setMaterialPresetValue(activeMesh.material.name);
           setMaterialNameField(activeMesh.material.name);
@@ -1496,10 +1570,10 @@ const controls = new ControlsManager({
         // Sync UV editor so decals and channel maps don't conflict
         if (channel === 'map' && uvEditor.overlayImages?.length > 0) {
           uvEditor.notifyBaseMapChanged(tex);
-        } else if ((channel === 'roughnessMap' || channel === 'metalnessMap') && uvEditor._liveRoughnessTexture) {
+        } else if ((channel === 'roughnessMap' || channel === 'metalnessMap' || channel === 'transmissionMap') && uvEditor._liveRoughnessTexture) {
           uvEditor.notifyPBRMapChanged(channel, tex);
         }
-        controls.syncMaterialUI(activeMesh.material);
+        controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
         log(`Channel "${channel}" texture set: ${file.name}`);
       }, undefined, () => logError(`Failed to load texture: ${file.name}`));
     };
@@ -1516,10 +1590,10 @@ const controls = new ControlsManager({
     // Sync UV editor so decals and channel maps don't conflict
     if (channel === 'map' && uvEditor.overlayImages?.length > 0) {
       uvEditor.notifyBaseMapChanged(null);
-    } else if ((channel === 'roughnessMap' || channel === 'metalnessMap') && uvEditor._liveRoughnessTexture) {
+    } else if ((channel === 'roughnessMap' || channel === 'metalnessMap' || channel === 'transmissionMap') && uvEditor._liveRoughnessTexture) {
       uvEditor.notifyPBRMapChanged(channel, null);
     }
-    controls.syncMaterialUI(activeMesh.material);
+    controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     log(`Channel "${channel}" texture cleared`);
   },
 
@@ -1615,7 +1689,7 @@ function selectPart(mesh) {
   clearHighlight();
   activeMesh = mesh;
   if (activeMesh.material) {
-    controls.syncMaterialUI(activeMesh.material);
+    controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     if (activeMesh.material.name) {
       controls.setMaterialPresetValue(activeMesh.material.name);
       setMaterialNameField(activeMesh.material.name);
@@ -1819,7 +1893,7 @@ async function restoreSessionState() {
     if (restoredPreset) {
       const alreadyCorrect = activeMesh?.material?.name === restoredPreset;
       if (!alreadyCorrect) {
-        applyMaterialPreset(restoredPreset);
+        await applyMaterialPreset(restoredPreset);
       } else {
         controls.setMaterialPresetValue(restoredPreset);
       }
@@ -1832,9 +1906,24 @@ async function restoreSessionState() {
       if (savedColor) uvEditor.updateMaterialColor(savedColor);
       if (state.materialProperties.channelMaps) {
         await restoreChannelMaps(activeMesh.material, state.materialProperties.channelMaps);
+        // Re-sync UV editor — restoreChannelMaps may overwrite material slots that
+        // openWithPreloadedData already composited (channel map over decals bug).
+        const cm = state.materialProperties.channelMaps;
+        if ('map' in cm && uvEditor.overlayImages?.length > 0) {
+          uvEditor.notifyBaseMapChanged(activeMesh.material.map ?? null);
+        }
+        if ('roughnessMap' in cm && uvEditor._liveRoughnessTexture) {
+          uvEditor.notifyPBRMapChanged('roughnessMap', activeMesh.material.roughnessMap ?? null);
+        }
+        if ('metalnessMap' in cm && uvEditor._liveMetalnessTexture) {
+          uvEditor.notifyPBRMapChanged('metalnessMap', activeMesh.material.metalnessMap ?? null);
+        }
+        if ('transmissionMap' in cm && uvEditor._liveTransmissionTexture) {
+          uvEditor.notifyPBRMapChanged('transmissionMap', activeMesh.material.transmissionMap ?? null);
+        }
       }
       activeMesh.material.needsUpdate = true;
-      controls.syncMaterialUI(activeMesh.material);
+      controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
       markNeedsRender(4);
     }
 
@@ -1908,7 +1997,8 @@ const _pendingThumbUpdates = new Map();
  * @param {string}           name - preset name
  * @param {THREE.Material=}  mat  - live material (optional; created fresh if omitted)
  */
-function scheduleThumbnailUpdate(name, mat) {
+// disposeAfter: true when mat is a temporary clone that should be disposed after rendering
+function scheduleThumbnailUpdate(name, mat, disposeAfter = false) {
   // Cancel any outstanding request for this name
   if (_pendingThumbUpdates.has(name)) {
     const pending = _pendingThumbUpdates.get(name);
@@ -1919,14 +2009,13 @@ function scheduleThumbnailUpdate(name, mat) {
   const render = () => {
     _pendingThumbUpdates.delete(name);
     _ensureThumbRenderer();
-    const owned = !!mat;
-    const m = owned ? mat : materialManager.createFreshPreset(name);
+    const m = mat ?? materialManager.createFreshPreset(name);
     _thumbSphereMesh.material = m;
     _thumbRenderer.render(_thumbScene, _thumbCamera);
     const dataUrl = _thumbRenderer.domElement.toDataURL();
     _matThumbCache.set(name, dataUrl);
     IDBStorage.put('blobs', THUMB_IDB_PREFIX + name, dataUrl).catch(() => {});
-    if (!owned) m.dispose();
+    if (!mat || disposeAfter) m.dispose();
     updateMaterialPresetList();
   };
 
@@ -1970,11 +2059,13 @@ document.getElementById('add-new-material')?.addEventListener('click', () => {
   materialManager.applyEnvironment(forked, env);
   activeMesh.material = forked;
   materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked), _channelMaps: serializeChannelMaps() || undefined });
+  savePresetChannelMapsToIDB();
   updateMaterialPresetList();
   controls.setMaterialPresetValue(newName);
   setMaterialNameField(newName);
-  controls.syncMaterialUI(activeMesh.material);
-  scheduleThumbnailUpdate(newName, forked);
+  controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+  // Clone with channel map but no decal for thumbnail; dispose the clone after render
+  scheduleThumbnailUpdate(newName, uvEditor.getCleanMaterialForThumbnail(), true);
   log(`New material: "${newName}"`);
 });
 
@@ -2010,7 +2101,8 @@ function _commitRename() {
     materialManager.applyEnvironment(forked, sceneManager.getScene().environment);
     activeMesh.material = forked;
     materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked), _channelMaps: serializeChannelMaps() || undefined });
-    scheduleThumbnailUpdate(newName, forked);
+    savePresetChannelMapsToIDB();
+    scheduleThumbnailUpdate(newName, uvEditor.getCleanMaterialForThumbnail(), true);
     log(`Forked "${current}" → "${newName}"`);
   } else {
     // User preset — rename in place
@@ -2058,6 +2150,7 @@ document.getElementById('delete-current-material')?.addEventListener('click', ()
   } else if (!materialManager.deleteUserPreset(current)) {
     materialManager.dispose(activeMesh?.material);
   }
+  savePresetChannelMapsToIDB();
   _matThumbCache.delete(current);
   IDBStorage.del('blobs', THUMB_IDB_PREFIX + current).catch(() => {});
   updateMaterialPresetList();
@@ -3507,6 +3600,8 @@ async function initializeApp() {
   }
   // Reload material presets now that the active project ID is confirmed
   materialManager.reloadUserPresetsForProject(activeProject.id);
+  // Load preset channel maps from IDB (too large for localStorage)
+  await loadPresetChannelMapsFromIDB(activeProject.id);
 
   const restored = await restoreSessionState();
   if (!restored && STANDARD_OBJECTS.length > 0) {
