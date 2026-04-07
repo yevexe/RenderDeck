@@ -63,8 +63,9 @@ export class UVEditor {
     this._origRoughness = null;
     this._origTransmission = null;
     this._origColor = null;
-    this._origMetalnessMap = undefined; // THREE.Texture | null (undefined = not captured yet)
-    this._origRoughnessMap = undefined;
+    this._origMetalnessMap    = undefined; // THREE.Texture | null (undefined = not captured yet)
+    this._origRoughnessMap    = undefined;
+    this._origTransmissionMap = undefined;
     this._liveMetalnessTexture = null;
     this._liveRoughnessTexture = null;
     this._liveTransmissionTexture = null;
@@ -73,6 +74,10 @@ export class UVEditor {
     this._transmissionCanvas.width = 2048;
     this._transmissionCanvas.height = 2048;
     this._transmissionCtx = this._transmissionCanvas.getContext('2d');
+
+    // Temp canvas used by _renderPBRMap for overlay mask compositing
+    this._pbrMaskCanvas = document.createElement('canvas');
+    this._pbrMaskCtx = this._pbrMaskCanvas.getContext('2d');
 
     this.uvCanvas = null;
     this.uvCtx = null;
@@ -781,6 +786,15 @@ export class UVEditor {
 
     if (this.baseTexture?.image && this.baseTexture !== this.liveCanvasTexture) {
       ctx.drawImage(this.baseTexture.image, 0, 0, w, h);
+      // When sticker PBR is active, material.color is forced to white so decals
+      // aren't tinted by Three.js. Bake the original color tint into the composite
+      // via multiply blend so it's preserved (matches Three.js color * map behavior).
+      if (this._origColor !== null && this._materialBaseColor && this._materialBaseColor !== '#ffffff') {
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = this._materialBaseColor;
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+      }
     }
 
     const wrapOffsets = (useWrap && this._wrapImages)
@@ -849,8 +863,8 @@ export class UVEditor {
     const metalness = this._origMetalness ?? m.metalness ?? 0;
     const roughness = this._origRoughness ?? m.roughness ?? 0.5;
 
-    this._renderPBRMap(this._dragMetalnessCtx, 512, 512, metalness * 255, 0, this._origMetalnessMap);
-    this._renderPBRMap(this._dragRoughnessCtx, 512, 512, roughness * 255, 0.5 * 255, this._origRoughnessMap);
+    this._renderPBRMap(this._dragMetalnessCtx, 512, 512, metalness * 255, 0, this._origMetalnessMap, metalness);
+    this._renderPBRMap(this._dragRoughnessCtx, 512, 512, roughness * 255, 0.5 * 255, this._origRoughnessMap, roughness);
 
     if (!this._dragMetalnessTexture) {
       this._dragMetalnessTexture = new THREE.CanvasTexture(this._dragMetalnessCanvas);
@@ -908,46 +922,69 @@ export class UVEditor {
   // ─── Render a PBR map using overlay shapes as a mask ─────────
   // Fills canvas with `bgValue` (0-255 gray) or draws `bgImage`, then draws
   // overlay shapes filled with `fgValue` using canvas composite operations.
-  _renderPBRMap(ctx, w, h, bgValue, fgValue, bgImage = null) {
+  // bgScale: multiplier applied to bgImage pixels (e.g. origRoughness) so that
+  // Three.js applying material.roughness=1.0 yields the same effective roughness
+  // as the original material.roughness * rawPixel.
+  _renderPBRMap(ctx, w, h, bgValue, fgValue, bgImage = null, bgScale = 1) {
     ctx.clearRect(0, 0, w, h);
 
-    // Step 1: Draw overlay shapes (their alpha masks)
     const wrapOffsets = this._wrapImages
       ? [[-w,-h],[-w,0],[-w,h],[0,-h],[0,0],[0,h],[w,-h],[w,0],[w,h]]
       : [[0, 0]];
-    [...this.overlayImages].reverse().forEach(img => {
-      const x = (img.position.x / 100) * w;
-      const y = (img.position.y / 100) * h;
-      const iw = (img.size.w / 100) * w;
-      const ih = (img.size.h / 100) * h;
-      wrapOffsets.forEach(([dx, dy]) => {
-        ctx.save();
-        ctx.translate(x + dx, y + dy);
-        ctx.rotate((img.rotation * Math.PI) / 180);
-        if (img.flipH) ctx.scale(-1, 1);
-        if (img.flipV) ctx.scale(1, -1);
-        ctx.drawImage(img.image, -iw / 2, -ih / 2, iw, ih);
-        ctx.restore();
-      });
-    });
 
-    // Step 2: Replace all drawn pixels' color with fgValue, keeping alpha
-    const fg = Math.round(fgValue);
-    ctx.globalCompositeOperation = 'source-in';
-    ctx.fillStyle = `rgb(${fg},${fg},${fg})`;
-    ctx.fillRect(0, 0, w, h);
-
-    // Step 3: Fill behind with bgImage (channel map texture) or flat bgValue scalar
-    ctx.globalCompositeOperation = 'destination-over';
+    // Step 1: Draw background (bgImage scaled by bgScale, or flat bgValue).
+    // We use a canvas 'multiply' blend instead of ctx.filter (more reliable).
     if (bgImage?.image) {
       ctx.drawImage(bgImage.image, 0, 0, w, h);
+      if (bgScale !== 1) {
+        const v = Math.round(Math.max(0, Math.min(1, bgScale)) * 255);
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = `rgb(${v},${v},${v})`;
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+      }
     } else {
       const bg = Math.round(bgValue);
       ctx.fillStyle = `rgb(${bg},${bg},${bg})`;
       ctx.fillRect(0, 0, w, h);
     }
 
-    ctx.globalCompositeOperation = 'source-over';
+    // Step 2: Build overlay mask on temp canvas (shapes → source-in fill with fgValue).
+    if (this.overlayImages.length > 0) {
+      const mask = this._pbrMaskCanvas;
+      const mCtx = this._pbrMaskCtx;
+      if (mask.width !== w || mask.height !== h) {
+        mask.width = w;
+        mask.height = h;
+      } else {
+        mCtx.clearRect(0, 0, w, h);
+      }
+
+      [...this.overlayImages].reverse().forEach(img => {
+        const x = (img.position.x / 100) * w;
+        const y = (img.position.y / 100) * h;
+        const iw = (img.size.w / 100) * w;
+        const ih = (img.size.h / 100) * h;
+        wrapOffsets.forEach(([dx, dy]) => {
+          mCtx.save();
+          mCtx.translate(x + dx, y + dy);
+          mCtx.rotate((img.rotation * Math.PI) / 180);
+          if (img.flipH) mCtx.scale(-1, 1);
+          if (img.flipV) mCtx.scale(1, -1);
+          mCtx.drawImage(img.image, -iw / 2, -ih / 2, iw, ih);
+          mCtx.restore();
+        });
+      });
+
+      const fg = Math.round(fgValue);
+      mCtx.globalCompositeOperation = 'source-in';
+      mCtx.fillStyle = `rgb(${fg},${fg},${fg})`;
+      mCtx.fillRect(0, 0, w, h);
+      mCtx.globalCompositeOperation = 'source-over';
+
+      // Step 3: Composite overlay mask on top of background.
+      ctx.drawImage(mask, 0, 0);
+    }
   }
 
   _updateStickerPBRIfActive() {
@@ -968,15 +1005,16 @@ export class UVEditor {
     const metalness = this._origMetalness ?? m.metalness ?? 0;
     const roughness = this._origRoughness ?? m.roughness ?? 0.5;
 
-    // Metalness map: original value everywhere, 0 where decals are
-    this._renderPBRMap(this._metalnessCtx, 2048, 2048, metalness * 255, 0, this._origMetalnessMap);
-    // Roughness map: original value everywhere, 0.5 where decals are (matte sticker)
-    this._renderPBRMap(this._roughnessCtx, 2048, 2048, roughness * 255, 0.5 * 255, this._origRoughnessMap);
+    // Metalness map: original value everywhere, 0 where decals are.
+    // bgScale=metalness: scales channel map pixels so Three.js (roughness=1.0) gives correct effective value.
+    this._renderPBRMap(this._metalnessCtx, 2048, 2048, metalness * 255, 0, this._origMetalnessMap, metalness);
+    // Roughness map: original value everywhere, 0.5 where decals are (matte sticker).
+    this._renderPBRMap(this._roughnessCtx, 2048, 2048, roughness * 255, 0.5 * 255, this._origRoughnessMap, roughness);
 
-    // Transmission map: original value everywhere, 0 where decals are (opaque sticker)
+    // Transmission map: original value everywhere, 0 where decals are (opaque sticker).
     const transmission = this._origTransmission ?? m.transmission ?? 0;
     if (transmission > 0) {
-      this._renderPBRMap(this._transmissionCtx, 2048, 2048, transmission * 255, 0);
+      this._renderPBRMap(this._transmissionCtx, 2048, 2048, transmission * 255, 0, this._origTransmissionMap, transmission);
     }
   }
 
@@ -997,14 +1035,16 @@ export class UVEditor {
   // Re-generates the sticker PBR maps using the new channel map as background, then
   // re-assigns the live sticker textures to the material (the upload handler overwrote them).
   notifyPBRMapChanged(channel, texture) {
-    if (channel === 'metalnessMap') this._origMetalnessMap = texture ?? null;
-    if (channel === 'roughnessMap') this._origRoughnessMap = texture ?? null;
+    if (channel === 'metalnessMap')    this._origMetalnessMap    = texture ?? null;
+    if (channel === 'roughnessMap')    this._origRoughnessMap    = texture ?? null;
+    if (channel === 'transmissionMap') this._origTransmissionMap = texture ?? null;
     this._updateStickerPBRIfActive();
     // Re-assign sticker maps — the channel map upload set material[channel] = rawTex,
     // overwriting the live sticker composite. Restore sticker ownership of those slots.
     if (this.activeMesh?.material) {
-      if (this._liveMetalnessTexture) this.activeMesh.material.metalnessMap = this._liveMetalnessTexture;
-      if (this._liveRoughnessTexture) this.activeMesh.material.roughnessMap = this._liveRoughnessTexture;
+      if (this._liveMetalnessTexture)   this.activeMesh.material.metalnessMap   = this._liveMetalnessTexture;
+      if (this._liveRoughnessTexture)   this.activeMesh.material.roughnessMap   = this._liveRoughnessTexture;
+      if (this._liveTransmissionTexture) this.activeMesh.material.transmissionMap = this._liveTransmissionTexture;
       this.activeMesh.material.needsUpdate = true;
       window.markNeedsRender?.(4);
     }
@@ -1090,12 +1130,22 @@ export class UVEditor {
     if (this._origMetalness === null) this._origMetalness = material.metalness ?? 0;
     if (this._origRoughness === null) this._origRoughness = material.roughness ?? 0.5;
     if (this._origTransmission === null) this._origTransmission = material.transmission ?? 0;
-    if (this._origColor === null && material.color) {
+    const colorJustCaptured = this._origColor === null;
+    if (colorJustCaptured && material.color) {
       this._origColor = '#' + material.color.getHexString();
       this._materialBaseColor = this._origColor;
     }
-    if (this._origMetalnessMap === undefined) this._origMetalnessMap = material.metalnessMap ?? null;
-    if (this._origRoughnessMap === undefined) this._origRoughnessMap = material.roughnessMap ?? null;
+    if (this._origMetalnessMap    === undefined) this._origMetalnessMap    = material.metalnessMap    ?? null;
+    if (this._origRoughnessMap    === undefined) this._origRoughnessMap    = material.roughnessMap    ?? null;
+    if (this._origTransmissionMap === undefined) this._origTransmissionMap = material.transmissionMap ?? null;
+
+    // If the base color was just captured for the first time and is non-white, the composite
+    // was already rendered without the color tint baked in (_origColor was null then).
+    // Re-render now so the tint is baked before material.color is forced to white below.
+    if (colorJustCaptured && this._origColor && this._origColor !== '#ffffff' && this.liveCanvasTexture) {
+      this._renderCompositeToCanvas(this.textureCtx, 2048, 2048, true);
+      this.liveCanvasTexture.needsUpdate = true;
+    }
 
     // Generate the maps
     this._renderStickerPBRMaps();
@@ -1153,7 +1203,8 @@ export class UVEditor {
     if (this._liveTransmissionTexture) {
       this._liveTransmissionTexture.dispose();
       this._liveTransmissionTexture = null;
-      m.transmissionMap = null;
+      m.transmissionMap = this._origTransmissionMap ?? null;
+      this._origTransmissionMap = undefined;
     }
     if (this._origMetalness !== null) { m.metalness = this._origMetalness; this._origMetalness = null; }
     if (this._origRoughness !== null) { m.roughness = this._origRoughness; this._origRoughness = null; }
@@ -2022,10 +2073,14 @@ export class UVEditor {
       img.src = saved.imageData;
     })));
 
-    this.overlayImages = loaded;
-    this.selectedImageId = loaded.some(i => i.id === state.selectedImageId)
-      ? state.selectedImageId
-      : (loaded[0]?.id ?? null);
+    // Only replace overlays if the session has unsaved ones — otherwise keep
+    // the decals that openWithPreloadedData restored from the saved custom model.
+    if (loaded.length > 0) {
+      this.overlayImages = loaded;
+      this.selectedImageId = loaded.some(i => i.id === state.selectedImageId)
+        ? state.selectedImageId
+        : (loaded[0]?.id ?? null);
+    }
 
     const wrapBtn = document.getElementById('wrap-uv-btn');
     if (wrapBtn) wrapBtn.classList.toggle('button-selected', this._wrapImages);
@@ -2038,8 +2093,37 @@ export class UVEditor {
       if (sel) this._syncSlidersFromImage(sel);
     }
     this._renderPreview();
-    this._renderComposite();
-    if (this.overlayImages.length > 0) this.applyTextureToModel();
+    if (this.overlayImages.length > 0) {
+      this._renderComposite();
+      this.applyTextureToModel();
+    }
+  }
+
+  // ─── Build a clean material for thumbnail rendering ───────────
+  // Returns a cloned material with the channel map texture (not the composite)
+  // and original PBR scalars/maps restored (not sticker-mode overrides).
+  // Caller is responsible for disposing the returned material.
+  getCleanMaterialForThumbnail() {
+    if (!this.activeMesh?.material) return null;
+    const m = this.activeMesh.material.clone();
+    // When decals are active, liveCanvasTexture is the composite. Replace it with
+    // the raw channel map (baseTexture) so the thumbnail shows no decal overlay.
+    // When no decals are active, material.map is already the correct channel map.
+    if (this.liveCanvasTexture) {
+      m.map = this.baseTexture ?? null;
+    }
+    // Restore original PBR scalars if sticker PBR is active
+    if (this._origRoughness !== null) m.roughness = this._origRoughness;
+    if (this._origMetalness !== null) m.metalness = this._origMetalness;
+    if (this._origTransmission !== null) m.transmission = this._origTransmission;
+    // Restore original PBR maps
+    if (this._origRoughnessMap    !== undefined) m.roughnessMap    = this._origRoughnessMap    ?? null;
+    if (this._origMetalnessMap    !== undefined) m.metalnessMap    = this._origMetalnessMap    ?? null;
+    if (this._origTransmissionMap !== undefined) m.transmissionMap = this._origTransmissionMap ?? null;
+    // Restore original color (sticker mode forces white)
+    if (this._origColor !== null && m.color) m.color.set(this._origColor);
+    m.needsUpdate = true;
+    return m;
   }
 }
 
