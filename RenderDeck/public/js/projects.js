@@ -51,7 +51,12 @@ async function render() {
       year: 'numeric', month: 'short', day: 'numeric'
     });
 
+    const thumbHtml = project.thumbnail
+      ? `<img src="${project.thumbnail}" class="project-card-thumb-img" alt="" draggable="false">`
+      : `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+
     card.innerHTML = `
+      <div class="project-card-thumb">${thumbHtml}</div>
       <div class="project-card-body">
         <div class="project-card-name">${escapeHtml(project.name)}</div>
         <div class="project-card-meta">Last edited ${updatedDate}</div>
@@ -64,18 +69,21 @@ async function render() {
       </div>
     `;
 
-    card.querySelector('.card-btn--open').addEventListener('click', () => openProject(project.id));
-    card.querySelector('.card-btn--rename').addEventListener('click', (e) => {
-      startRename(project.id, project.name);
+    card.querySelector('.card-btn--open').addEventListener('click', (e) => {
       e.stopPropagation();
+      openProject(project.id);
+    });
+    card.querySelector('.card-btn--rename').addEventListener('click', (e) => {
+      e.stopPropagation();
+      startRename(project.id, project.name);
     });
     card.querySelector('.card-btn--delete').addEventListener('click', (e) => {
-      startDelete(project.id);
       e.stopPropagation();
+      startDelete(project.id);
     });
 
-    // Click card body to open
-    card.querySelector('.project-card-body').addEventListener('click', () => openProject(project.id));
+    // Click anywhere on the card (thumb or body) to open
+    card.addEventListener('click', () => openProject(project.id));
 
     grid.appendChild(card);
   }

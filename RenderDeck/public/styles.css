@@ -1069,6 +1069,20 @@ hr {
   font-size: 14px;
 }
 
+.uploaded-model-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  background: #1a1a2a;
+  border: 1px solid #3a3a6b;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0 6px;
+  font-size: 11px;
+  color: #8888cc;
+  line-height: 1.4;
+}
+
 /* Images List */
 .image-layers-list {
   margin-top: 5px;

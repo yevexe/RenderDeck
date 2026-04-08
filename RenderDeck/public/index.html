@@ -267,6 +267,10 @@
             <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj or .glb)</label>
             <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg,.glb" multiple style="display:none;">
             <p class="upload-hint">.glb (standalone), or .obj + optional .mtl and textures — drag &amp; drop onto preview</p>
+            <div id="uploaded-model-warning" style="display:none;" class="uploaded-model-warning">
+              <span>&#9888;&#65039;</span>
+              <span>Uploaded files aren't saved on refresh. Custom models built from this file will need the file re-uploaded to load correctly.</span>
+            </div>
 
             <button class="button-medium" id="export-btn">&#128190; Export Custom Model</button>
             <button class="button-medium" id="import-btn">&#128229; Import Custom Model</button>
