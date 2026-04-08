@@ -39,7 +39,7 @@ import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './c
 // Props
 import { PropManager } from './props/PropManager.js';
 import { CustomSceneStorage } from './scenes/CustomSceneStorage.js';
-import { ensureActiveProject, getActiveProjectId, getActiveProjectIdSync } from './storage/ProjectStorage.js';
+import { ensureActiveProject, getActiveProjectId, getActiveProjectIdSync, updateProject } from './storage/ProjectStorage.js';
 
 // Scenes
 import { initScenes, loadScene, getSceneNames } from './core/SceneLoader.js';
@@ -439,6 +439,14 @@ async function loadModel(name, onLoaded = null) {
   if (_sel && _sel.value !== name) _sel.value = name;
 
   cleanupActiveModel();
+
+  // Show a warning for user-uploaded files (not persisted on refresh)
+  const _uploadWarn = document.getElementById('uploaded-model-warning');
+  if (_uploadWarn) {
+    const isUploaded = modelData.type === 'uploaded' || modelData.type === 'uploaded-glb';
+    _uploadWarn.style.display = isUploaded ? 'flex' : 'none';
+  }
+
   if (modelData.type === 'custom') {
     await loadCustomModel(name, modelData, onLoaded);
   } else {
@@ -550,9 +558,12 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
         scheduleThumbnailUpdate(presetName, null);
       }
 
-      const material = isCustomMat
-        ? (() => { const m = materialManager.createFreshPreset(presetName); m.name = presetName; return m; })()
-        : materialManager.getPreset(presetName);
+      // Always create a per-mesh material instance — getPreset may return a shared object.
+      const material = (() => {
+        const m = materialManager.createFreshPreset(presetName);
+        m.name = presetName;
+        return m;
+      })();
       materialManager.applyEnvironment(material, sceneManager.getScene().environment);
       if (matProps) materialManager.applySavedProperties(material, matProps);
       child.material = material;
@@ -574,9 +585,12 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
         scheduleThumbnailUpdate(savedPreset, null);
       }
 
-      const material = isCustomMat
-        ? (() => { const m = materialManager.createFreshPreset(savedPreset); m.name = savedPreset; return m; })()
-        : materialManager.getPreset(savedPreset);
+      // Always create a per-mesh material instance — getPreset may return a shared object.
+      const material = (() => {
+        const m = materialManager.createFreshPreset(savedPreset);
+        m.name = savedPreset;
+        return m;
+      })();
       materialManager.applyEnvironment(material, sceneManager.getScene().environment);
       if (modelData.materialProperties) materialManager.applySavedProperties(material, modelData.materialProperties);
       child.material = material;
@@ -611,12 +625,16 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
       };
     }
 
-    // Apply first part's channel maps to its mesh material
+    // Apply channel maps for every part immediately so they're visible without clicking
+    for (const [partName, partCache] of Object.entries(_partCache)) {
+      const mesh = meshMap[partName];
+      if (mesh?.material && partCache?.channelMaps) {
+        await restoreChannelMaps(mesh.material, partCache.channelMaps);
+      }
+    }
+
     if (activeMesh) {
       const firstPartCache = _partCache[activeMesh.name];
-      if (firstPartCache?.channelMaps) {
-        await restoreChannelMaps(activeMesh.material, firstPartCache.channelMaps);
-      }
       const firstPreset = firstPartCache?.materialPreset || 'Default — White';
       controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
       updateMaterialPresetList();
@@ -631,9 +649,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
         materialPreset:    firstPreset,
         materialProperties: firstPartCache?.materialData || {},
       }, firstOverlays, firstPreset);
-      if (firstPartCache?.channelMaps) {
-        controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
-      }
+      controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     }
   } else {
     // v2 compat path
@@ -682,6 +698,12 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
         if (!child.isMesh) return;
         child.castShadow = true;
         child.receiveShadow = true;
+        // Clone material so each mesh gets an independent instance.
+        // GLB loader reuses the same material object for all meshes sharing a material index.
+        if (child.material) {
+          child.material = child.material.clone();
+          child.material.needsUpdate = true;
+        }
         // unique naming
         let baseName = child.name || `Part`;
         let uniqueName = baseName;
@@ -720,7 +742,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
       checkAndApplyPolyPerf(object);
-      if (activeMesh) uvEditor.open(activeMesh, name, activeMesh.material?.name || 'Default — White');
+      if (activeMesh) uvEditor.open(activeMesh, name, materialManager.getPresetNames().includes(activeMesh.material?.name) ? activeMesh.material.name : 'Default — White');
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
     },
@@ -791,7 +813,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       checkAndApplyPolyPerf(object);
       // Initialize UV editor for this model
       if (activeMesh) {
-        uvEditor.open(activeMesh, name, activeMesh.material?.name || 'Default — White');
+        uvEditor.open(activeMesh, name, materialManager.getPresetNames().includes(activeMesh.material?.name) ? activeMesh.material.name : 'Default — White');
       }
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
@@ -871,6 +893,29 @@ function checkAndApplyPolyPerf(model) {
   updatePerfModeUI();
 }
 
+/**
+ * Capture the current WebGL viewport as a compressed JPEG thumbnail and
+ * persist it to the project record in IndexedDB.
+ */
+async function _saveThumbnailToProject(projectId) {
+  try {
+    const canvas = rendererManager.getRenderer()?.domElement;
+    if (!canvas || !projectId) return;
+
+    const THUMB_W = 400;
+    const THUMB_H = 225;
+    const tmp = document.createElement('canvas');
+    tmp.width  = THUMB_W;
+    tmp.height = THUMB_H;
+    tmp.getContext('2d').drawImage(canvas, 0, 0, THUMB_W, THUMB_H);
+    const dataUrl = tmp.toDataURL('image/jpeg', 0.5);
+
+    await updateProject(projectId, { thumbnail: dataUrl });
+  } catch (err) {
+    console.warn('Thumbnail capture failed:', err);
+  }
+}
+
 function cleanupActiveModel() {
   if (activeModel) {
     // Clear UV editor state before disposing mesh so sticker PBR maps don't leak
@@ -892,6 +937,10 @@ function cleanupActiveModel() {
     // Reset performance mode state
     _activeModelFaceCount = 0;
     updatePolyWarning(0);
+
+    // Hide upload warning when model is cleared
+    const _uw = document.getElementById('uploaded-model-warning');
+    if (_uw) _uw.style.display = 'none';
 
     propManager.setMainModel(null);
     sceneManager.remove(activeModel);
@@ -1539,18 +1588,7 @@ const controls = new ControlsManager({
   onPartChange: (partName) => {
     if (!partName) return;
     const mesh = meshMap[partName];
-    if (mesh) {
-      activeMesh = mesh;
-      if (activeMesh.material) {
-        controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
-        if (activeMesh.material.name) {
-          controls.setMaterialPresetValue(activeMesh.material.name);
-          setMaterialNameField(activeMesh.material.name);
-        }
-      }
-      uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
-      cameraManager.reframeObject(activeMesh);
-    }
+    if (mesh) selectPart(mesh);
   },
 
   onMaterialChange: (preset) => applyMaterialPreset(preset),
@@ -1786,8 +1824,12 @@ async function selectPart(mesh) {
   if (activeMesh.material) {
     controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     if (activeMesh.material.name) {
-      controls.setMaterialPresetValue(activeMesh.material.name);
-      setMaterialNameField(activeMesh.material.name);
+      const validPresets = materialManager.getPresetNames();
+      const presetToShow = validPresets.includes(activeMesh.material.name)
+        ? activeMesh.material.name
+        : 'Default — White';
+      controls.setMaterialPresetValue(presetToShow);
+      setMaterialNameField(presetToShow);
     }
   }
 
@@ -2357,7 +2399,13 @@ window.saveCustomModelHandler = async function() {
       };
     }));
 
-    const presetName = cached?.materialPreset || mat.name || 'Default — White';
+    // Use cached preset if available; otherwise fall back to 'Default — White'.
+    // mat.name may be a raw GLB material name ("Coffee", "Glass") which is not a
+    // valid RenderDeck preset — normalise those to 'Default — White' so they don't
+    // leak into the preset dropdown on reload.
+    const rawPreset = cached?.materialPreset || mat.name;
+    const validPresets = materialManager.getPresetNames();
+    const presetName = (rawPreset && validPresets.includes(rawPreset)) ? rawPreset : 'Default — White';
     parts[partName] = {
       materialPreset:   presetName,
       materialPresetId: cached?.materialPresetId || materialManager.getPresetId(presetName) || null,
@@ -3786,7 +3834,8 @@ async function initializeApp() {
   const projectBtn = document.getElementById('project-btn');
   if (projectBtn && activeProject) {
     projectBtn.querySelector('#project-name').textContent = activeProject.name;
-    projectBtn.addEventListener('click', () => {
+    projectBtn.addEventListener('click', async () => {
+      await _saveThumbnailToProject(activeProject.id);
       window.location.href = 'projects.html';
     });
   }
