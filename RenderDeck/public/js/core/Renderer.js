@@ -23,6 +23,7 @@ export class RendererManager {
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
+      preserveDrawingBuffer: true, // required for toDataURL() thumbnail capture
     });
 
     container.appendChild(this.renderer.domElement);
