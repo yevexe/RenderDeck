@@ -152,7 +152,12 @@ export class UVEditor {
       if (resetBtn) resetBtn.addEventListener('click', () => this.resetTexture());
 
       const saveBtn = document.getElementById('save-custom-model-btn');
-      if (saveBtn) saveBtn.addEventListener('click', () => this.saveAsCustomModel());
+      if (saveBtn) saveBtn.addEventListener('click', () => {
+        // main.js registers saveCustomModelHandler to handle multi-part saves.
+        // Fall back to single-part saveAsCustomModel for standalone use.
+        if (window.saveCustomModelHandler) window.saveCustomModelHandler();
+        else this.saveAsCustomModel();
+      });
 
       // Canvas drag interactions
       this.uvCanvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
@@ -328,17 +333,16 @@ export class UVEditor {
 
   // ─── Open editor for a mesh (called when model loads) ─────────
   // This sets up the editor for a model - NO prompting for names here
-  async open(mesh, originalModelName, currentMaterialPreset = 'Default — White') {
-    // If we're already editing this same model, don't reset anything.
-    // Also check customModelName — openWithPreloadedData stores the base OBJ name in
-    // activeModelName and the custom model's display name in customModelName, so a
-    // subsequent selectPart() call must not tear down the sticker setup.
+  // preloadedOverlays: already-decoded overlay image array, or null to load from IDB.
+  // Pass this when switching parts so we use cached data instead of re-reading IDB.
+  async open(mesh, originalModelName, currentMaterialPreset = 'Default — White', preloadedOverlays = null) {
+    // If already editing this mesh (same part), skip reset.
+    // customModelName check prevents tearing down sticker state on part switches.
     if (this.activeMesh === mesh &&
         (this.activeModelName === originalModelName || this.customModelName === originalModelName)) {
       return;
     }
 
-    // Clean up transient state before switching mesh
     const wasCheckUVActive = this._uvCheckActive;
     this._deactivateCheckUV();
     this._uvPreviewEnabled = false;
@@ -350,65 +354,69 @@ export class UVEditor {
     this.activeMesh = mesh;
     this.currentMaterialPreset = currentMaterialPreset;
 
-    const existingCustom = await this.modelManager.getModel(originalModelName);
-    const isCustom = existingCustom?.type === 'custom';
+    let overlaysToApply = [];
 
-    if (isCustom) {
-      // Loading an existing custom model - restore its overlays
-      this.activeModelName = existingCustom.basedOn;
-      this.customModelName = originalModelName;
-      this.currentMaterialPreset = existingCustom.materialPreset || currentMaterialPreset;
+    if (preloadedOverlays !== null) {
+      // Part switch with cached overlays — skip IDB entirely
+      this.overlayImages = preloadedOverlays;
+      this.nextImageId = preloadedOverlays.length + 1;
+      overlaysToApply = preloadedOverlays;
+      // activeModelName / customModelName already set from initial load
+    } else {
+      const existingCustom = await this.modelManager.getModel(originalModelName);
+      const isCustom = existingCustom?.type === 'custom';
 
-      if (existingCustom.overlayImages?.length > 0) {
+      if (isCustom) {
+        this.activeModelName = existingCustom.basedOn;
+        this.customModelName = originalModelName;
+        this.currentMaterialPreset = currentMaterialPreset;
         this.overlayImages = [];
         this.nextImageId = 1;
-        await Promise.all(existingCustom.overlayImages.map(saved => new Promise(res => {
-          const img = new Image();
-          img.onload = () => {
-            this.overlayImages.push({
-              id:          this.nextImageId++,
-              image:       img,
-              name:        saved.name,
-              type:        saved.type     || 'image',
-              textData:    saved.textData ? { ...saved.textData } : null,
-              position:    { ...saved.position },
-              size:        { ...saved.size },
-              rotation:    saved.rotation,
-              aspectRatio: saved.aspectRatio,
-              flipH:       saved.flipH ?? false,
-              flipV:       saved.flipV ?? false
-            });
-            res();
-          };
-          img.onerror = res;
-          img.src = saved.imageData;
-        })));
+        // v2 compat: flat overlayImages; v3: overlays come per-part via preloadedOverlays
+        const savedOverlays = existingCustom._v2compat ? (existingCustom.overlayImages || []) : [];
+        if (savedOverlays.length > 0) {
+          await Promise.all(savedOverlays.map(saved => new Promise(res => {
+            const img = new Image();
+            img.onload = () => {
+              this.overlayImages.push({
+                id:          this.nextImageId++,
+                image:       img,
+                name:        saved.name,
+                type:        saved.type     || 'image',
+                textData:    saved.textData ? { ...saved.textData } : null,
+                position:    { ...saved.position },
+                size:        { ...saved.size },
+                rotation:    saved.rotation,
+                aspectRatio: saved.aspectRatio,
+                flipH:       saved.flipH    ?? false,
+                flipV:       saved.flipV    ?? false,
+              });
+              res();
+            };
+            img.onerror = res;
+            img.src = saved.imageData;
+          })));
+        }
+        overlaysToApply = this.overlayImages;
+      } else {
+        this.activeModelName = originalModelName;
+        this.customModelName = null;
+        this.overlayImages = [];
+        this.nextImageId = 1;
       }
-    } else {
-
-      this.activeModelName = originalModelName;
-      this.customModelName = null; // Will be set on save
-      this.overlayImages = [];
-      this.nextImageId = 1;
     }
 
-    // Custom models use null base so the composite starts from material color only.
-    this.baseTexture = isCustom ? null : (mesh.material?.map || null);
+    this.baseTexture = (mesh.material?.map && mesh.material.map !== this.liveCanvasTexture)
+      ? mesh.material.map : null;
     this._materialBaseColor = mesh.material?.color
-      ? ('#' + mesh.material.color.getHexString())
-      : '#ffffff';
-
-    // Reset live canvas texture reference for this session
+      ? ('#' + mesh.material.color.getHexString()) : '#ffffff';
     this.liveCanvasTexture = null;
 
     this._updateLayersList();
     this._renderPreview();
-    this.log(`Design Editor active for: ${this.customModelName || this.activeModelName}`);
+    this.log(`Design Editor: ${this.customModelName || this.activeModelName}`);
 
-    // For custom models with overlays, apply the composite immediately so the
-    // designs are visible on the 3D model right after loading (correct layer order,
-    // flipH/flipV, and material color as the base layer).
-    if (isCustom && this.overlayImages.length > 0) {
+    if (overlaysToApply.length > 0) {
       this._renderComposite();
       const texture = new THREE.CanvasTexture(this.textureCanvas);
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -422,7 +430,6 @@ export class UVEditor {
       window.markNeedsRender?.(4);
     }
 
-    // Re-apply UV checker to the new mesh if it was active on the previous part
     if (wasCheckUVActive) this._toggleCheckUV();
   }
 

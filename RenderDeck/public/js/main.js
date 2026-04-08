@@ -78,6 +78,11 @@ let activeMesh = null;
 const _channelMapData = new Map(); // channel key → base64 data URL (persists original file data)
 let meshMap = {}; // name → mesh reference for multi‑part models
 
+// Per-part state cache — populated when switching parts so each part's
+// channel maps and decal overlays survive while another part is active.
+// Shape: { [partName]: { channelMaps: { ch: dataUrl }, overlayImages: [...] } }
+let _partCache = {};
+
 // ── Performance mode ──────────────────────────────────────────
 const HIGH_POLY_THRESHOLD = 100_000; // faces
 let performanceModeEnabled = false;  // auto-set on high-poly load; user can override
@@ -447,146 +452,219 @@ async function loadModel(name, onLoaded = null) {
   }, 100);
 }
 
+// Decode a saved decals array (with imageData strings) into live overlay objects
+// with decoded HTMLImageElement instances. Returns a Promise<overlay[]>.
+function _decodeDecals(decals) {
+  if (!decals?.length) return Promise.resolve([]);
+  return Promise.all(decals.map((saved, i) => new Promise(res => {
+    const img = new Image();
+    img.onload = () => res({
+      id:          i + 1,
+      image:       img,
+      name:        saved.name,
+      type:        saved.type        || 'image',
+      textData:    saved.textData    ? { ...saved.textData } : null,
+      position:    { ...saved.position },
+      size:        { ...saved.size },
+      rotation:    saved.rotation,
+      aspectRatio: saved.aspectRatio,
+      flipH:       saved.flipH       ?? false,
+      flipV:       saved.flipV       ?? false,
+    });
+    img.onerror = () => res(null);
+    img.src = saved.imageData;
+  }))).then(r => r.filter(Boolean));
+}
+
 async function loadCustomModel(name, modelData, onLoaded = null) {
   log(`Loading custom model: ${name}…`);
   const loadingPaths = await modelManager.getLoadingPaths(modelData.basedOn);
   if (!loadingPaths) { logError(`Base model not found: ${modelData.basedOn}`); return; }
 
-  // Pre-decode overlay images in parallel with OBJ load so decals are ready immediately
-  const overlayPreload = (modelData.overlayImages?.length > 0)
-    ? Promise.all(modelData.overlayImages.map(saved => new Promise(res => {
-        const img = new Image();
-        img.onload = () => res({
-          id:          0,
-          image:       img,
-          name:        saved.name,
-          type:        saved.type     || 'image',
-          textData:    saved.textData ? { ...saved.textData } : null,
-          position:    { ...saved.position },
-          size:        { ...saved.size },
-          rotation:    saved.rotation,
-          aspectRatio: saved.aspectRatio,
-          flipH:       saved.flipH ?? false,
-          flipV:       saved.flipV ?? false,
-        });
-        img.onerror = () => res(null);
-        img.src = saved.imageData;
-      })))
-      .then(results => {
-        let id = 1;
-        return results.filter(Boolean).map(o => ({ ...o, id: id++ }));
-      })
-    : Promise.resolve([]);
+  await materialPresetsReady;
 
-  const objPath = loadingPaths.obj;
+  // ── Determine schema version ──────────────────────────────────────────────
+  const isV3 = !!(modelData.parts && modelData.version >= 3);
 
-  objLoader.load(objPath, async (object) => {
-    // Ensure standard presets are loaded before applying material
-    await materialPresetsReady;
+  // For v2 compat: pre-decode the single overlay set in parallel with geometry load
+  const v2OverlayPreload = (!isV3 && modelData.overlayImages?.length > 0)
+    ? _decodeDecals(modelData.overlayImages) : Promise.resolve([]);
 
-    const meshList = [];
+  // For v3: pre-decode decals for every part in parallel with geometry load
+  const v3DecalPreload = isV3
+    ? Object.fromEntries(await Promise.all(
+        Object.entries(modelData.parts).map(async ([pName, pData]) => [
+          pName, await _decodeDecals(pData.decals)
+        ])
+      ))
+    : {};
 
-    // Resolve material preset: prefer stable ID lookup so renamed presets still work
-    let savedPreset = modelData.materialPreset || 'Default — White';
-    if (modelData.materialPresetId) {
-      const nameById = materialManager.getPresetNameById(modelData.materialPresetId);
-      if (nameById) savedPreset = nameById;
+  // ── Load base geometry ────────────────────────────────────────────────────
+  const isGLB = loadingPaths.type === 'glb-path' || loadingPaths.type === 'glb-blob';
+  const object = await new Promise((resolve) => {
+    const onProgress = (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); };
+    if (isGLB) {
+      gltfLoader.load(loadingPaths.obj, gltf => resolve(gltf.scene), onProgress,
+        err => { logError(`GLB load failed: ${err}`); resolve(null); });
+    } else {
+      objLoader.load(loadingPaths.obj, obj => resolve(obj), onProgress,
+        err => { logError(`OBJ load failed: ${err}`); resolve(null); });
     }
-    // Explicit flag, or infer: if the preset name isn't a known standard preset, treat as custom
-    const isCustom = modelData.isCustomMaterial === true
-      || (modelData.isCustomMaterial === undefined && !materialManager.isStandardPreset(savedPreset) && savedPreset !== 'Default — White');
+  });
+  if (!object) return;
 
-    if (isCustom && modelData.materialProperties &&
-        !materialManager.getPresetNames().includes(savedPreset)) {
-      materialManager.addUserPreset(savedPreset, modelData.materialProperties);
-      scheduleThumbnailUpdate(savedPreset, null);
+  // ── Assign materials per mesh ─────────────────────────────────────────────
+  const meshList = [];
+  _partCache = {}; // clear stale part cache from previous model
+
+  object.traverse((child) => {
+    if (!child.isMesh) return;
+    child.castShadow = true;
+    child.receiveShadow = true;
+    child.userData.isCustomModel = true;
+
+    let baseName = child.name || 'Part';
+    let uniqueName = baseName;
+    let idx = 1;
+    while (meshMap[uniqueName]) uniqueName = `${baseName}_${idx++}`;
+    child.name = uniqueName;
+
+    meshList.push(child);
+    meshMap[child.name] = child;
+    if (!activeMesh) activeMesh = child;
+
+    if (isV3) {
+      // v3: each part has its own materialData
+      const partData = modelData.parts[child.name];
+      let presetName = partData?.materialPreset || 'Default — White';
+      if (partData?.materialPresetId) {
+        const byId = materialManager.getPresetNameById(partData.materialPresetId);
+        if (byId) presetName = byId;
+      }
+      const matProps = partData?.materialData || {};
+      const isCustomMat = partData?.isCustomMaterial
+        ?? (!materialManager.isStandardPreset(presetName) && presetName !== 'Default — White');
+
+      if (isCustomMat && matProps && !materialManager.getPresetNames().includes(presetName)) {
+        materialManager.addUserPreset(presetName, matProps);
+        scheduleThumbnailUpdate(presetName, null);
+      }
+
+      const material = isCustomMat
+        ? (() => { const m = materialManager.createFreshPreset(presetName); m.name = presetName; return m; })()
+        : materialManager.getPreset(presetName);
+      materialManager.applyEnvironment(material, sceneManager.getScene().environment);
+      if (matProps) materialManager.applySavedProperties(material, matProps);
+      child.material = material;
+    } else {
+      // v2 compat: flat single-preset for all parts
+      let savedPreset = modelData.materialPreset || 'Default — White';
+      if (modelData.materialPresetId) {
+        const byId = materialManager.getPresetNameById(modelData.materialPresetId);
+        if (byId) savedPreset = byId;
+      }
+      const isCustomMat = modelData.isCustomMaterial === true
+        || (modelData.isCustomMaterial === undefined
+            && !materialManager.isStandardPreset(savedPreset)
+            && savedPreset !== 'Default — White');
+
+      if (isCustomMat && modelData.materialProperties
+          && !materialManager.getPresetNames().includes(savedPreset)) {
+        materialManager.addUserPreset(savedPreset, modelData.materialProperties);
+        scheduleThumbnailUpdate(savedPreset, null);
+      }
+
+      const material = isCustomMat
+        ? (() => { const m = materialManager.createFreshPreset(savedPreset); m.name = savedPreset; return m; })()
+        : materialManager.getPreset(savedPreset);
+      materialManager.applyEnvironment(material, sceneManager.getScene().environment);
+      if (modelData.materialProperties) materialManager.applySavedProperties(material, modelData.materialProperties);
+      child.material = material;
+    }
+  });
+
+  sceneManager.add(object);
+  activeModel = object;
+  propManager.setMainModel(activeModel);
+  activeMesh = meshList[0] || null;
+
+  const names = meshList.map(m => m.name);
+  controls.updatePartSelect(names);
+  uvEditor.setPartNames(names, (n) => selectPart(meshMap[n]));
+  const multi = names.length > 1;
+  controls.setEnabled('objectPartSelect', multi);
+  controls.setVisible('objectPartSelect', multi);
+
+  // ── Restore first part's channel maps + open UV editor ───────────────────
+  _channelMapData.clear();
+
+  if (isV3) {
+    // Pre-populate _partCache for all parts so selectPart can restore them immediately
+    for (const [partName, partData] of Object.entries(modelData.parts)) {
+      const channelMaps = partData.materialData?.channelMaps || null;
+      _partCache[partName] = {
+        channelMaps,
+        overlayImages: v3DecalPreload[partName] || [],
+        materialPreset:   partData.materialPreset   || 'Default — White',
+        materialPresetId: partData.materialPresetId || null,
+        isCustomMaterial: partData.isCustomMaterial || false,
+      };
     }
 
-    object.traverse((child) => {
-      if (!child.isMesh) return;
-      child.castShadow = true;
-      child.receiveShadow = true;
-      child.userData.isCustomModel = true;
-
-      let baseName = child.name || `Part`;
-      let uniqueName = baseName;
-      let idx = 1;
-      while (meshMap[uniqueName]) {
-        uniqueName = `${baseName}_${idx++}`;
+    // Apply first part's channel maps to its mesh material
+    if (activeMesh) {
+      const firstPartCache = _partCache[activeMesh.name];
+      if (firstPartCache?.channelMaps) {
+        await restoreChannelMaps(activeMesh.material, firstPartCache.channelMaps);
       }
-      child.name = uniqueName;
-
-      meshList.push(child);
-      meshMap[child.name] = child;
-
-      if (!activeMesh) activeMesh = child;
-
-      if (isCustom) {
-        // Custom material: start from the global preset then override with this
-        // model's own saved snapshot so two models can share a preset name but
-        // keep independent slider values.
-        const material = materialManager.createFreshPreset(savedPreset);
-        material.name = savedPreset;
-        materialManager.applyEnvironment(material, sceneManager.getScene().environment);
-        if (modelData.materialProperties) {
-          materialManager.applySavedProperties(material, modelData.materialProperties);
-        }
-        child.material = material;
-      } else {
-        // Standard material: use the cached preset
-        const material = materialManager.getPreset(savedPreset);
-        materialManager.applyEnvironment(material, sceneManager.getScene().environment);
-        child.material = material;
-        if (modelData.materialProperties) {
-          materialManager.applySavedProperties(child.material, modelData.materialProperties);
-        }
+      const firstPreset = firstPartCache?.materialPreset || 'Default — White';
+      controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+      updateMaterialPresetList();
+      controls.setMaterialPresetValue(firstPreset);
+      uvEditor.activeModelName  = modelData.basedOn;
+      uvEditor.customModelName  = name;
+      uvEditor.currentMaterialPreset = firstPreset;
+      // Open UV editor with pre-decoded overlays for first part
+      const firstOverlays = firstPartCache?.overlayImages || [];
+      uvEditor.openWithPreloadedData(activeMesh, name, {
+        basedOn:           modelData.basedOn,
+        materialPreset:    firstPreset,
+        materialProperties: firstPartCache?.materialData || {},
+      }, firstOverlays, firstPreset);
+      if (firstPartCache?.channelMaps) {
+        controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
       }
-    });
-
-    sceneManager.add(object);
-    activeModel = object;
-    propManager.setMainModel(activeModel);
-    activeMesh = meshList[0] || null;
-    const names = meshList.map(m => m.name);
-    controls.updatePartSelect(names);
-    uvEditor.setPartNames(names, (n) => selectPart(meshMap[n]));
-    const multi = names.length > 1;
-    controls.setEnabled('objectPartSelect', multi);
-    controls.setVisible('objectPartSelect', multi);
-    if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
-    updateMaterialPresetList();
-    controls.setMaterialPresetValue(savedPreset);
-    log(`${name} loaded.`);
-    // Restore channel maps BEFORE opening UV editor so the channel map
-    // is captured as baseTexture and composited underneath decals correctly.
+    }
+  } else {
+    // v2 compat path
+    const savedPreset = modelData.materialPreset || 'Default — White';
     if (modelData.channelMaps && activeMesh?.material) {
       await restoreChannelMaps(activeMesh.material, modelData.channelMaps);
     }
-    // Initialize UV editor — images were pre-decoded in parallel with OBJ load
+    controls.syncMaterialUI(activeMesh?.material, getChannelThumbnailOverrides());
+    updateMaterialPresetList();
+    controls.setMaterialPresetValue(savedPreset);
     if (activeMesh) {
-      const preloadedImages = await overlayPreload;
+      const preloadedImages = await v2OverlayPreload;
       uvEditor.openWithPreloadedData(activeMesh, name, modelData, preloadedImages, savedPreset);
     }
     if (modelData.channelMaps && activeMesh?.material) {
       controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     }
-    // Restore the scene/background that was active when this custom model was saved
-    if (modelData.sceneState) {
-      restoreSceneState(modelData.sceneState);
-    }
-    const _customBootLoad = !!_bootCamera;
-    if (_bootCamera) {
-      cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
-      if (_bootCamera.target) cameraManager.setTarget(_bootCamera.target.x, _bootCamera.target.y, _bootCamera.target.z);
-      _bootCamera = null;
-    }
-    if (!_customBootLoad) cameraManager.reframeObject(object);
-    checkAndApplyPolyPerf(object);
-    markNeedsRender(60);
-    if (onLoaded) onLoaded(object);
-  },
-  (xhr) => { if (xhr.lengthComputable && xhr.total > 0) log(`Loading… ${((xhr.loaded/xhr.total)*100).toFixed(0)}%`); },
-  (err) => logError(`OBJ load failed: ${err}`));
+  }
+
+  if (modelData.sceneState) restoreSceneState(modelData.sceneState);
+
+  const _customBootLoad = !!_bootCamera;
+  if (_bootCamera) {
+    cameraManager.setPosition(_bootCamera.position.x, _bootCamera.position.y, _bootCamera.position.z);
+    if (_bootCamera.target) cameraManager.setTarget(_bootCamera.target.x, _bootCamera.target.y, _bootCamera.target.z);
+    _bootCamera = null;
+  }
+  if (!_customBootLoad) cameraManager.reframeObject(object);
+  checkAndApplyPolyPerf(object);
+  markNeedsRender(60);
+  if (onLoaded) onLoaded(object);
 }
 
 async function loadRegularModel(name, _modelData, onLoaded = null) {
@@ -807,9 +885,9 @@ function cleanupActiveModel() {
     uvEditor._origColor = null;
     uvEditor._origTransmission = null;
     uvEditor._materialBaseColor = null;
-    // Channel maps belong to the model being unloaded — clear so they don't
-    // bleed into the next model's autosave state via serializeChannelMaps().
+    // Channel maps and part cache belong to the model being unloaded.
     _channelMapData.clear();
+    _partCache = {};
 
     // Reset performance mode state
     _activeModelFaceCount = 0;
@@ -1684,10 +1762,27 @@ function onCanvasClick() {
   }
 }
 
-function selectPart(mesh) {
+function _snapshotCurrentPart() {
+  // Snapshot the active part's state into _partCache before switching parts.
+  // We store the live overlay array (already-decoded Image objects) and channel maps
+  // so switching back is instant and saveCustomModelHandler can collect all parts.
+  if (!activeMesh) return;
+  _partCache[activeMesh.name] = {
+    channelMaps:   serializeChannelMaps() || null,
+    // Store overlay entries with live Image objects — no re-decode needed on restore
+    overlayImages: uvEditor.overlayImages.map(img => ({ ...img })),
+    materialPreset:   uvEditor.currentMaterialPreset,
+    materialPresetId: materialManager.getPresetId(uvEditor.currentMaterialPreset),
+    isCustomMaterial: materialManager.isUserPreset(uvEditor.currentMaterialPreset),
+  };
+}
+
+async function selectPart(mesh) {
   if (!mesh) return;
+  _snapshotCurrentPart();
   clearHighlight();
   activeMesh = mesh;
+
   if (activeMesh.material) {
     controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
     if (activeMesh.material.name) {
@@ -1695,7 +1790,19 @@ function selectPart(mesh) {
       setMaterialNameField(activeMesh.material.name);
     }
   }
-  uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset());
+
+  // Restore channel maps for this part from cache
+  const cached = _partCache[mesh.name];
+  _channelMapData.clear();
+  if (cached?.channelMaps && activeMesh.material) {
+    await restoreChannelMaps(activeMesh.material, cached.channelMaps);
+    controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+  }
+
+  // Pass cached overlays (already-decoded Image objects) — skips IDB read
+  const preloadedOverlays = cached ? cached.overlayImages : null;
+  await uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset(), preloadedOverlays);
+
   cameraManager.reframeObject(activeMesh);
   const sel = controls.elements.objectPartSelect;
   if (sel) sel.value = mesh.name;
@@ -2188,6 +2295,91 @@ document.getElementById('reset-all-data-btn')?.addEventListener('click', () => {
 });
 
 window.updateModelSelect = updateModelList;
+
+// ── Multi-part custom model save ──────────────────────────────────────────────
+// Collects all parts' state (channel maps + decals + material) into the v3 parts
+// schema and delegates to CustomModelStorage.saveCustomModel.
+window.saveCustomModelHandler = async function() {
+  if (!activeModel) return;
+
+  // Snapshot the currently active part before collecting all parts
+  _snapshotCurrentPart();
+
+  // Prompt for name if not yet saved as a custom model
+  let customName = uvEditor.customModelName;
+  if (!customName) {
+    const baseName = uvEditor.activeModelName || getCurrentModelName();
+    customName = prompt('Enter a name for your custom model:', `${baseName} (Custom)`);
+    if (!customName) { log('Save cancelled'); return; }
+    uvEditor.customModelName = customName;
+  }
+
+  // Build parts map from _partCache (all visited parts) + any unvisited meshes
+  const parts = {};
+  for (const [partName, mesh] of Object.entries(meshMap)) {
+    const cached = _partCache[partName];
+    const mat = mesh.material;
+
+    // Extract material properties (undo sticker-PBR overrides if active for this mesh)
+    const stickerActive = activeMesh === mesh && uvEditor._origMetalness !== null;
+    if (stickerActive) {
+      mat.metalness = uvEditor._origMetalness;
+      mat.roughness = uvEditor._origRoughness;
+      if (uvEditor._origTransmission !== null) mat.transmission = uvEditor._origTransmission;
+      if (uvEditor._origColor && mat.color) mat.color.set(uvEditor._origColor);
+    }
+    const matProps = materialManager.extractProperties(mat);
+    if (stickerActive) {
+      mat.metalness = 1.0; mat.roughness = 1.0;
+      if (uvEditor._origTransmission > 0) mat.transmission = 1.0;
+      if (mat.color) mat.color.set(0xffffff);
+    }
+
+    const channelMaps = cached?.channelMaps || null;
+    if (channelMaps) matProps.channelMaps = channelMaps;
+
+    // Serialize decals to dataURLs from cached overlay Image objects
+    const decals = await Promise.all((cached?.overlayImages || []).map(async img => {
+      const c = document.createElement('canvas');
+      c.width = img.image.width; c.height = img.image.height;
+      c.getContext('2d').drawImage(img.image, 0, 0);
+      return {
+        name:        img.name,
+        type:        img.type        || 'image',
+        textData:    img.textData    ? { ...img.textData } : null,
+        position:    { ...img.position },
+        size:        { ...img.size },
+        rotation:    img.rotation,
+        aspectRatio: img.aspectRatio,
+        flipH:       img.flipH       ?? false,
+        flipV:       img.flipV       ?? false,
+        imageData:   c.toDataURL('image/png'),
+      };
+    }));
+
+    const presetName = cached?.materialPreset || mat.name || 'Default — White';
+    parts[partName] = {
+      materialPreset:   presetName,
+      materialPresetId: cached?.materialPresetId || materialManager.getPresetId(presetName) || null,
+      isCustomMaterial: cached?.isCustomMaterial ?? materialManager.isUserPreset(presetName),
+      materialData:     matProps,
+      decals,
+    };
+  }
+
+  await modelManager.saveCustomModel(customName, {
+    basedOn:    uvEditor.activeModelName,
+    customName,
+    sourceType: 'standard',
+    sceneState: uvEditor.sceneState || null,
+    parts,
+  });
+
+  log(`Saved: ${customName}`);
+  await updateModelList();
+  window.selectModelInDropdown?.(customName);
+};
+
 window.switchToModel = (name) => {
   const sel = document.getElementById('object-select') || document.getElementById('model-select');
   if (sel) { sel.value = name; loadModel(name); }
