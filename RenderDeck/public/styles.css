@@ -201,6 +201,8 @@ hr {
   border-bottom: 1px solid #2a2a2a;
 }
 
+a.app-header-logo { text-decoration: none; cursor: pointer; }
+
 .app-header-logo {
   display: flex;
   align-items: center;
