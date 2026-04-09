@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RenderDeck</title>
+  <link rel="stylesheet" href="landing.css">
+</head>
+<body>
+<div class="landing">
+
+  <!-- ── Top black zone ── -->
+  <div class="landing-top">
+    <div class="landing-top-left">
+
+      <div class="landing-logo">
+        <span class="landing-logo-name">RenderDeck</span>
+        <span class="logo-blend">
+          <img src="icons/rd_logo.jpg"       class="logo-img logo-base"  alt="RenderDeck logo">
+          <img src="icons/rd_logo_light.jpg" class="logo-img logo-light" alt="">
+        </span>
+      </div>
+
+      <p class="landing-tagline">Browser-based 3D product rendering. No installs. No plugins.</p>
+
+      <a class="changelog-chip" href="#">
+        <span class="changelog-chip-badge">NEW</span>
+        v0.1 — Multi-part GLB support &amp; project thumbnails
+      </a>
+
+      <div class="stat-row">
+        <span class="stat">GLB &amp; OBJ</span>
+        <span class="stat-sep"></span>
+        <span class="stat">Full PBR</span>
+        <span class="stat-sep"></span>
+        <span class="stat">IndexedDB persistence</span>
+        <span class="stat-sep"></span>
+        <span class="stat">WebGL 2</span>
+      </div>
+
+    </div>
+
+    <div class="landing-top-nav">
+      <a class="nav-link" href="#">About</a>
+      <a class="nav-link" href="#">GitHub</a>
+      <a class="nav-link" href="#">Contact</a>
+    </div>
+  </div>
+
+  <!-- ── Bottom gray zone ── -->
+  <div class="landing-bottom">
+
+    <div class="section-label">See it in action</div>
+
+    <!-- Slideshow + right panel -->
+    <div class="bottom-row">
+
+      <!-- 16:9 slideshow screen -->
+      <div class="slideshow-wrap">
+        <div class="slideshow" id="slideshow">
+
+          <div class="slide active"><img src="images/slideshow/Screenshot 2026-04-08 205905.png" alt=""></div>
+          <div class="slide"><img src="images/slideshow/Screenshot 2026-04-08 210227.png" alt=""></div>
+          <div class="slide"><img src="images/slideshow/funny.png" alt=""></div>
+          <div class="slide"><img src="images/slideshow/scenery.png" alt=""></div>
+
+        </div>
+
+        <!-- Testimonial overlay -->
+        <div class="testimonial">
+          <p class="testimonial-text">"RenderDeck completely changed how I prototype product visuals — it's instant."</p>
+          <p class="testimonial-author">— Early tester</p>
+        </div>
+
+        <div class="slide-dots" id="slide-dots"></div>
+      </div>
+
+      <!-- Right panel: features + auth -->
+      <div class="right-panel">
+
+        <div class="feature-list">
+          <div class="feature-item"><span class="feature-icon">◻</span> No install required</div>
+          <div class="feature-item"><span class="feature-icon">◻</span> Full PBR material editor</div>
+          <div class="feature-item"><span class="feature-icon">◻</span> Custom model upload</div>
+          <div class="feature-item"><span class="feature-icon">◻</span> Multi-part GLB support</div>
+          <div class="feature-item"><span class="feature-icon">◻</span> Export-ready renders</div>
+        </div>
+
+        <div class="auth-block">
+          <div class="auth-divider"></div>
+          <a class="btn btn-primary" href="index.html">Sign up</a>
+          <a class="btn btn-ghost"   href="index.html">Log in</a>
+          <a class="btn-try"         href="#">Try it now &rarr;</a>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Feature cards -->
+    <div class="feature-cards">
+      <div class="feature-card">
+        <div class="feature-card-icon">◈</div>
+        <div class="feature-card-title">PBR Materials</div>
+        <div class="feature-card-desc">Metalness, roughness, transmission, clearcoat and more — all in real time.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-icon">◈</div>
+        <div class="feature-card-title">Custom Models</div>
+        <div class="feature-card-desc">Upload OBJ or GLB files with full multi-part and channel map support.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-card-icon">◈</div>
+        <div class="feature-card-title">Live Design</div>
+        <div class="feature-card-desc">Place decals and textures directly on your model with the UV design editor.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Footer strip ── -->
+  <div class="landing-footer">
+    <div class="pill"><span class="pill-dot"></span> No install required</div>
+    <div class="pill"><span class="pill-dot"></span> Full PBR material editor</div>
+    <div class="pill"><span class="pill-dot"></span> Custom model upload</div>
+    <div class="pill"><span class="pill-dot"></span> Export-ready renders</div>
+    <div class="pill"><span class="pill-dot"></span> Multi-part GLB support</div>
+  </div>
+
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const dotsEl = document.getElementById('slide-dots');
+  let current = 0, timer;
+
+  if (slides.length > 1) {
+    slides.forEach((_, i) => {
+      const dot = document.createElement('button');
+      dot.className = 'slide-dot' + (i === 0 ? ' active' : '');
+      dot.addEventListener('click', () => goTo(i));
+      dotsEl.appendChild(dot);
+    });
+
+    function goTo(idx) {
+      slides[current].classList.remove('active');
+      dotsEl.children[current]?.classList.remove('active');
+      current = idx;
+      slides[current].classList.add('active');
+      dotsEl.children[current]?.classList.add('active');
+      clearInterval(timer);
+      timer = setInterval(next, 5000);
+    }
+
+    function next() { goTo((current + 1) % slides.length); }
+    timer = setInterval(next, 5000);
+  }
+</script>
+</body>
+</html>
