@@ -49,6 +49,7 @@ html, body {
   width: 54px;
   height: 54px;
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 .logo-img {
