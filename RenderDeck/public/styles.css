@@ -440,6 +440,67 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   padding: 5px;
 }
 
+/* ── Object / Props folder tabs ─────────────────────────────── */
+.folder-tabs-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  margin-top: 10px;
+  margin-bottom: -1px;
+  position: relative;
+  z-index: 1;
+}
+
+.folder-tab {
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 100%), #1a1a1a;
+  border: 1px solid #3a3a3a;
+  padding: 5px 26px 5px 10px;
+  cursor: pointer;
+  clip-path: polygon(0% 0%, calc(100% - 14px) 0%, 100% 100%, 0% 100%);
+  color: #888;
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  text-align: left;
+  transition: color 0.15s ease;
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(1px 0 0 #3a3a3a);
+}
+
+.folder-tab + .folder-tab {
+  margin-left: -6px;
+}
+
+.folder-tab h4 {
+  margin: 0;
+  color: inherit;
+  font-size: 19px;
+  font-weight: 500;
+  text-shadow: none;
+}
+
+.folder-tab:hover:not(.active) {
+  color: #bbb;
+}
+
+.folder-tab.active {
+  border-color: #4a4a4a;
+  border-bottom: none;
+  color: white;
+  z-index: 2;
+  filter: drop-shadow(1px 0 0 #4a4a4a);
+}
+
+.folder-panel {
+  background: #161616;
+  border: 1px solid #4a4a4a;
+  border-radius: 0 4px 4px 4px;
+  padding: 6px 8px 8px;
+  position: relative;
+  z-index: 0;
+}
+
 /* Subtle text depth for content inside tabs (not buttons) */
 .tabcontent h2,
 .tabcontent h3,
@@ -963,6 +1024,9 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 /* Universal Button Style */
 .button,
 .button-medium {
+  -webkit-appearance: none;
+  appearance: none;
+
   background:
     linear-gradient(
       to bottom,

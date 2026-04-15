@@ -17,7 +17,7 @@ import { MaterialManager } from './materials/MaterialManager.js';
 import { ModelManager } from './models/ModelManager.js';
 
 import { UVEditor } from './ui/UVEditor.js';
-import { ControlsManager, initDebugPanelWidth } from './ui/Controls.js';
+import { ControlsManager, initDebugPanelWidth, initObjectPropsTabs } from './ui/Controls.js';
 import { SceneStateManager }    from './stateEditor/SceneState.js';
 import { DesignStateManager }   from './stateEditor/DesignState.js';
 import { MaterialStateManager } from './stateEditor/MaterialState.js';
@@ -3840,6 +3840,7 @@ async function initializeApp() {
   setupValueInputSpinners();
   setupDebugPanel();
   initDebugPanelWidth();
+  initObjectPropsTabs();
 
   // Apply initial renderer tone mapping
   rendererManager.getRenderer().toneMapping = THREE.ACESFilmicToneMapping;
