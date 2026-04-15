@@ -2,6 +2,8 @@
 // Handles both original controls and new MeshPhysicalMaterial controls from Setting 3
 
 import { log } from '../utils/logger.js';
+import { STANDARD_ENVIRONMENTS } from '../config.js';
+import { generateEnvPreview } from '../core/SceneLoader.js';
 
 // ── Reusable custom styled dropdown with optional thumbnail support ──────────
 export class CustomSelect {
@@ -891,7 +893,8 @@ export class ControlsManager {
   updateSceneSelect(sceneNames) {
     const sel = this.elements.sceneSelect;
     if (!sel) return;
-    // Keep placeholder
+
+    // Keep placeholder options in sync
     const placeholder = Array.from(sel.options).find(o => o.disabled);
     sel.innerHTML = '';
     if (placeholder) sel.appendChild(placeholder);
@@ -899,6 +902,47 @@ export class ControlsManager {
       const o = document.createElement('option');
       o.value = name; o.textContent = name;
       sel.appendChild(o);
+    });
+
+    // Build the card grid
+    const grid = document.getElementById('env-preset-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    const previewMap = Object.fromEntries(
+      STANDARD_ENVIRONMENTS.map(e => [e.label, e.preview])
+    );
+
+    sceneNames.forEach(name => {
+      const card = document.createElement('div');
+      card.className = 'bg-preset-card';
+      card.dataset.value = name;
+
+      const circle = document.createElement('div');
+      circle.className = 'bg-preset-circle';
+      circle.style.background = previewMap[name] ?? '#2a2a2a';
+
+      const label = document.createElement('span');
+      label.className = 'bg-preset-label';
+      label.textContent = name;
+
+      card.append(circle, label);
+      card.addEventListener('click', () => {
+        sel.value = name;
+        sel.dispatchEvent(new Event('change'));
+        syncEnvCards(name);
+      });
+      grid.appendChild(card);
+
+      // Asynchronously render the HDR onto a sphere and swap in the result
+      const envDef = STANDARD_ENVIRONMENTS.find(e => e.label === name);
+      if (envDef) {
+        generateEnvPreview(envDef.path).then(dataUrl => {
+          if (dataUrl) {
+            circle.style.background = `url(${dataUrl}) center/cover`;
+          }
+        });
+      }
     });
   }
 
