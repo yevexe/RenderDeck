@@ -284,11 +284,11 @@
             <select id="scene-select" class="dropdown">
               <option value="" disabled selected>--- Select a Scene ---</option>
             </select>
-            <button class="button-medium" id="save-scene-btn">Save as Custom Scene</button>
-            <button class="button-medium" id="export-scene-btn">Export Scene</button>
-            <button class="button-medium" id="import-scene-btn">Import Scene</button>
-            <button class="button-medium" id="clear-scenes-btn">Delete All Custom Scenes</button>
-            <button class="button-medium" id="reset-scene-btn">Reset Scene</button>
+            <button class="button-medium" id="save-scene-btn" title="Save as Custom Scene"><img class="btn-icon" src="icons/ui-icons/scene-save.png" alt="Save as Custom Scene"></button>
+            <button class="button-medium" id="export-scene-btn" title="Export Scene"><img class="btn-icon" src="icons/ui-icons/scene-export.png" alt="Export Scene"></button>
+            <button class="button-medium" id="import-scene-btn" title="Import Scene"><img class="btn-icon" src="icons/ui-icons/scene-import.png" alt="Import Scene"></button>
+            <button class="button-medium" id="clear-scenes-btn" title="Delete All Custom Scenes"><img class="btn-icon" src="icons/ui-icons/scene-delete.png" alt="Delete All Custom Scenes"></button>
+            <button class="button-medium" id="reset-scene-btn" title="Reset Scene"><img class="btn-icon" src="icons/ui-icons/scene-reset.png" alt="Reset Scene"></button>
             <input type="file" id="scene-file-input" accept=".json" style="display:none;">
 
             <hr>
@@ -329,7 +329,7 @@
               </label>
             </div>
             <h5>Background Preset</h5>
-            <select id="background-select" class="dropdown">
+            <select id="background-select" style="display:none">
               <option value="" disabled selected>--- Choose Background ---</option>
               <option value="grad_studio">Studio Dark (Blue-Navy)</option>
               <option value="grad_sunset">Warm Sunset</option>
@@ -341,6 +341,44 @@
               <option value="solid_white">Solid White</option>
               <option value="solid_gray">Solid Gray</option>
             </select>
+            <div class="bg-preset-grid">
+              <div class="bg-preset-card" data-value="grad_studio">
+                <div class="bg-preset-circle" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)"></div>
+                <span class="bg-preset-label">Studio Dark</span>
+              </div>
+              <div class="bg-preset-card" data-value="grad_sunset">
+                <div class="bg-preset-circle" style="background: linear-gradient(135deg, #ff6b6b 0%, #feca57 50%, #ff9ff3 100%)"></div>
+                <span class="bg-preset-label">Warm Sunset</span>
+              </div>
+              <div class="bg-preset-card" data-value="grad_ocean">
+                <div class="bg-preset-circle" style="background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)"></div>
+                <span class="bg-preset-label">Deep Ocean</span>
+              </div>
+              <div class="bg-preset-card" data-value="grad_forest">
+                <div class="bg-preset-circle" style="background: linear-gradient(135deg, #134e5e 0%, #71b280 100%)"></div>
+                <span class="bg-preset-label">Forest</span>
+              </div>
+              <div class="bg-preset-card" data-value="grad_dark">
+                <div class="bg-preset-circle" style="background: #111111"></div>
+                <span class="bg-preset-label">Near Black</span>
+              </div>
+              <div class="bg-preset-card" data-value="grad_white">
+                <div class="bg-preset-circle" style="background: #f5f5f5"></div>
+                <span class="bg-preset-label">Near White</span>
+              </div>
+              <div class="bg-preset-card" data-value="solid_black">
+                <div class="bg-preset-circle" style="background: #000000"></div>
+                <span class="bg-preset-label">Solid Black</span>
+              </div>
+              <div class="bg-preset-card" data-value="solid_white">
+                <div class="bg-preset-circle" style="background: #ffffff"></div>
+                <span class="bg-preset-label">Solid White</span>
+              </div>
+              <div class="bg-preset-card" data-value="solid_gray">
+                <div class="bg-preset-circle" style="background: #444444"></div>
+                <span class="bg-preset-label">Solid Gray</span>
+              </div>
+            </div>
             </div>
           </div>
 
