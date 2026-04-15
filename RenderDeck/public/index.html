@@ -241,7 +241,7 @@
             <h3>Scene Set-Up</h3>
             <hr>
 
-            <div class="history-panel">
+            <div class="history-panel hiddenToggleOn">
               <div class="history-controls">
                 <button class="btn-history" id="scene-undo-btn" disabled>&#8617; Undo</button>
                 <button class="btn-history" id="scene-redo-btn" disabled>&#8618; Redo</button>
@@ -250,34 +250,6 @@
                 <p class="empty-message">No history yet</p>
               </div>
             </div>
-
-            <h4>Object <span class="dot dot-positive" id="import-object-status-dot"></span></h4>
-            <h5>Select an Object</h5>
-            <select id="object-select" class="dropdown">
-              <!-- populated by JS with optgroups; no static placeholders needed -->
-            </select>
-
-            <!-- High-poly performance warning -->
-            <div id="high-poly-warning" class="high-poly-warning" style="display:none;">
-              <span class="high-poly-warning-icon">&#9888;&#65039;</span>
-              <span>High poly count detected (<span id="poly-count-display"></span>). Performance mode enabled.</span>
-            </div>
-
-            <!-- Upload / manage models -->
-            <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj or .glb)</label>
-            <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg,.glb" multiple style="display:none;">
-            <p class="upload-hint">.glb (standalone), or .obj + optional .mtl and textures — drag &amp; drop onto preview</p>
-            <div id="uploaded-model-warning" style="display:none;" class="uploaded-model-warning">
-              <span>&#9888;&#65039;</span>
-              <span>Uploaded files aren't saved on refresh. Custom models built from this file will need the file re-uploaded to load correctly.</span>
-            </div>
-
-            <button class="button-medium" id="export-btn">&#128190; Export Custom Model</button>
-            <button class="button-medium" id="import-btn">&#128229; Import Custom Model</button>
-            <button class="button-medium" id="clear-custom-btn">&#128465;&#65039; Clear Custom Models</button>
-            <input type="file" id="file-input" accept=".json,.renderdeck.json" style="display:none;">
-            <!-- hidden legacy select for JS compat -->
-            <select id="model-select" style="display:none;"></select>
 
             <h4>Scene</h4>
             <h5>Load Scene</h5>
@@ -293,22 +265,62 @@
 
             <hr>
 
-            <h4>Props</h4>
-            <h5>Add Props to Scene</h5>
-            <select id="props-select" class="dropdown">
-              <option value="" disabled selected>--- Select a Prop ---</option>
-            </select>
-            <button class="button-medium" id="add-prop-btn">Add Prop</button>
-            <button class="button-medium" id="import-prop-btn">Import Prop</button>
-            <button class="button-medium" id="sketchfab-prop-btn">Import Prop from Sketchfab</button>
-            <input type="file" id="prop-file-input" accept=".glb,.gltf,.obj" style="display:none;">
-
-            <h5>Props in Scene</h5>
-            <div id="props-list" class="props-list">
-              <p class="empty-message">No props added</p>
+            <!-- Object / Props folder tabs -->
+            <div class="folder-tabs-bar" id="obj-props-tabs-bar">
+              <button class="folder-tab active" data-target="obj-panel">
+                <h4>Object <span class="dot dot-positive" id="import-object-status-dot"></span></h4>
+              </button>
+              <button class="folder-tab" data-target="props-panel">
+                <h4>Props</h4>
+              </button>
             </div>
-            <button class="button-medium" id="delete-prop-btn">Delete Selected Prop</button>
-            <button class="button-medium" id="clear-props-btn">Clear All Props</button>
+
+            <div class="folder-panel" id="obj-panel">
+              <h5>Select an Object</h5>
+              <select id="object-select" class="dropdown">
+                <!-- populated by JS with optgroups; no static placeholders needed -->
+              </select>
+
+              <!-- High-poly performance warning -->
+              <div id="high-poly-warning" class="high-poly-warning" style="display:none;">
+                <span class="high-poly-warning-icon">&#9888;&#65039;</span>
+                <span>High poly count detected (<span id="poly-count-display"></span>). Performance mode enabled.</span>
+              </div>
+
+              <!-- Upload / manage models -->
+              <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj or .glb)</label>
+              <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg,.glb" multiple style="display:none;">
+              <p class="upload-hint">.glb (standalone), or .obj + optional .mtl and textures — drag &amp; drop onto preview</p>
+              <div id="uploaded-model-warning" style="display:none;" class="uploaded-model-warning">
+                <span>&#9888;&#65039;</span>
+                <span>Uploaded files aren't saved on refresh. Custom models built from this file will need the file re-uploaded to load correctly.</span>
+              </div>
+
+              <button class="button-medium" id="export-btn">&#128190; Export Custom Model</button>
+              <button class="button-medium" id="import-btn">&#128229; Import Custom Model</button>
+              <button class="button-medium" id="clear-custom-btn">&#128465;&#65039; Clear Custom Models</button>
+              <input type="file" id="file-input" accept=".json,.renderdeck.json" style="display:none;">
+              <!-- hidden legacy select for JS compat -->
+              <select id="model-select" style="display:none;"></select>
+            </div>
+
+            <div class="folder-panel" id="props-panel" style="display:none;">
+              <h5>Add Props to Scene</h5>
+              <select id="props-select" class="dropdown">
+                <option value="" disabled selected>--- Select a Prop ---</option>
+              </select>
+              <button class="button-medium" id="add-prop-btn">Add Prop</button>
+              <button class="button-medium" id="import-prop-btn">Import Prop</button>
+              <button class="button-medium" id="sketchfab-prop-btn">Import Prop from Sketchfab</button>
+              <input type="file" id="prop-file-input" accept=".glb,.gltf,.obj" style="display:none;">
+
+              <h5>Props in Scene</h5>
+              <div id="props-list" class="props-list">
+                <p class="empty-message">No props added</p>
+              </div>
+              <button class="button-medium" id="delete-prop-btn">Delete Selected Prop</button>
+              <button class="button-medium" id="clear-props-btn">Clear All Props</button>
+            </div>
 
             <h4>Environmental Lighting <span class="dot dot-neutral" id="import-environment-status-dot"></span></h4>
             <select id="environment-select" class="dropdown">
@@ -388,7 +400,7 @@
             <h3>Design Editor</h3>
             <hr>
 
-            <div class="history-panel">
+            <div class="history-panel hiddenToggleOn">
               <div class="history-controls">
                 <button class="btn-history" id="design-undo-btn" disabled>&#8617; Undo</button>
                 <button class="btn-history" id="design-redo-btn" disabled>&#8618; Redo</button>
@@ -559,7 +571,7 @@
             <h3>Materials</h3>
             <hr>
 
-            <div class="history-panel">
+            <div class="history-panel hiddenToggleOn">
               <div class="history-controls">
                 <button class="btn-history" id="mat-undo-btn" disabled>&#8617; Undo</button>
                 <button class="btn-history" id="mat-redo-btn" disabled>&#8618; Redo</button>
