@@ -296,9 +296,9 @@
                 <span>Uploaded files aren't saved on refresh. Custom models built from this file will need the file re-uploaded to load correctly.</span>
               </div>
 
-              <button class="button-medium" id="export-btn">&#128190; Export Custom Model</button>
-              <button class="button-medium" id="import-btn">&#128229; Import Custom Model</button>
-              <button class="button-medium" id="clear-custom-btn">&#128465;&#65039; Clear Custom Models</button>
+              <button class="button-medium" id="export-btn">&#128190; Export</button>
+              <button class="button-medium" id="import-btn">&#128229; Import</button>
+              <button class="button-medium" id="clear-custom-btn">&#128465;&#65039; Clear</button>
               <input type="file" id="file-input" accept=".json,.renderdeck.json" style="display:none;">
               <!-- hidden legacy select for JS compat -->
               <select id="model-select" style="display:none;"></select>
@@ -323,11 +323,11 @@
             </div>
 
             <h4>Environmental Lighting <span class="dot dot-neutral" id="import-environment-status-dot"></span></h4>
-            <select id="environment-select" class="dropdown">
+            <select id="environment-select" style="display:none">
               <option value="" disabled selected>--- Standard Lighting ---</option>
-              <!-- populated by JS from SCENE_PATHS -->
               <option value="" disabled>--- User Lighting ---</option>
             </select>
+            <div class="bg-preset-grid" id="env-preset-grid"></div>
 
             <h4>Background <span class="dot dot-negative" id="import-background-status-dot"></span></h4>
             <div class="toggle-list">
@@ -353,7 +353,7 @@
               <option value="solid_white">Solid White</option>
               <option value="solid_gray">Solid Gray</option>
             </select>
-            <div class="bg-preset-grid">
+            <div class="bg-preset-grid" id="bg-preset-grid">
               <div class="bg-preset-card" data-value="grad_studio">
                 <div class="bg-preset-circle" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)"></div>
                 <span class="bg-preset-label">Studio Dark</span>
