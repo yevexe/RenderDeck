@@ -291,6 +291,12 @@ function setupHistoryUI() {
   });
 }
 
+function syncBgCards(value) {
+  document.querySelectorAll('.bg-preset-card').forEach(card => {
+    card.classList.toggle('selected', card.dataset.value === value);
+  });
+}
+
 const GRADIENT_PRESETS = {
   grad_studio:  'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
   grad_sunset:  'linear-gradient(135deg, #ff6b6b 0%, #feca57 50%, #ff9ff3 100%)',
@@ -373,7 +379,7 @@ function restoreSceneState(sceneState) {
   const gradBgToggle = document.getElementById('gradient-bg-toggle');
   if (gradBgToggle) gradBgToggle.checked = gradientBgEnabled;
   const bgSelect = document.getElementById('background-select');
-  if (bgSelect && sceneState.currentGradientBg) bgSelect.value = sceneState.currentGradientBg;
+  if (bgSelect && sceneState.currentGradientBg) { bgSelect.value = sceneState.currentGradientBg; syncBgCards(sceneState.currentGradientBg); }
   applyBackground();
 }
 
@@ -2000,7 +2006,7 @@ async function restoreSessionState() {
     const gradBgToggle = document.getElementById('gradient-bg-toggle');
     if (gradBgToggle) gradBgToggle.checked = gradientBgEnabled;
     const bgSelect = document.getElementById('background-select');
-    if (bgSelect && currentGradientBg) bgSelect.value = currentGradientBg;
+    if (bgSelect && currentGradientBg) { bgSelect.value = currentGradientBg; syncBgCards(currentGradientBg); }
     applyBackground();
 
     // Restore model
@@ -2948,7 +2954,7 @@ function setupBackgroundUI() {
     });
   }
 
-  // Gradient preset dropdown (reuses the existing background-select element)
+  // Gradient preset cards
   const bgSelect = document.getElementById('background-select');
   if (bgSelect) {
     bgSelect.addEventListener('change', e => {
@@ -2957,6 +2963,16 @@ function setupBackgroundUI() {
       pushSceneHistory(`Background: ${e.target.value || 'none'}`);
     });
   }
+
+  document.querySelectorAll('.bg-preset-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const bgSelect = document.getElementById('background-select');
+      if (!bgSelect) return;
+      bgSelect.value = card.dataset.value;
+      bgSelect.dispatchEvent(new Event('change'));
+      syncBgCards(card.dataset.value);
+    });
+  });
 }
 
 //═══════════════════════════════════════════════════════════════
@@ -3313,7 +3329,7 @@ async function resetScene() {
   const bgSelect     = document.getElementById('background-select');
   if (envBgToggle)  envBgToggle.checked  = true;
   if (gradBgToggle) gradBgToggle.checked = false;
-  if (bgSelect)     bgSelect.value = '';
+  if (bgSelect)     { bgSelect.value = ''; syncBgCards(''); }
   applyBackground();
 
   cameraManager.reset();
