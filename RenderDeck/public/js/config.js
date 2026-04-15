@@ -120,12 +120,14 @@ export const STANDARD_ENVIRONMENTS = [
   {
     id: 'studio_kominka',
     label: 'Studio Kominka',
-    path: './assets/standard/environments/RDE_StudioKominka_2k.hdr'
+    path: './assets/standard/environments/RDE_StudioKominka_2k.hdr',
+    preview: 'radial-gradient(circle at 40% 40%, #d4a96a 0%, #7a5530 40%, #1e1208 100%)'
   },
   {
     id: 'lebombo',
     label: 'Lebombo',
-    path: './assets/standard/environments/RDE_Lebombo_2K.hdr'
+    path: './assets/standard/environments/RDE_Lebombo_2K.hdr',
+    preview: 'radial-gradient(circle at 50% 30%, #ffe4a0 0%, #f07820 40%, #0a1a30 100%)'
   },
 ];
 

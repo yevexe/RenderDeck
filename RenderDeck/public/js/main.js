@@ -292,7 +292,13 @@ function setupHistoryUI() {
 }
 
 function syncBgCards(value) {
-  document.querySelectorAll('.bg-preset-card').forEach(card => {
+  document.querySelectorAll('#bg-preset-grid .bg-preset-card').forEach(card => {
+    card.classList.toggle('selected', card.dataset.value === value);
+  });
+}
+
+function syncEnvCards(value) {
+  document.querySelectorAll('#env-preset-grid .bg-preset-card').forEach(card => {
     card.classList.toggle('selected', card.dataset.value === value);
   });
 }
@@ -399,6 +405,7 @@ initScenes((name, texture) => {
   currentEnvironment = name;
   sceneManager.setEnvironment(texture);
   applyBackground();
+  syncEnvCards(name);
   log(`Scene: ${name}`);
 });
 
@@ -3254,7 +3261,7 @@ async function loadSceneSetup(sceneData) {
   // 1. Restore environment
   if (sceneData.environment?.hdr) {
     const sel = document.getElementById('environment-select');
-    if (sel) sel.value = sceneData.environment.hdr;
+    if (sel) { sel.value = sceneData.environment.hdr; syncEnvCards(sceneData.environment.hdr); }
     loadScene(sceneData.environment.hdr, (name, texture) => {
       currentEnvTexture = texture;
       currentEnvironment = name;
@@ -3312,7 +3319,7 @@ async function resetScene() {
   const defaultEnv = STANDARD_ENVIRONMENTS[0];
   if (defaultEnv) {
     const envSel = document.getElementById('environment-select');
-    if (envSel) envSel.value = defaultEnv.label;
+    if (envSel) { envSel.value = defaultEnv.label; syncEnvCards(defaultEnv.label); }
     loadScene(defaultEnv.label, (name, texture) => {
       currentEnvTexture = texture;
       currentEnvironment = name;
