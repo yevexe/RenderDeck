@@ -1,1 +1,18 @@
 .DS_Store
+
+# Local planning/reference docs
+IGNORE/
+
+# Claude Code internal state
+.claude/
+**/.claude/
+
+# Secrets — never commit these
+backend/.env
+backend/src/main/resources/application-local.properties
+*.env
+.env*
+
+# Build output
+backend/target/
+
