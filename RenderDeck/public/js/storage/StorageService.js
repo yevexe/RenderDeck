@@ -32,7 +32,13 @@ export async function listMaterials(projectId) {
 
 export async function saveMaterial(projectId, material) {
     if (await isLoggedInAsync()) {
-        return cloud.put(`/api/projects/${projectId}/materials/${material.id}`, {
+        if (material.id) {
+            return cloud.put(`/api/materials/${material.id}`, {
+                name: material.name,
+                materialValues: material.values,
+            });
+        }
+        return cloud.post(`/api/projects/${projectId}/materials`, {
             name: material.name,
             materialValues: material.values,
         });
@@ -47,6 +53,7 @@ export async function deleteMaterial(projectId, materialId) {
 
 export async function saveChannelMap(projectId, materialId, channel, file) {
     if (await isLoggedInAsync()) {
+        // Backend accepts the file directly — upserts by channel name
         return cloud.putFile(
             `/api/projects/${projectId}/materials/${materialId}/channel-maps/${channel}`,
             file
@@ -84,6 +91,36 @@ export async function deleteScene(projectId, sceneId) {
     return idb.remove(`scenes:${projectId}`, sceneId);
 }
 
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+export async function listModels(projectId) {
+    if (await isLoggedInAsync()) return cloud.get(`/api/projects/${projectId}/models`);
+    return idb.getAll(`models:${projectId}`);
+}
+
+export async function saveModel(projectId, model) {
+    if (await isLoggedInAsync()) {
+        if (model.id) {
+            return cloud.patch(`/api/models/${model.id}`, {
+                name: model.name,
+                baseModel: model.baseModel,
+                customModelAssetId: model.customModelAssetId ?? null,
+            });
+        }
+        return cloud.post(`/api/projects/${projectId}/models`, {
+            name: model.name,
+            baseModel: model.baseModel,
+            customModelAssetId: model.customModelAssetId ?? null,
+        });
+    }
+    return idb.put(`models:${projectId}`, model);
+}
+
+export async function deleteModel(modelId, projectId) {
+    if (await isLoggedInAsync()) return cloud.del(`/api/models/${modelId}`);
+    return idb.remove(`models:${projectId}`, modelId);
+}
+
 // ─── Prop Assets ─────────────────────────────────────────────────────────────
 
 export async function listPropAssets(projectId) {
@@ -93,7 +130,8 @@ export async function listPropAssets(projectId) {
 
 export async function uploadPropAsset(projectId, name, file) {
     if (await isLoggedInAsync()) {
-        return cloud.uploadFile(`/api/projects/${projectId}/props`, file, { name });
+        const asset = await cloud.uploadFile('/api/assets', file, { projectId });
+        return cloud.post(`/api/projects/${projectId}/prop-assets`, { name, assetId: asset.id });
     }
     // Guest: store blob locally
     const id = crypto.randomUUID();
@@ -102,7 +140,7 @@ export async function uploadPropAsset(projectId, name, file) {
 }
 
 export async function deletePropAsset(projectId, propAssetId) {
-    if (await isLoggedInAsync()) return cloud.del(`/api/projects/${projectId}/props/${propAssetId}`);
+    if (await isLoggedInAsync()) return cloud.del(`/api/prop-assets/${propAssetId}`);
     return idb.remove(`props:${projectId}`, propAssetId);
 }
 

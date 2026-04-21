@@ -267,6 +267,44 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   border-color: #555;
   color: #fff;
 }
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-btn {
+  padding: 5px 13px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.auth-btn--ghost {
+  background: transparent;
+  border: 1px solid #333;
+  color: #aaa;
+}
+
+.auth-btn--ghost:hover {
+  border-color: #555;
+  color: #fff;
+}
+
+.auth-btn--solid {
+  background: #e8e8e8;
+  border: 1px solid transparent;
+  color: #111;
+}
+
+.auth-btn--solid:hover {
+  background: #fff;
+}
 /* -----------------------SHARED PANEL STYLES ------------------ */
 .panel {
   background-color: #333;

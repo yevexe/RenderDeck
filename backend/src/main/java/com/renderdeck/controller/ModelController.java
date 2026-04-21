@@ -15,69 +15,126 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/projects/{projectId}/model")
 @RequiredArgsConstructor
 public class ModelController {
 
     private final ModelService modelService;
 
-    @GetMapping
-    public ProductModel getModel(@PathVariable UUID projectId) {
-        return modelService.getModelForProject(projectId);
+    // ── Models ───────────────────────────────────────────────────────────────
+
+    @GetMapping("/api/projects/{projectId}/models")
+    public List<ProductModel> list(@AuthenticationPrincipal Jwt jwt,
+                                    @PathVariable UUID projectId) {
+        return modelService.getModelsForProject(projectId);
     }
 
-    @PutMapping
-    public ProductModel upsertModel(@PathVariable UUID projectId,
-                                     @RequestBody Map<String, Object> body) {
+    @PostMapping("/api/projects/{projectId}/models")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ProductModel create(@AuthenticationPrincipal Jwt jwt,
+                                @PathVariable UUID projectId,
+                                @RequestBody Map<String, Object> body) {
+        String name = (String) body.get("name");
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("Model name is required");
         UUID customModelAssetId = body.get("customModelAssetId") != null
                 ? UUID.fromString((String) body.get("customModelAssetId")) : null;
-        return modelService.upsertModel(projectId, (String) body.get("baseModel"), customModelAssetId);
+        String sourceType = (String) body.getOrDefault("sourceType", "standard");
+        return modelService.createModel(projectId, name, (String) body.get("baseModel"),
+                customModelAssetId, sourceType);
     }
 
-    @GetMapping("/parts")
-    public List<Part> getParts(@PathVariable UUID projectId) {
-        ProductModel model = modelService.getModelForProject(projectId);
-        return modelService.getPartsForModel(model.getId());
+    @GetMapping("/api/models/{modelId}")
+    public ProductModel get(@AuthenticationPrincipal Jwt jwt,
+                             @PathVariable UUID modelId) {
+        return modelService.getModel(modelId, uuid(jwt));
     }
 
-    @PutMapping("/parts/{partId}")
-    public Part upsertPart(@PathVariable UUID projectId,
+    @PatchMapping("/api/models/{modelId}")
+    public ProductModel update(@AuthenticationPrincipal Jwt jwt,
+                                @PathVariable UUID modelId,
+                                @RequestBody Map<String, Object> body) {
+        UUID customModelAssetId = body.get("customModelAssetId") != null
+                ? UUID.fromString((String) body.get("customModelAssetId")) : null;
+        return modelService.updateModel(modelId, uuid(jwt),
+                (String) body.get("name"), (String) body.get("baseModel"), customModelAssetId);
+    }
+
+    @DeleteMapping("/api/models/{modelId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal Jwt jwt,
+                        @PathVariable UUID modelId) {
+        modelService.deleteModel(modelId, uuid(jwt));
+    }
+
+    // ── Parts ────────────────────────────────────────────────────────────────
+
+    @GetMapping("/api/models/{modelId}/parts")
+    public List<Part> getParts(@AuthenticationPrincipal Jwt jwt,
+                                @PathVariable UUID modelId) {
+        return modelService.getPartsForModel(modelId, uuid(jwt));
+    }
+
+    @PutMapping("/api/models/{modelId}/parts/{partId}")
+    public Part upsertPart(@AuthenticationPrincipal Jwt jwt,
+                            @PathVariable UUID modelId,
                             @PathVariable UUID partId,
                             @RequestBody Map<String, Object> body) {
-        ProductModel model = modelService.getModelForProject(projectId);
         UUID materialId = body.get("materialId") != null
                 ? UUID.fromString((String) body.get("materialId")) : null;
-        return modelService.upsertPart(model.getId(), partId, (String) body.get("name"), materialId);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> overrides = (Map<String, Object>) body.get("materialOverrides");
+        return modelService.upsertPart(modelId, partId, (String) body.get("name"),
+                materialId, overrides, uuid(jwt));
     }
 
-    @DeleteMapping("/parts/{partId}")
+    @DeleteMapping("/api/models/{modelId}/parts/{partId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deletePart(@PathVariable UUID partId) {
-        modelService.deletePart(partId);
+    public void deletePart(@AuthenticationPrincipal Jwt jwt,
+                            @PathVariable UUID partId) {
+        modelService.deletePart(partId, uuid(jwt));
     }
 
-    @GetMapping("/parts/{partId}/decals")
-    public List<Decal> getDecals(@PathVariable UUID partId) {
-        return modelService.getDecalsForPart(partId);
+    // ── Decals ───────────────────────────────────────────────────────────────
+
+    @GetMapping("/api/parts/{partId}/decals")
+    public List<Decal> getDecals(@AuthenticationPrincipal Jwt jwt,
+                                  @PathVariable UUID partId) {
+        return modelService.getDecalsForPart(partId, uuid(jwt));
     }
 
-    @PutMapping("/parts/{partId}/decals/{decalId}")
-    public Decal upsertDecal(@PathVariable UUID partId,
+    @PutMapping("/api/parts/{partId}/decals/{decalId}")
+    public Decal upsertDecal(@AuthenticationPrincipal Jwt jwt,
+                              @PathVariable UUID partId,
                               @PathVariable UUID decalId,
                               @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> textData = (Map<String, Object>) body.get("textData");
         return modelService.upsertDecal(
                 partId, decalId,
                 UUID.fromString((String) body.get("assetId")),
-                toDouble(body.get("posX")), toDouble(body.get("posY")),
-                toDouble(body.getOrDefault("scaleX", 1.0)), toDouble(body.getOrDefault("scaleY", 1.0)),
+                toDouble(body.get("posX")),     toDouble(body.get("posY")),
+                toDouble(body.getOrDefault("sizeW", 1.0)), toDouble(body.getOrDefault("sizeH", 1.0)),
                 toDouble(body.getOrDefault("rotation", 0.0)),
-                ((Number) body.get("layerOrder")).intValue());
+                ((Number) body.get("layerOrder")).intValue(),
+                (String) body.get("name"),
+                (String) body.getOrDefault("type", "image"),
+                textData,
+                Boolean.TRUE.equals(body.get("flipH")),
+                Boolean.TRUE.equals(body.get("flipV")),
+                body.get("aspectRatio") != null ? toDouble(body.get("aspectRatio")) : null,
+                uuid(jwt));
     }
 
-    @DeleteMapping("/parts/{partId}/decals/{decalId}")
+    @DeleteMapping("/api/parts/{partId}/decals/{decalId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteDecal(@PathVariable UUID decalId) {
-        modelService.deleteDecal(decalId);
+    public void deleteDecal(@AuthenticationPrincipal Jwt jwt,
+                             @PathVariable UUID decalId) {
+        modelService.deleteDecal(decalId, uuid(jwt));
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private UUID uuid(Jwt jwt) {
+        return UUID.fromString(jwt.getSubject());
     }
 
     private double toDouble(Object val) {

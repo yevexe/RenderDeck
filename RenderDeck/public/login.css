@@ -1,0 +1,210 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: #111;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #e8e8e8;
+}
+
+/* ── Header (matches index.html app-header) ─────────────────────────────── */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 24px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+a.app-header-logo {
+  text-decoration: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #fff;
+}
+
+.app-header-logo-blend {
+  position: relative;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+}
+
+.app-header-logo-img {
+  position: absolute;
+  top: 0; left: 0;
+  height: 28px;
+  width: auto;
+  transform: scale(3.5);
+  transform-origin: center center;
+  mask-image: radial-gradient(ellipse 40% 50% at center, black 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 40% 50% at center, black 30%, transparent 75%);
+}
+
+.app-header-logo-base  { mix-blend-mode: screen; }
+
+.app-header-logo-light {
+  mix-blend-mode: screen;
+  opacity: 0;
+  filter: saturate(2) brightness(1.3);
+  transition: opacity 0.4s ease-out;
+}
+
+.app-header-logo-blend:hover .app-header-logo-light {
+  opacity: 1;
+  transition: opacity 0.4s ease-in;
+}
+
+/* ── Auth page ───────────────────────────────────────────────────────────── */
+
+.auth-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 49px);
+  padding: 40px 16px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 3px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 7px 0;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.auth-tab--active {
+  background: #2a2a2a;
+  color: #e8e8e8;
+}
+
+.auth-tab:hover:not(.auth-tab--active) {
+  color: #aaa;
+}
+
+/* ── Form ────────────────────────────────────────────────────────────────── */
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #999;
+  letter-spacing: 0.3px;
+}
+
+.field input {
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: #e8e8e8;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.field input:focus {
+  border-color: #555;
+}
+
+.field input::placeholder {
+  color: #444;
+}
+
+.auth-error {
+  font-size: 12px;
+  color: #e05252;
+  background: #2a1a1a;
+  border: 1px solid #4a2020;
+  border-radius: 3px;
+  padding: 8px 10px;
+}
+
+.auth-submit {
+  padding: 10px;
+  background: #e8e8e8;
+  color: #111;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-top: 2px;
+}
+
+.auth-submit:hover {
+  background: #fff;
+}
+
+.auth-link {
+  font-size: 12px;
+  color: #555;
+  text-decoration: none;
+  text-align: center;
+  transition: color 0.15s;
+}
+
+.auth-link:hover { color: #aaa; }
+
+
+/* ── Guest link ──────────────────────────────────────────────────────────── */
+
+.auth-guest {
+  font-size: 12px;
+  color: #444;
+  text-align: center;
+}
+
+.auth-guest a {
+  color: #666;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.auth-guest a:hover { color: #aaa; }

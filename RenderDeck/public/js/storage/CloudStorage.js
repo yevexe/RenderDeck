@@ -25,11 +25,11 @@ async function request(method, path, body) {
     return res.json();
 }
 
-export function get(path) { return request('GET', path); }
-export function post(path, body) { return request('POST', path, body); }
-export function put(path, body) { return request('PUT', path, body); }
-export function patch(path, body) { return request('PATCH', path, body); }
-export function del(path) { return request('DELETE', path); }
+export const get   = (path)       => request('GET',    path);
+export const post  = (path, body) => request('POST',   path, body);
+export const put   = (path, body) => request('PUT',    path, body);
+export const patch = (path, body) => request('PATCH',  path, body);
+export const del   = (path)       => request('DELETE', path);
 
 export async function uploadFile(path, file, extraFields = {}) {
     const token = await getAccessToken();

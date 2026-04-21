@@ -24,12 +24,16 @@
   <main>
     <div class="app-header">
       <a href="landing.html" class="app-header-logo"><span class="app-header-logo-blend"><img src="icons/rd_logo.jpg" class="app-header-logo-img app-header-logo-base" alt="RenderDeck logo"><img src="icons/rd_logo_light.jpg" class="app-header-logo-img app-header-logo-light" alt=""></span>RenderDeck</a>
-      <button id="project-btn" class="project-btn">
-        <span id="project-name">Loading...</span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="6 9 12 15 18 9"/>
-        </svg>
-      </button>
+      <div class="app-header-right">
+        <button id="project-btn" class="project-btn">
+          <span id="project-name">Loading...</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <a href="login.html" class="auth-btn auth-btn--ghost">Log In</a>
+        <a href="login.html?tab=signup" class="auth-btn auth-btn--solid">Sign Up</a>
+      </div>
     </div>
 
     <!-- PREVIEW -->
@@ -1544,6 +1548,11 @@
     }
   </script>
 
+  <!-- Fill in your Supabase project values here. See SETUP_STEPS.md Step 6. -->
+  <script>
+    window.__SUPABASE_URL__      = 'https://YOUR_PROJECT_REF.supabase.co';
+    window.__SUPABASE_ANON_KEY__ = 'YOUR_ANON_KEY';
+  </script>
   <script type="module" src="js/main.js"></script>
 </body>
 

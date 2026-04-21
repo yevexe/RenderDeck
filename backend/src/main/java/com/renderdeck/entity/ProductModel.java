@@ -15,9 +15,11 @@ public class ProductModel {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    // One-to-one with project — enforced by UNIQUE constraint in DB
-    @Column(name = "project_id", nullable = false, unique = true)
+    @Column(name = "project_id", nullable = false)
     private UUID projectId;
+
+    @Column(name = "name")
+    private String name;
 
     // Label of a standard built-in model (e.g. "Cup"), null if custom upload
     @Column(name = "base_model")
@@ -26,4 +28,8 @@ public class ProductModel {
     // Asset UUID of uploaded OBJ/GLB file, null if using a standard model
     @Column(name = "custom_model_asset_id")
     private UUID customModelAssetId;
+
+    // "standard" | "uploaded" | "sketchfab"
+    @Column(name = "source_type")
+    private String sourceType = "standard";
 }

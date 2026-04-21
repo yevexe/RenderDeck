@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RenderDeck — Sign In</title>
+  <link rel="icon" type="image/svg" href="icons/favicon.svg" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="login.css" />
+  <!-- Fill in your Supabase project values here. See SETUP_STEPS.md Step 6. -->
+  <script>
+    window.__SUPABASE_URL__      = 'https://YOUR_PROJECT_REF.supabase.co';
+    window.__SUPABASE_ANON_KEY__ = 'YOUR_ANON_KEY';
+  </script>
+</head>
+<body>
+
+  <div class="app-header">
+    <a href="landing.html" class="app-header-logo">
+      <span class="app-header-logo-blend">
+        <img src="icons/rd_logo.jpg"       class="app-header-logo-img app-header-logo-base"  alt="RenderDeck logo">
+        <img src="icons/rd_logo_light.jpg" class="app-header-logo-img app-header-logo-light" alt="">
+      </span>
+      RenderDeck
+    </a>
+  </div>
+
+  <div class="auth-page">
+    <div class="auth-card">
+
+      <div class="auth-tabs">
+        <button class="auth-tab auth-tab--active" id="tab-login"   onclick="switchTab('login')">Sign In</button>
+        <button class="auth-tab"                  id="tab-signup"  onclick="switchTab('signup')">Sign Up</button>
+      </div>
+
+      <!-- Sign In -->
+      <form class="auth-form" id="form-login">
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div id="login-error" class="auth-error" style="display:none;"></div>
+        <button type="submit" class="auth-submit">Sign In</button>
+        <a href="#" class="auth-link">Forgot password?</a>
+      </form>
+
+      <!-- Sign Up -->
+      <form class="auth-form" id="form-signup" style="display:none;">
+        <div class="field">
+          <label for="signup-email">Email</label>
+          <input type="email" id="signup-email" placeholder="you@example.com" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="signup-password">Password</label>
+          <input type="password" id="signup-password" placeholder="••••••••" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="signup-confirm">Confirm Password</label>
+          <input type="password" id="signup-confirm" placeholder="••••••••" autocomplete="new-password" />
+        </div>
+        <div id="signup-error" class="auth-error" style="display:none;"></div>
+        <button type="submit" class="auth-submit">Create Account</button>
+      </form>
+
+      <p class="auth-guest">
+        Just browsing? <a href="index.html">Continue as guest</a>
+      </p>
+
+    </div>
+  </div>
+
+  <script>
+    function switchTab(tab) {
+      const isLogin = tab === 'login';
+      document.getElementById('tab-login').classList.toggle('auth-tab--active', isLogin);
+      document.getElementById('tab-signup').classList.toggle('auth-tab--active', !isLogin);
+      document.getElementById('form-login').style.display  = isLogin ? '' : 'none';
+      document.getElementById('form-signup').style.display = isLogin ? 'none' : '';
+    }
+
+    if (new URLSearchParams(location.search).get('tab') === 'signup') switchTab('signup');
+  </script>
+
+  <script type="module">
+    import { signInWithEmail, signUpWithEmail } from './js/auth/AuthService.js';
+
+    function showError(id, msg) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function hideError(id) {
+      document.getElementById(id).style.display = 'none';
+    }
+
+    function setLoading(btn, loading) {
+      btn.disabled = loading;
+      btn.textContent = loading ? 'Please wait…' : btn.dataset.label;
+    }
+
+    document.querySelectorAll('.auth-submit').forEach(btn => {
+      btn.dataset.label = btn.textContent;
+    });
+
+    document.getElementById('form-login').addEventListener('submit', async e => {
+      e.preventDefault();
+      hideError('login-error');
+      const btn   = e.target.querySelector('.auth-submit');
+      const email = document.getElementById('login-email').value.trim();
+      const pass  = document.getElementById('login-password').value;
+      setLoading(btn, true);
+      try {
+        await signInWithEmail(email, pass);
+        location.href = 'index.html';
+      } catch (err) {
+        showError('login-error', err.message);
+        setLoading(btn, false);
+      }
+    });
+
+    document.getElementById('form-signup').addEventListener('submit', async e => {
+      e.preventDefault();
+      hideError('signup-error');
+      const btn     = e.target.querySelector('.auth-submit');
+      const email   = document.getElementById('signup-email').value.trim();
+      const pass    = document.getElementById('signup-password').value;
+      const confirm = document.getElementById('signup-confirm').value;
+      if (pass !== confirm) {
+        showError('signup-error', 'Passwords do not match.');
+        return;
+      }
+      setLoading(btn, true);
+      try {
+        const result = await signUpWithEmail(email, pass);
+        // If email confirmation is off, session exists immediately → redirect
+        // If email confirmation is on, session is null → show message
+        if (result.session) {
+          location.href = 'index.html';
+        } else {
+          btn.disabled = true;
+          btn.textContent = 'Check your email to confirm';
+        }
+      } catch (err) {
+        showError('signup-error', err.message);
+        setLoading(btn, false);
+      }
+    });
+  </script>
+
+</body>
+</html>
