@@ -3,6 +3,9 @@ package com.renderdeck.service;
 import com.renderdeck.entity.Decal;
 import com.renderdeck.entity.Part;
 import com.renderdeck.entity.ProductModel;
+import com.renderdeck.entity.Project;
+import com.renderdeck.exception.ForbiddenException;
+import com.renderdeck.exception.NotFoundException;
 import com.renderdeck.repository.DecalRepository;
 import com.renderdeck.repository.PartRepository;
 import com.renderdeck.repository.ProductModelRepository;
@@ -24,34 +27,39 @@ public class ModelService {
     private final DecalRepository decalRepository;
     private final ProjectRepository projectRepository;
 
+    private void checkProjectOwnership(UUID projectId, UUID requestingUserId) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new NotFoundException("Project not found"));
+        if (!project.getUserId().equals(requestingUserId)) throw new ForbiddenException();
+    }
+
     private void checkModelOwnership(UUID modelId, UUID requestingUserId) {
         ProductModel model = modelRepository.findById(modelId)
-                .orElseThrow(() -> new RuntimeException("Model not found"));
-        projectRepository.findById(model.getProjectId()).ifPresent(project -> {
-            if (!project.getUserId().equals(requestingUserId))
-                throw new RuntimeException("Forbidden");
-        });
+                .orElseThrow(() -> new NotFoundException("Model not found"));
+        checkProjectOwnership(model.getProjectId(), requestingUserId);
     }
 
     private void checkPartOwnership(UUID partId, UUID requestingUserId) {
         Part part = partRepository.findById(partId)
-                .orElseThrow(() -> new RuntimeException("Part not found"));
+                .orElseThrow(() -> new NotFoundException("Part not found"));
         checkModelOwnership(part.getModelId(), requestingUserId);
     }
 
-    public List<ProductModel> getModelsForProject(UUID projectId) {
+    public List<ProductModel> getModelsForProject(UUID projectId, UUID requestingUserId) {
+        checkProjectOwnership(projectId, requestingUserId);
         return modelRepository.findByProjectId(projectId);
     }
 
     public ProductModel getModel(UUID modelId, UUID requestingUserId) {
         checkModelOwnership(modelId, requestingUserId);
         return modelRepository.findById(modelId)
-                .orElseThrow(() -> new RuntimeException("Model not found"));
+                .orElseThrow(() -> new NotFoundException("Model not found"));
     }
 
     @Transactional
-    public ProductModel createModel(UUID projectId, String name, String baseModel,
+    public ProductModel createModel(UUID projectId, UUID requestingUserId, String name, String baseModel,
                                      UUID customModelAssetId, String sourceType) {
+        checkProjectOwnership(projectId, requestingUserId);
         ProductModel model = new ProductModel();
         model.setProjectId(projectId);
         model.setName(name);
@@ -66,7 +74,7 @@ public class ModelService {
                                      String baseModel, UUID customModelAssetId) {
         checkModelOwnership(modelId, requestingUserId);
         ProductModel model = modelRepository.findById(modelId)
-                .orElseThrow(() -> new RuntimeException("Model not found"));
+                .orElseThrow(() -> new NotFoundException("Model not found"));
         if (name != null) model.setName(name);
         if (baseModel != null) model.setBaseModel(baseModel);
         if (customModelAssetId != null) model.setCustomModelAssetId(customModelAssetId);
@@ -142,7 +150,7 @@ public class ModelService {
     @Transactional
     public void deleteDecal(UUID decalId, UUID requestingUserId) {
         Decal decal = decalRepository.findById(decalId)
-                .orElseThrow(() -> new RuntimeException("Decal not found"));
+                .orElseThrow(() -> new NotFoundException("Decal not found"));
         checkPartOwnership(decal.getPartId(), requestingUserId);
         decalRepository.deleteById(decalId);
     }

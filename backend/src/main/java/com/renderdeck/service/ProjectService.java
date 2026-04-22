@@ -1,6 +1,8 @@
 package com.renderdeck.service;
 
 import com.renderdeck.entity.Project;
+import com.renderdeck.exception.ForbiddenException;
+import com.renderdeck.exception.NotFoundException;
 import com.renderdeck.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,9 +23,9 @@ public class ProjectService {
 
     public Project getProject(UUID projectId, UUID requestingUserId) {
         Project project = projectRepository.findById(projectId)
-                .orElseThrow(() -> new RuntimeException("Project not found"));
+                .orElseThrow(() -> new NotFoundException("Project not found"));
         if (!project.getUserId().equals(requestingUserId)) {
-            throw new RuntimeException("Forbidden");
+            throw new ForbiddenException();
         }
         return project;
     }

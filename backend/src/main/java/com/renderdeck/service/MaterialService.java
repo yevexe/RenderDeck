@@ -3,6 +3,8 @@ package com.renderdeck.service;
 import com.renderdeck.entity.Asset;
 import com.renderdeck.entity.Material;
 import com.renderdeck.entity.MaterialChannelMap;
+import com.renderdeck.exception.ForbiddenException;
+import com.renderdeck.exception.NotFoundException;
 import com.renderdeck.repository.AssetRepository;
 import com.renderdeck.repository.MaterialChannelMapRepository;
 import com.renderdeck.repository.MaterialRepository;
@@ -28,7 +30,7 @@ public class MaterialService {
     public List<Material> getMaterialsForProject(UUID projectId, UUID requestingUserId) {
         List<Material> materials = materialRepository.findByProjectId(projectId);
         materials.forEach(m -> {
-            if (!m.getUserId().equals(requestingUserId)) throw new RuntimeException("Forbidden");
+            if (!m.getUserId().equals(requestingUserId)) throw new ForbiddenException();
         });
         return materials;
     }
@@ -39,7 +41,7 @@ public class MaterialService {
         if (material.getId() == null) {
             material.setId(materialId);
         } else if (!material.getUserId().equals(userId)) {
-            throw new RuntimeException("Forbidden");
+            throw new ForbiddenException();
         }
         material.setUserId(userId);
         material.setProjectId(projectId);
@@ -51,8 +53,8 @@ public class MaterialService {
     @Transactional
     public MaterialChannelMap upsertChannelMap(UUID materialId, String channel, UUID userId, MultipartFile file) throws IOException {
         Material material = materialRepository.findById(materialId)
-                .orElseThrow(() -> new RuntimeException("Material not found"));
-        if (!material.getUserId().equals(userId)) throw new RuntimeException("Forbidden");
+                .orElseThrow(() -> new NotFoundException("Material not found"));
+        if (!material.getUserId().equals(userId)) throw new ForbiddenException();
 
         // Remove old channel map asset if one exists for this channel
         channelMapRepository.findByMaterialIdAndChannel(materialId, channel).ifPresent(existing -> {
@@ -71,16 +73,16 @@ public class MaterialService {
 
     public List<MaterialChannelMap> getChannelMaps(UUID materialId, UUID requestingUserId) {
         Material material = materialRepository.findById(materialId)
-                .orElseThrow(() -> new RuntimeException("Material not found"));
-        if (!material.getUserId().equals(requestingUserId)) throw new RuntimeException("Forbidden");
+                .orElseThrow(() -> new NotFoundException("Material not found"));
+        if (!material.getUserId().equals(requestingUserId)) throw new ForbiddenException();
         return channelMapRepository.findByMaterialId(materialId);
     }
 
     @Transactional
     public void deleteMaterial(UUID materialId, UUID requestingUserId) {
         Material material = materialRepository.findById(materialId)
-                .orElseThrow(() -> new RuntimeException("Material not found"));
-        if (!material.getUserId().equals(requestingUserId)) throw new RuntimeException("Forbidden");
+                .orElseThrow(() -> new NotFoundException("Material not found"));
+        if (!material.getUserId().equals(requestingUserId)) throw new ForbiddenException();
 
         List<MaterialChannelMap> maps = channelMapRepository.findByMaterialId(materialId);
         maps.forEach(m -> assetService.delete(m.getAssetId(), requestingUserId));
@@ -91,10 +93,10 @@ public class MaterialService {
     @Transactional
     public void deleteChannelMap(UUID channelMapId, UUID requestingUserId) {
         MaterialChannelMap map = channelMapRepository.findById(channelMapId)
-                .orElseThrow(() -> new RuntimeException("Channel map not found"));
+                .orElseThrow(() -> new NotFoundException("Channel map not found"));
         Material material = materialRepository.findById(map.getMaterialId())
-                .orElseThrow(() -> new RuntimeException("Material not found"));
-        if (!material.getUserId().equals(requestingUserId)) throw new RuntimeException("Forbidden");
+                .orElseThrow(() -> new NotFoundException("Material not found"));
+        if (!material.getUserId().equals(requestingUserId)) throw new ForbiddenException();
         assetService.delete(map.getAssetId(), requestingUserId);
         channelMapRepository.delete(map);
     }

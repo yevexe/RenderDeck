@@ -1,6 +1,7 @@
 package com.renderdeck.service;
 
 import com.renderdeck.entity.Profile;
+import com.renderdeck.exception.NotFoundException;
 import com.renderdeck.repository.ProfileRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -16,7 +17,7 @@ public class ProfileService {
 
     public Profile getProfile(UUID userId) {
         return profileRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("Profile not found"));
+                .orElseThrow(() -> new NotFoundException("Profile not found"));
     }
 
     @Transactional

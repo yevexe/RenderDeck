@@ -21,8 +21,9 @@ public class PropAssetController {
     private final PropAssetService propAssetService;
 
     @GetMapping
-    public List<PropAsset> list(@PathVariable UUID projectId) {
-        return propAssetService.getPropsForProject(projectId);
+    public List<PropAsset> list(@AuthenticationPrincipal Jwt jwt,
+                                 @PathVariable UUID projectId) {
+        return propAssetService.getPropsForProject(projectId, UUID.fromString(jwt.getSubject()));
     }
 
     @PostMapping

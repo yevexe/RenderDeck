@@ -25,7 +25,7 @@ public class ModelController {
     @GetMapping("/api/projects/{projectId}/models")
     public List<ProductModel> list(@AuthenticationPrincipal Jwt jwt,
                                     @PathVariable UUID projectId) {
-        return modelService.getModelsForProject(projectId);
+        return modelService.getModelsForProject(projectId, uuid(jwt));
     }
 
     @PostMapping("/api/projects/{projectId}/models")
@@ -38,7 +38,7 @@ public class ModelController {
         UUID customModelAssetId = body.get("customModelAssetId") != null
                 ? UUID.fromString((String) body.get("customModelAssetId")) : null;
         String sourceType = (String) body.getOrDefault("sourceType", "standard");
-        return modelService.createModel(projectId, name, (String) body.get("baseModel"),
+        return modelService.createModel(projectId, uuid(jwt), name, (String) body.get("baseModel"),
                 customModelAssetId, sourceType);
     }
 

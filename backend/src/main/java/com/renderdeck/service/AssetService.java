@@ -1,6 +1,8 @@
 package com.renderdeck.service;
 
 import com.renderdeck.entity.Asset;
+import com.renderdeck.exception.ForbiddenException;
+import com.renderdeck.exception.NotFoundException;
 import com.renderdeck.repository.AssetRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -77,9 +79,9 @@ public class AssetService {
     @Transactional
     public void delete(UUID assetId, UUID requestingUserId) {
         Asset asset = assetRepository.findById(assetId)
-                .orElseThrow(() -> new RuntimeException("Asset not found"));
+                .orElseThrow(() -> new NotFoundException("Asset not found"));
         if (!asset.getUserId().equals(requestingUserId)) {
-            throw new RuntimeException("Forbidden");
+            throw new ForbiddenException();
         }
         storageService.delete(asset.getStoragePath());
         assetRepository.delete(asset);
@@ -87,9 +89,9 @@ public class AssetService {
 
     public String getSignedUrl(UUID assetId, UUID requestingUserId) {
         Asset asset = assetRepository.findById(assetId)
-                .orElseThrow(() -> new RuntimeException("Asset not found"));
+                .orElseThrow(() -> new NotFoundException("Asset not found"));
         if (!asset.getUserId().equals(requestingUserId)) {
-            throw new RuntimeException("Forbidden");
+            throw new ForbiddenException();
         }
         return storageService.getSignedUrl(asset.getStoragePath(), 3600);
     }
