@@ -10,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -20,15 +22,19 @@ public class AssetService {
     private final AssetRepository assetRepository;
     private final SupabaseStorageService storageService;
 
-    // Allowed extensions → expected magic bytes (null = text format, skip magic check)
-    private static final Map<String, byte[]> ALLOWED_TYPES = Map.of(
-        "jpg",  new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF},
-        "jpeg", new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF},
-        "png",  new byte[]{(byte)0x89, 0x50, 0x4E, 0x47},
-        "glb",  new byte[]{0x67, 0x6C, 0x54, 0x46},  // "glTF"
-        "obj",  null,
-        "mtl",  null
-    );
+    // Allowed extensions → expected magic bytes (null = text format, skip magic check).
+    // HashMap + unmodifiableMap because Map.of rejects null values.
+    private static final Map<String, byte[]> ALLOWED_TYPES;
+    static {
+        Map<String, byte[]> m = new HashMap<>();
+        m.put("jpg",  new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF});
+        m.put("jpeg", new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF});
+        m.put("png",  new byte[]{(byte)0x89, 0x50, 0x4E, 0x47});
+        m.put("glb",  new byte[]{0x67, 0x6C, 0x54, 0x46});
+        m.put("obj",  null);
+        m.put("mtl",  null);
+        ALLOWED_TYPES = Collections.unmodifiableMap(m);
+    }
 
     private void validateFile(MultipartFile file) throws IOException {
         String original = file.getOriginalFilename();
