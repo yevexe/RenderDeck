@@ -1,14 +1,19 @@
 // PROJECTS.JS — Projects page logic
 // Renders project cards and handles create/rename/delete actions.
 
+// CRUD + active-project bootstrap go through StorageService so cloud users
+// hit the backend. Local active-project ID read/write still comes from
+// ProjectStorage — that's a per-device preference, not cloud-synced.
 import {
   listProjects,
   createProject,
   updateProject,
   deleteProject,
+  ensureActiveProject,
+} from './storage/StorageService.js';
+import {
   getActiveProjectId,
   setActiveProjectId,
-  ensureActiveProject,
 } from './storage/ProjectStorage.js';
 
 const grid        = document.getElementById('projects-grid');

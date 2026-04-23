@@ -34,8 +34,17 @@ function guestNotRouted(method) {
 // ─── Projects ────────────────────────────────────────────────────────────────
 
 export async function listProjects() {
-    if (await isLoggedInAsync()) return cloud.get('/api/projects');
+    if (await isLoggedInAsync()) {
+        const list = await cloud.get('/api/projects');
+        // Match guest ordering (newest-first by updatedAt)
+        return list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    }
     return ProjectStorage.listProjects();
+}
+
+export async function getProject(projectId) {
+    if (await isLoggedInAsync()) return cloud.get(`/api/projects/${projectId}`);
+    return ProjectStorage.getProject(projectId);
 }
 
 export async function createProject(name) {
@@ -43,9 +52,59 @@ export async function createProject(name) {
     return ProjectStorage.createProject(name);
 }
 
+// Cloud only supports { name, thumbnailAssetId } today. Other fields
+// (e.g. guest-mode base64 `thumbnail`) are silently dropped for cloud
+// users — thumbnail-as-asset upload is a separate future task.
+export async function updateProject(projectId, changes) {
+    if (await isLoggedInAsync()) {
+        const body = {};
+        if (changes.name !== undefined) body.name = changes.name;
+        if (changes.thumbnailAssetId !== undefined) body.thumbnailAssetId = changes.thumbnailAssetId;
+        // Skip the round-trip if the caller only asked to persist fields
+        // the cloud doesn't support (e.g. a base64 thumbnail).
+        if (Object.keys(body).length === 0) return null;
+        return cloud.patch(`/api/projects/${projectId}`, body);
+    }
+    return ProjectStorage.updateProject(projectId, changes);
+}
+
 export async function deleteProject(projectId) {
     if (await isLoggedInAsync()) return cloud.del(`/api/projects/${projectId}`);
     return ProjectStorage.deleteProject(projectId);
+}
+
+/**
+ * Auth-aware version of ProjectStorage.ensureActiveProject.
+ * - Cloud users: honors the locally-stored last-active ID if it still
+ *   exists, otherwise picks the newest cloud project, otherwise creates
+ *   "Default Project". Writes the chosen ID to the local active-project
+ *   mirror so sync readers (getActiveProjectIdSync) see it.
+ * - Guest users: delegates to ProjectStorage.ensureActiveProject.
+ */
+export async function ensureActiveProject() {
+    if (!(await isLoggedInAsync())) {
+        return ProjectStorage.ensureActiveProject();
+    }
+
+    const localActiveId = ProjectStorage.getActiveProjectIdSync();
+    if (localActiveId) {
+        const existing = await getProject(localActiveId).catch(() => null);
+        if (existing) {
+            await ProjectStorage.setActiveProjectId(existing.id);
+            return existing;
+        }
+    }
+
+    const projects = await listProjects();
+    if (projects.length > 0) {
+        const first = projects[0];
+        await ProjectStorage.setActiveProjectId(first.id);
+        return first;
+    }
+
+    const created = await createProject('Default Project');
+    await ProjectStorage.setActiveProjectId(created.id);
+    return created;
 }
 
 // ─── Materials ───────────────────────────────────────────────────────────────

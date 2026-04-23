@@ -39,9 +39,12 @@ import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './c
 // Props
 import { PropManager } from './props/PropManager.js';
 import { CustomSceneStorage } from './scenes/CustomSceneStorage.js';
-import { ensureActiveProject, getActiveProjectId, getActiveProjectIdSync, updateProject } from './storage/ProjectStorage.js';
+// ensureActiveProject + updateProject go through StorageService so cloud
+// users hit the backend; sync/async active-ID readers stay on ProjectStorage
+// (per-device preference, never cloud-synced).
+import { getActiveProjectId, getActiveProjectIdSync } from './storage/ProjectStorage.js';
+import { ensureActiveProject, updateProject, clearSignedUrls } from './storage/StorageService.js';
 import { init as initAuth, getUser, onAuthChange, signOut } from './auth/AuthService.js';
-import { clearSignedUrls } from './storage/StorageService.js';
 
 // Scenes
 import { initScenes, loadScene, getSceneNames } from './core/SceneLoader.js';
