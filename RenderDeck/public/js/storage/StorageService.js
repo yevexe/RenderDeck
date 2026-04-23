@@ -13,6 +13,7 @@ import { isLoggedInAsync } from '../auth/AuthService.js';
 import * as cloud from './CloudStorage.js';
 import * as ProjectStorage from './ProjectStorage.js';
 import { CustomSceneStorage } from '../scenes/CustomSceneStorage.js';
+import * as signedUrls from './signedUrlCache.js';
 
 // Lazy singletons so guest delegation reuses one instance per page lifetime.
 let _sceneStorage = null;
@@ -189,8 +190,20 @@ export async function uploadAsset(projectId, file) {
 
 export async function getAssetSignedUrl(assetId) {
     if (await isLoggedInAsync()) {
-        const { url } = await cloud.get(`/api/assets/${assetId}/signed-url`);
-        return url;
+        return signedUrls.getSignedUrl(assetId, async () => {
+            const { url } = await cloud.get(`/api/assets/${assetId}/signed-url`);
+            return url;
+        });
     }
     throw new Error('getAssetSignedUrl requires login');
+}
+
+/** Drop a cached signed URL — call after deleting/replacing the asset. */
+export function evictSignedUrl(assetId) {
+    signedUrls.evict(assetId);
+}
+
+/** Drop all cached signed URLs — call on logout. */
+export function clearSignedUrls() {
+    signedUrls.clear();
 }

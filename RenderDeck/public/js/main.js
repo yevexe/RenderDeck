@@ -40,6 +40,8 @@ import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './c
 import { PropManager } from './props/PropManager.js';
 import { CustomSceneStorage } from './scenes/CustomSceneStorage.js';
 import { ensureActiveProject, getActiveProjectId, getActiveProjectIdSync, updateProject } from './storage/ProjectStorage.js';
+import { init as initAuth, getUser, onAuthChange, signOut } from './auth/AuthService.js';
+import { clearSignedUrls } from './storage/StorageService.js';
 
 // Scenes
 import { initScenes, loadScene, getSceneNames } from './core/SceneLoader.js';
@@ -3808,7 +3810,48 @@ function setupDebugPanel() {
 // Saved camera from the last session, used to skip centerAndFrameModel on boot.
 let _bootCamera = null;
 
+// ─── Auth header (Phase 2 bootstrap) ──────────────────────────────────────────
+// Renders Login/Sign Up vs Log Out based on Supabase session, and reloads the
+// page on any auth state change for a clean transition. Cloud-aware data
+// loading (project list, materials, etc.) is Phase 3 — until then a logged-in
+// user still sees their guest IDB workspace; only the header reflects auth.
+async function setupAuthHeader() {
+  initAuth();
+
+  const guestBtns = document.getElementById('auth-buttons-guest');
+  const userBtns  = document.getElementById('auth-buttons-user');
+  const emailSpan = document.getElementById('auth-user-email');
+  const logoutBtn = document.getElementById('auth-logout-btn');
+  if (!guestBtns || !userBtns || !logoutBtn) return;
+
+  function render(user) {
+    const loggedIn = !!user;
+    guestBtns.style.display = loggedIn ? 'none' : 'flex';
+    userBtns.style.display  = loggedIn ? 'flex' : 'none';
+    emailSpan.textContent   = loggedIn ? (user.email || '') : '';
+  }
+
+  render(await getUser());
+
+  onAuthChange((event) => {
+    if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+      clearSignedUrls();
+      location.reload();
+    }
+  });
+
+  logoutBtn.addEventListener('click', async () => {
+    try { await signOut(); }
+    catch (err) { console.error('Sign out failed:', err); }
+    // onAuthChange will fire SIGNED_OUT and reload us.
+  });
+}
+
 async function initializeApp() {
+  // Render auth header as early as possible so the Log Out button appears
+  // immediately for logged-in users. Doesn't block the rest of bootstrap.
+  setupAuthHeader();
+
   // Fast path: preload last edited model immediately (sync localStorage read).
   try {
     const raw = localStorage.getItem(sessionBootKey(getActiveProjectIdSync()));

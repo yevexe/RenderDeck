@@ -31,8 +31,14 @@
             <polyline points="6 9 12 15 18 9"/>
           </svg>
         </button>
-        <a href="login.html" class="auth-btn auth-btn--ghost">Log In</a>
-        <a href="login.html?tab=signup" class="auth-btn auth-btn--solid">Sign Up</a>
+        <div id="auth-buttons-guest" style="display:flex; gap:8px; align-items:center;">
+          <a href="login.html" class="auth-btn auth-btn--ghost">Log In</a>
+          <a href="login.html?tab=signup" class="auth-btn auth-btn--solid">Sign Up</a>
+        </div>
+        <div id="auth-buttons-user" style="display:none; gap:8px; align-items:center;">
+          <span id="auth-user-email" style="font-size:12px; color:var(--text-muted, #888);"></span>
+          <button id="auth-logout-btn" class="auth-btn auth-btn--ghost">Log Out</button>
+        </div>
       </div>
     </div>
 
