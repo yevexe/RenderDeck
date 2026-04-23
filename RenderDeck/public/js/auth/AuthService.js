@@ -38,11 +38,6 @@ export async function getAccessToken() {
     return session?.access_token ?? null;
 }
 
-export function isLoggedIn() {
-    // Synchronous check via cached session — call after init()
-    return getClient().auth.getUser !== undefined && !!getClient()._session;
-}
-
 export async function isLoggedInAsync() {
     const user = await getUser();
     return user !== null;

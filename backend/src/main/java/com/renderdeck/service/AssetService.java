@@ -31,6 +31,7 @@ public class AssetService {
         m.put("jpeg", new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF});
         m.put("png",  new byte[]{(byte)0x89, 0x50, 0x4E, 0x47});
         m.put("glb",  new byte[]{0x67, 0x6C, 0x54, 0x46});
+        m.put("svg",  null);
         m.put("obj",  null);
         m.put("mtl",  null);
         ALLOWED_TYPES = Collections.unmodifiableMap(m);
