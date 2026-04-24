@@ -3897,6 +3897,13 @@ async function initializeApp() {
   // immediately for logged-in users. Doesn't block the rest of bootstrap.
   setupAuthHeader();
 
+  // Resolve the active project up front. Cloud users need this BEFORE any
+  // project-keyed reads below (session boot, scene dropdown, model list,
+  // material presets) — otherwise those would call the backend with a
+  // stale guest UUID and 404. setActiveProjectId writes the localStorage
+  // mirror synchronously so getActiveProjectIdSync sees it immediately.
+  const activeProject = await ensureActiveProject();
+
   // Fast path: preload last edited model immediately (sync localStorage read).
   try {
     const raw = localStorage.getItem(sessionBootKey(getActiveProjectIdSync()));
@@ -3941,8 +3948,8 @@ async function initializeApp() {
   rendererManager.getRenderer().toneMapping = THREE.ACESFilmicToneMapping;
   rendererManager.getRenderer().toneMappingExposure = 1.0;
 
-  // Ensure an active project exists and update the header button
-  const activeProject = await ensureActiveProject();
+  // Active project was resolved at the top of this function; now wire the
+  // header button and load project-scoped material data.
   const projectBtn = document.getElementById('project-btn');
   if (projectBtn && activeProject) {
     projectBtn.querySelector('#project-name').textContent = activeProject.name;
