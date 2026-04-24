@@ -38,12 +38,19 @@ import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './c
 
 // Props
 import { PropManager } from './props/PropManager.js';
-import { CustomSceneStorage } from './scenes/CustomSceneStorage.js';
-// ensureActiveProject + updateProject go through StorageService so cloud
-// users hit the backend; sync/async active-ID readers stay on ProjectStorage
-// (per-device preference, never cloud-synced).
+// Project + scene storage routes through StorageService for cloud users and
+// delegates to the IDB-backed guest classes otherwise. Sync/async active-ID
+// readers stay on ProjectStorage — that's a per-device preference.
 import { getActiveProjectId, getActiveProjectIdSync } from './storage/ProjectStorage.js';
-import { ensureActiveProject, updateProject, clearSignedUrls } from './storage/StorageService.js';
+import {
+  ensureActiveProject,
+  updateProject,
+  clearSignedUrls,
+  listSceneNames,
+  getScene as loadSceneRecord,
+  saveScene as persistScene,
+  deleteScene as removeScene,
+} from './storage/StorageService.js';
 import { init as initAuth, getUser, onAuthChange, signOut } from './auth/AuthService.js';
 
 // Scenes
@@ -218,7 +225,6 @@ let showEnvBackground = true;   // scene.background = HDR when true
 let gradientBgEnabled = false;  // show CSS gradient when true
 let currentGradientBg = '';     // key from GRADIENT_PRESETS
 
-const sceneStorage   = new CustomSceneStorage();
 const sketchfabAPI   = new SketchfabAPI();
 
 //═══════════════════════════════════════════════════════════════
@@ -3361,7 +3367,9 @@ async function setupSceneSetupUI() {
 
   async function populateScenesDropdown() {
     sceneSelect.innerHTML = '<option value="default">Default (no props)</option>';
-    const names = await sceneStorage.getAllSceneNames();
+    const projectId = getActiveProjectIdSync();
+    if (!projectId) return;
+    const names = await listSceneNames(projectId);
     if (names.length > 0) {
       const grp = document.createElement('optgroup');
       grp.label = 'Custom Scenes';
@@ -3381,16 +3389,18 @@ async function setupSceneSetupUI() {
     const value = e.target.value;
     if (value === 'default') { propManager.clearAllProps(); return; }
     if (!value.startsWith('custom:')) return;
-    const sceneData = await sceneStorage.getScene(value.replace('custom:', ''));
+    const projectId = getActiveProjectIdSync();
+    const sceneData = await loadSceneRecord(projectId, value.replace('custom:', ''));
     if (sceneData) await loadSceneSetup(sceneData);
   });
 
   saveSceneBtn?.addEventListener('click', async () => {
     const name = prompt('Enter scene name:');
     if (!name?.trim()) return;
+    const projectId = getActiveProjectIdSync();
     const cam    = cameraManager.getCamera();
     const orbit  = cameraManager.getControls();
-    await sceneStorage.saveScene(name.trim(), {
+    const sceneData = {
       environment: { hdr: currentEnvironment, background: currentGradientBg || null },
       props:  propManager.getSceneData(),
       camera: {
@@ -3403,7 +3413,8 @@ async function setupSceneSetupUI() {
         rotation: { x: activeModel.rotation.x, y: activeModel.rotation.y, z: activeModel.rotation.z },
         scale:    { x: activeModel.scale.x,    y: activeModel.scale.y,    z: activeModel.scale.z }
       } : null
-    });
+    };
+    await persistScene(projectId, { name: name.trim(), sceneData });
     await populateScenesDropdown();
     log(`Scene saved: ${name.trim()}`);
   });
@@ -3411,7 +3422,20 @@ async function setupSceneSetupUI() {
   exportSceneBtn?.addEventListener('click', async () => {
     const value = sceneSelect?.value;
     if (!value?.startsWith('custom:')) { log('Select a scene to export'); return; }
-    await sceneStorage.exportScene(value.replace('custom:', ''));
+    const projectId = getActiveProjectIdSync();
+    const name = value.replace('custom:', '');
+    const scene = await loadSceneRecord(projectId, name);
+    if (!scene) { logError(`Scene not found: ${name}`); return; }
+    const exportPayload = { ...scene, exportedAt: Date.now(), exportVersion: 1 };
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name}.renderdeck-scene.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   });
 
   importSceneBtn?.addEventListener('click', () => sceneFileInput?.click());
@@ -3419,18 +3443,36 @@ async function setupSceneSetupUI() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const result = await sceneStorage.importScene(file);
-      if (result.success) {
-        await populateScenesDropdown();
-        log(`Scene imported: ${result.name}`);
+      const projectId = getActiveProjectIdSync();
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data.name) throw new Error('Invalid scene file: missing name');
+      const existing = await loadSceneRecord(projectId, data.name);
+      if (existing && !confirm(`Scene "${data.name}" already exists. Overwrite?`)) {
+        return;
       }
+      await persistScene(projectId, {
+        name: data.name,
+        sceneData: {
+          environment: data.environment,
+          props:       data.props,
+          camera:      data.camera,
+          model:       data.model || null,
+        },
+      });
+      await populateScenesDropdown();
+      log(`Scene imported: ${data.name}`);
     } catch (err) { logError(`Scene import failed: ${err.message}`); }
     sceneFileInput.value = '';
   });
 
   clearScenesBtn?.addEventListener('click', async () => {
     if (!confirm('Delete all custom scenes? This cannot be undone!')) return;
-    await sceneStorage.clearAllScenes();
+    const projectId = getActiveProjectIdSync();
+    const names = await listSceneNames(projectId);
+    for (const name of names) {
+      await removeScene(projectId, name);
+    }
     await populateScenesDropdown();
     log('All custom scenes deleted');
   });

@@ -146,36 +146,66 @@ export async function saveChannelMap(projectId, materialId, channel, file) {
 }
 
 // ─── Scenes ──────────────────────────────────────────────────────────────────
+// Scenes are name-identified from the caller's perspective (the UI only knows
+// scene names). Cloud storage uses UUIDs internally; these helpers bridge by
+// looking up the id via a list call when needed.
 
-export async function listScenes(projectId) {
-    if (await isLoggedInAsync()) return cloud.get(`/api/projects/${projectId}/scenes`);
-    const names = await sceneStorage().getAllSceneNames();
-    return Promise.all(names.map(n => sceneStorage().getScene(n)));
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Just the names — used to populate dropdowns without fetching full scene data.
+export async function listSceneNames(projectId) {
+    if (await isLoggedInAsync()) {
+        const list = await cloud.get(`/api/projects/${projectId}/scenes`);
+        return list.map(s => s.name);
+    }
+    return sceneStorage().getAllSceneNames();
 }
 
+// Full scene data in a flat shape (environment, props, camera, model on the
+// top level) — matches what loadSceneSetup expects. Returns null if not found.
+// For cloud, unwraps the server's { id, name, sceneData: {...} } envelope.
+export async function getScene(projectId, name) {
+    if (await isLoggedInAsync()) {
+        const list = await cloud.get(`/api/projects/${projectId}/scenes`);
+        const match = list.find(s => s.name === name);
+        if (!match) return null;
+        return { id: match.id, name: match.name, ...(match.sceneData || {}) };
+    }
+    return sceneStorage().getScene(name);
+}
+
+// Upsert by name. Cloud has no upsert-by-name endpoint, so we list first and
+// pick up an existing id if the name is already taken. Guests identify by
+// name natively.
 export async function saveScene(projectId, scene) {
     if (await isLoggedInAsync()) {
-        if (scene.id) {
-            return cloud.put(`/api/projects/${projectId}/scenes/${scene.id}`, {
-                name: scene.name,
-                sceneData: scene.sceneData,
-            });
+        let id = scene.id;
+        if (!id) {
+            const list = await cloud.get(`/api/projects/${projectId}/scenes`);
+            const existing = list.find(s => s.name === scene.name);
+            if (existing) id = existing.id;
         }
-        return cloud.post(`/api/projects/${projectId}/scenes`, {
-            name: scene.name,
-            sceneData: scene.sceneData,
-        });
+        const body = { name: scene.name, sceneData: scene.sceneData };
+        if (id) return cloud.put(`/api/projects/${projectId}/scenes/${id}`, body);
+        return cloud.post(`/api/projects/${projectId}/scenes`, body);
     }
     return sceneStorage().saveScene(scene.name, scene.sceneData);
 }
 
-// In cloud mode `sceneId` is a UUID; in guest mode it's the scene name —
-// CustomSceneStorage keys by name, not UUID.
-export async function deleteScene(projectId, sceneId) {
+// Accepts either a UUID (cloud) or a name (guest, or cloud callers that only
+// know the display name).
+export async function deleteScene(projectId, sceneIdOrName) {
     if (await isLoggedInAsync()) {
-        return cloud.del(`/api/projects/${projectId}/scenes/${sceneId}`);
+        let id = sceneIdOrName;
+        if (!UUID_RE.test(id)) {
+            const list = await cloud.get(`/api/projects/${projectId}/scenes`);
+            const match = list.find(s => s.name === sceneIdOrName);
+            if (!match) return null;
+            id = match.id;
+        }
+        return cloud.del(`/api/projects/${projectId}/scenes/${id}`);
     }
-    return sceneStorage().deleteScene(sceneId);
+    return sceneStorage().deleteScene(sceneIdOrName);
 }
 
 // ─── Models ──────────────────────────────────────────────────────────────────
