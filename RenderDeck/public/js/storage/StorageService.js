@@ -240,10 +240,14 @@ export async function deleteModel(modelId, projectId) {
 }
 
 // ─── Prop Assets ─────────────────────────────────────────────────────────────
+// Decision #6: cloud-only library. Guests have no persistent prop library —
+// uploaded props are session-scoped via PropManager directly. The guest
+// branches here return empty/null so callers can blindly route through
+// StorageService without branching themselves.
 
 export async function listPropAssets(projectId) {
     if (await isLoggedInAsync()) return cloud.get(`/api/projects/${projectId}/props`);
-    throw guestNotRouted('listPropAssets');
+    return [];
 }
 
 // Single multipart upload — backend creates the Asset row and the PropAsset
@@ -257,14 +261,14 @@ export async function uploadPropAsset(projectId, name, file) {
             { name }
         );
     }
-    throw guestNotRouted('uploadPropAsset');
+    return null;
 }
 
 export async function deletePropAsset(projectId, propAssetId) {
     if (await isLoggedInAsync()) {
         return cloud.del(`/api/projects/${projectId}/props/${propAssetId}`);
     }
-    throw guestNotRouted('deletePropAsset');
+    return null;
 }
 
 // ─── Assets (generic) ────────────────────────────────────────────────────────

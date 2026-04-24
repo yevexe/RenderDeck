@@ -27,6 +27,15 @@
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
 
+    <!-- Reactive Streams interfaces — required by Spring's MultipartBodyBuilder
+         when streaming multipart uploads via RestClient (see SupabaseStorageService).
+         Tiny JAR (~5 KB) of interfaces only; no reactive runtime pulled in. -->
+    <dependency>
+      <groupId>org.reactivestreams</groupId>
+      <artifactId>reactive-streams</artifactId>
+      <version>1.0.4</version>
+    </dependency>
+
     <!-- JPA + Postgres -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

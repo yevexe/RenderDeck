@@ -50,6 +50,10 @@ import {
   getScene as loadSceneRecord,
   saveScene as persistScene,
   deleteScene as removeScene,
+  listPropAssets,
+  uploadPropAsset,
+  deletePropAsset,
+  getAssetSignedUrl,
 } from './storage/StorageService.js';
 import { init as initAuth, getUser, onAuthChange, signOut } from './auth/AuthService.js';
 
@@ -2997,13 +3001,15 @@ function setupBackgroundUI() {
 // PROPS UI
 //═══════════════════════════════════════════════════════════════
 
-function setupPropsUI() {
+async function setupPropsUI() {
   const propsSelect   = document.getElementById('props-select');
   const addPropBtn      = document.getElementById('add-prop-btn');
   const importPropBtn   = document.getElementById('import-prop-btn');
   const propFileInput   = document.getElementById('prop-file-input');
   const deletePropBtn   = document.getElementById('delete-prop-btn');
   const clearPropsBtn   = document.getElementById('clear-props-btn');
+  const myPropsSection  = document.getElementById('my-props-section');
+  const myPropsList     = document.getElementById('my-props-list');
 
   if (!propsSelect) return;
 
@@ -3026,6 +3032,98 @@ function setupPropsUI() {
     propsSelect.appendChild(grp);
   });
 
+  // Helper: ensure the "Custom" optgroup exists in the dropdown so uploaded
+  // props appear there. Returns the optgroup element.
+  function ensureCustomOptgroup() {
+    let g = propsSelect.querySelector('optgroup[label="Custom"]');
+    if (!g) {
+      g = document.createElement('optgroup');
+      g.label = 'Custom';
+      propsSelect.appendChild(g);
+    }
+    return g;
+  }
+
+  // Add a row to the "My Props" library list (cloud-only). Returns the row
+  // so callers can remove it on delete.
+  function addLibraryRow(propAsset) {
+    if (!myPropsList) return null;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:4px;';
+    row.dataset.propAssetId = propAsset.id;
+    row.dataset.name = propAsset.name;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = propAsset.name;
+    nameSpan.style.cssText = 'flex:1; cursor:pointer; font-size:12px;';
+    nameSpan.title = 'Click to add to scene';
+    nameSpan.addEventListener('click', async () => {
+      const target = cameraManager.getControls().target;
+      await propManager.addProp(`custom_${propAsset.name}`, { x: target.x, y: target.y, z: target.z });
+      pushSceneHistory(`Added prop from library: ${propAsset.name}`);
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '✕';
+    deleteBtn.title = 'Delete from library';
+    deleteBtn.style.cssText = 'background:none; border:none; cursor:pointer; color:#c44; font-size:14px; padding:0 6px;';
+    deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete "${propAsset.name}" from your library?`)) return;
+      const projectId = getActiveProjectIdSync();
+      try {
+        await deletePropAsset(projectId, propAsset.id);
+        propManager.unregisterCustomProp(propAsset.name);
+        // Remove from dropdown Custom optgroup
+        const customGroup = propsSelect.querySelector('optgroup[label="Custom"]');
+        const opt = customGroup?.querySelector(`option[value="custom_${propAsset.name}"]`);
+        if (opt) opt.remove();
+        if (customGroup && !customGroup.children.length) customGroup.remove();
+        // Remove from library list
+        row.remove();
+        if (myPropsList && !myPropsList.children.length && myPropsSection) {
+          myPropsSection.style.display = 'none';
+        }
+        log(`Deleted from library: ${propAsset.name}`);
+      } catch (err) {
+        logError(`Delete failed: ${err.message}`);
+      }
+    });
+
+    row.appendChild(nameSpan);
+    row.appendChild(deleteBtn);
+    myPropsList.appendChild(row);
+    if (myPropsSection) myPropsSection.style.display = '';
+    return row;
+  }
+
+  // Populate the cloud library asynchronously without blocking event-handler
+  // setup below — built-in props are usable immediately; library entries
+  // appear incrementally as their signed URLs resolve. No-op for guests
+  // (listPropAssets returns []).
+  async function loadCloudLibrary() {
+    const projectId = getActiveProjectIdSync();
+    if (!projectId) return;
+    const propAssets = await listPropAssets(projectId);
+    if (!propAssets.length) return;
+    const customGroup = ensureCustomOptgroup();
+    for (const propAsset of propAssets) {
+      try {
+        const url = await getAssetSignedUrl(propAsset.assetId);
+        propManager.registerCloudPropAsset(propAsset, url);
+        if (!customGroup.querySelector(`option[value="custom_${propAsset.name}"]`)) {
+          const opt = document.createElement('option');
+          opt.value = `custom_${propAsset.name}`;
+          opt.textContent = propAsset.name;
+          customGroup.appendChild(opt);
+        }
+        addLibraryRow(propAsset);
+      } catch (err) {
+        logError(`Failed to load prop "${propAsset.name}": ${err.message}`);
+      }
+    }
+  }
+  loadCloudLibrary().catch(err => logError(`Library load failed: ${err.message}`));
+
   addPropBtn?.addEventListener('click', async () => {
     const propId = propsSelect.value;
     if (!propId) return;
@@ -3042,15 +3140,25 @@ function setupPropsUI() {
     if (!file) return;
     const customId = await propManager.uploadCustomProp(file);
     if (!customId) { propFileInput.value = ''; return; }
-
-    // Re-populate dropdown so the new prop appears
     const name = customId.replace('custom_', '');
-    let customGroup = propsSelect.querySelector('optgroup[label="Custom"]');
-    if (!customGroup) {
-      customGroup = document.createElement('optgroup');
-      customGroup.label = 'Custom';
-      propsSelect.appendChild(customGroup);
+
+    // Cloud users: also push to the backend library so the prop persists
+    // across sessions and devices. Guest users get a no-op (null returned).
+    let propAsset = null;
+    try {
+      const projectId = getActiveProjectIdSync();
+      propAsset = await uploadPropAsset(projectId, name, file);
+    } catch (err) {
+      logError(`Library upload failed (kept locally): ${err.message}`);
     }
+    if (propAsset) {
+      const entry = propManager.customProps.get(name);
+      if (entry) entry.propAssetId = propAsset.id;
+      addLibraryRow(propAsset);
+    }
+
+    // Add to dropdown so the new prop appears
+    const customGroup = ensureCustomOptgroup();
     const opt = document.createElement('option');
     opt.value = customId;
     opt.textContent = name;

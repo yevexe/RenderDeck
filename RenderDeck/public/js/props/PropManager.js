@@ -694,6 +694,24 @@ export class PropManager {
     return `custom_${name}`;
   }
 
+  // Register a custom prop backed by a cloud PropAsset. Same as registerBlobProp
+  // but remembers the propAssetId + assetId so we can delete from the cloud
+  // library and refresh signed URLs when needed.
+  registerCloudPropAsset({ id: propAssetId, name, assetId }, signedUrl, format = 'gltf') {
+    this.customProps.set(name, { url: signedUrl, format, propAssetId, assetId });
+    return `custom_${name}`;
+  }
+
+  // Look up the cloud propAssetId for a given prop name (null if local-only).
+  getCloudPropAssetId(name) {
+    return this.customProps.get(name)?.propAssetId ?? null;
+  }
+
+  // Drop a cloud prop from the local Map (after a successful cloud delete).
+  unregisterCustomProp(name) {
+    this.customProps.delete(name);
+  }
+
   async uploadCustomProp(file) {
     const ext = file.name.match(/\.(glb|gltf|obj)$/i);
     if (!ext) {
