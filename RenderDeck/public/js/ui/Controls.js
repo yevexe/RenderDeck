@@ -5,6 +5,1517 @@ import { log } from '../utils/logger.js';
 import { STANDARD_ENVIRONMENTS } from '../config.js';
 import { generateEnvPreview } from '../core/SceneLoader.js';
 
+const COLOR_CANVAS_SIZE = 168;
+const COLOR_SLIDER_HEIGHT = 16;
+const TWO_PI = Math.PI * 2;
+const COLOR_SWATCH_GROUPS = [
+  {
+    title: 'Neutrals',
+    open: true,
+    anchors: ['#ffffff', '#f2f2f2', '#d9d9d9', '#bfbfbf', '#8c8c8c', '#595959', '#262626', '#000000']
+  },
+  {
+    title: 'Warm',
+    open: true,
+    anchors: ['#fff7ed', '#fed7aa', '#fb923c', '#ea580c', '#9a3412', '#fee2e2', '#f87171', '#dc2626']
+  },
+  {
+    title: 'Cool',
+    open: true,
+    anchors: ['#f0f9ff', '#bae6fd', '#38bdf8', '#0284c7', '#0c4a6e', '#cffafe', '#67e8f9', '#0891b2']
+  },
+  {
+    title: 'Vivid',
+    open: true,
+    anchors: ['#ff1744', '#ff9100', '#ffea00', '#00e676', '#00b0ff', '#651fff', '#d500f9', '#00c853']
+  },
+  {
+    title: 'Earth',
+    open: true,
+    anchors: ['#f5efe6', '#d6c2a1', '#b08968', '#7f5539', '#5e503f', '#87986a', '#a5a58d', '#d8d8c8']
+  },
+  {
+    title: 'Pastel',
+    open: true,
+    anchors: ['#ffd6e0', '#ffafcc', '#bde0fe', '#a2d2ff', '#caffbf', '#fdffb6', '#e4c1f9', '#d0f4de']
+  }
+];
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function componentToHex(value) {
+  return clamp(Math.round(value), 0, 255).toString(16).padStart(2, '0');
+}
+
+function rgbToHex({ r, g, b }) {
+  return `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
+}
+
+function hexToRgb(hex) {
+  const normalized = String(hex || '').trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null;
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+function rgbToHsv({ r, g, b }) {
+  const rn = clamp(r, 0, 255) / 255;
+  const gn = clamp(g, 0, 255) / 255;
+  const bn = clamp(b, 0, 255) / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const delta = max - min;
+  let h = 0;
+
+  if (delta !== 0) {
+    if (max === rn) h = ((gn - bn) / delta) % 6;
+    else if (max === gn) h = (bn - rn) / delta + 2;
+    else h = (rn - gn) / delta + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+
+  const s = max === 0 ? 0 : delta / max;
+  return { h, s: s * 100, v: max * 100 };
+}
+
+function hsvToRgb({ h, s, v }) {
+  const hue = ((h % 360) + 360) % 360;
+  const sat = clamp(s, 0, 100) / 100;
+  const val = clamp(v, 0, 100) / 100;
+  const c = val * sat;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = val - c;
+  let r1 = 0, g1 = 0, b1 = 0;
+
+  if (hue < 60)      { r1 = c; g1 = x; }
+  else if (hue < 120){ r1 = x; g1 = c; }
+  else if (hue < 180){ g1 = c; b1 = x; }
+  else if (hue < 240){ g1 = x; b1 = c; }
+  else if (hue < 300){ r1 = x; b1 = c; }
+  else               { r1 = c; b1 = x; }
+
+  return {
+    r: Math.round((r1 + m) * 255),
+    g: Math.round((g1 + m) * 255),
+    b: Math.round((b1 + m) * 255),
+  };
+}
+
+function rgbToCmyk({ r, g, b }) {
+  const rn = clamp(r, 0, 255) / 255;
+  const gn = clamp(g, 0, 255) / 255;
+  const bn = clamp(b, 0, 255) / 255;
+  const k = 1 - Math.max(rn, gn, bn);
+  if (k >= 1) return { c: 0, m: 0, y: 0, k: 100 };
+  return {
+    c: ((1 - rn - k) / (1 - k)) * 100,
+    m: ((1 - gn - k) / (1 - k)) * 100,
+    y: ((1 - bn - k) / (1 - k)) * 100,
+    k: k * 100,
+  };
+}
+
+function cmykToRgb({ c, m, y, k }) {
+  const cn = clamp(c, 0, 100) / 100;
+  const mn = clamp(m, 0, 100) / 100;
+  const yn = clamp(y, 0, 100) / 100;
+  const kn = clamp(k, 0, 100) / 100;
+  return {
+    r: Math.round(255 * (1 - cn) * (1 - kn)),
+    g: Math.round(255 * (1 - mn) * (1 - kn)),
+    b: Math.round(255 * (1 - yn) * (1 - kn)),
+  };
+}
+
+function pointerPosition(evt, element) {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: clamp(evt.clientX - rect.left, 0, rect.width),
+    y: clamp(evt.clientY - rect.top, 0, rect.height),
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function lerp(a, b, t) {
+  return a + ((b - a) * t);
+}
+
+function generateSwatchColors(anchors, count = 64) {
+  const rgbAnchors = anchors.map(hex => hexToRgb(hex)).filter(Boolean);
+  if (rgbAnchors.length === 0) return [];
+  if (rgbAnchors.length === 1) return Array.from({ length: count }, () => rgbToHex(rgbAnchors[0]));
+
+  return Array.from({ length: count }, (_, index) => {
+    const t = count === 1 ? 0 : index / (count - 1);
+    const scaled = t * (rgbAnchors.length - 1);
+    const low = Math.floor(scaled);
+    const high = Math.min(rgbAnchors.length - 1, low + 1);
+    const mix = scaled - low;
+    const start = rgbAnchors[low];
+    const end = rgbAnchors[high];
+    return rgbToHex({
+      r: Math.round(lerp(start.r, end.r, mix)),
+      g: Math.round(lerp(start.g, end.g, mix)),
+      b: Math.round(lerp(start.b, end.b, mix)),
+    });
+  });
+}
+
+export class CompactColorPicker {
+  static active = null;
+
+  constructor({ pickerEl, hexEl, swatchEl, wrapInput, onLiveChange, onCommitChange }) {
+    this.pickerEl = pickerEl;
+    this.hexEl = hexEl;
+    this.swatchEl = swatchEl;
+    this.wrapInput = wrapInput;
+    this.onLiveChange = onLiveChange;
+    this.onCommitChange = onCommitChange;
+    this.mode = 'square';
+    this.isOpen = false;
+    this.isDragging = false;
+    this.dragTarget = null;
+    this.renderScale = Math.min(3, Math.max(1.5, window.devicePixelRatio || 1));
+    this.selectedCollectionIndex = 0;
+    this.selectedSwatchRef = null;
+    this.lastSelectionType = 'collection';
+    this.pendingNewCollection = false;
+    this.pendingCollectionRenameIndex = null;
+    this.dragPayload = null;
+    this.skipPresetAnimationOnce = false;
+    this.swatchCollections = [
+      { id: 'recent', title: 'Recent', open: true, swatches: [] },
+      ...COLOR_SWATCH_GROUPS.map((group, groupIndex) => ({
+        id: `swatch-group-${groupIndex + 1}`,
+        title: group.title,
+        open: false,
+        swatches: generateSwatchColors(group.anchors, 72).map((hex, swatchIndex) => ({
+          id: `swatch-${groupIndex + 1}-${swatchIndex + 1}`,
+          hex,
+          name: `${group.title} ${swatchIndex + 1}`,
+        })),
+      })),
+    ];
+    this.state = {
+      hex: '#ffffff',
+      rgb: { r: 255, g: 255, b: 255 },
+      hsv: { h: 0, s: 0, v: 100 },
+      cmyk: { c: 0, m: 0, y: 0, k: 0 },
+    };
+
+    this._build();
+    this.setMode('square');
+    this._bindLauncher();
+    this.setColor(this.hexEl?.value || this.pickerEl?.value || '#ffffff', { emit: false });
+  }
+
+  _build() {
+    this.panelEl = document.createElement('div');
+    this.panelEl.className = 'compact-color-picker';
+    this.panelEl.hidden = true;
+
+    this.titleEl = document.createElement('div');
+    this.titleEl.className = 'compact-color-picker__section-title';
+    this.titleEl.textContent = 'Color Picker';
+
+    this.toggleRowEl = document.createElement('div');
+    this.toggleRowEl.className = 'compact-color-picker__mode';
+    this.squareModeBtn = this._makeModeButton('Square', 'square');
+    this.circleModeBtn = this._makeModeButton('Circle', 'circle');
+    this.toggleRowEl.append(this.squareModeBtn, this.circleModeBtn);
+
+    this.canvasWrapEl = document.createElement('div');
+    this.canvasWrapEl.className = 'compact-color-picker__canvas-wrap';
+
+    this.canvasEl = document.createElement('canvas');
+    this.canvasEl.className = 'compact-color-picker__canvas';
+
+    this.sliderEl = document.createElement('canvas');
+    this.sliderEl.className = 'compact-color-picker__slider';
+
+    this.sliderLabelEl = document.createElement('div');
+    this.sliderLabelEl.className = 'compact-color-picker__slider-label';
+
+    this.canvasWrapEl.append(this.canvasEl, this.sliderEl, this.sliderLabelEl);
+
+    this.fieldsEl = document.createElement('div');
+    this.fieldsEl.className = 'compact-color-picker__fields';
+    this.rgbInputs = this._buildFieldGroup('RGB', ['R', 'G', 'B'], 0, 255, 1, ['r', 'g', 'b']);
+    this.hsvInputs = this._buildFieldGroup('HSB', ['H', 'S', 'B'], [0, 0, 0], [360, 100, 100], [1, 1, 1], ['h', 's', 'v']);
+    this.cmykInputs = this._buildFieldGroup('CMYK', ['C', 'M', 'Y', 'K'], 0, 100, 1, ['c', 'm', 'y', 'k']);
+
+    this.footerEl = document.createElement('div');
+    this.footerEl.className = 'compact-color-picker__footer';
+
+    this.previewSwatchEl = document.createElement('button');
+    this.previewSwatchEl.type = 'button';
+    this.previewSwatchEl.className = 'compact-color-picker__preview-swatch';
+    this.previewSwatchEl.setAttribute('aria-label', 'Current color swatch');
+    this.previewSwatchEl.draggable = true;
+
+    this.copyHexBtn = document.createElement('button');
+    this.copyHexBtn.type = 'button';
+    this.copyHexBtn.className = 'compact-color-picker__footer-btn';
+    this.copyHexBtn.setAttribute('aria-label', 'Copy hex value');
+    this.copyHexBtn.title = 'Copy hex value';
+    this.copyHexBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 11 11" fill="none"><rect x="3.5" y="0.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.1"/><path d="M0.5 3.5H2.5V10.5H9.5V8.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    this.previewHexEl = document.createElement('input');
+    this.previewHexEl.type = 'text';
+    this.previewHexEl.maxLength = 7;
+    this.previewHexEl.spellcheck = false;
+    this.previewHexEl.className = 'value-input value-input-hex compact-color-picker__hex';
+
+    this.footerEl.append(this.previewSwatchEl, this.copyHexBtn, this.previewHexEl);
+    this.fieldsEl.append(this.rgbInputs.group, this.hsvInputs.group, this.cmykInputs.group);
+
+    this.swatchesTitleEl = document.createElement('div');
+    this.swatchesTitleEl.className = 'compact-color-picker__section-title compact-color-picker__section-title--swatches';
+    this.swatchesTitleEl.textContent = 'Swatches';
+    this.swatchesHeaderEl = document.createElement('div');
+    this.swatchesHeaderEl.className = 'compact-color-picker__header-row';
+    this.swatchesMenuBtn = document.createElement('button');
+    this.swatchesMenuBtn.type = 'button';
+    this.swatchesMenuBtn.className = 'compact-color-picker__menu-btn';
+    this.swatchesMenuBtn.setAttribute('aria-label', 'Swatches menu');
+    this.swatchesMenuBtn.title = 'Swatches menu';
+    this.swatchesMenuBtn.innerHTML = '<span></span><span></span><span></span>';
+    this.swatchesMenuEl = document.createElement('div');
+    this.swatchesMenuEl.className = 'compact-color-picker__menu';
+    this.swatchesMenuEl.hidden = true;
+
+    this.loadStandardSwatchesBtn = document.createElement('button');
+    this.loadStandardSwatchesBtn.type = 'button';
+    this.loadStandardSwatchesBtn.className = 'compact-color-picker__menu-item';
+    this.loadStandardSwatchesBtn.textContent = 'Load Standard Swatches';
+    this.loadStandardSwatchesBtn.setAttribute('aria-label', 'Load Standard Swatches');
+    this.loadStandardSwatchesBtn.title = 'Load Standard Swatches';
+    this.swatchesMenuEl.appendChild(this.loadStandardSwatchesBtn);
+    this.swatchesHeaderEl.append(this.swatchesTitleEl, this.swatchesMenuBtn, this.swatchesMenuEl);
+
+    this.swatchPanelEl = this._buildPresetSwatches();
+
+    this.panelEl.append(this.titleEl, this.toggleRowEl, this.canvasWrapEl, this.fieldsEl, this.footerEl, this.swatchesHeaderEl, this.swatchPanelEl);
+    document.body.appendChild(this.panelEl);
+    this._configureCanvasResolution();
+    this._bindPanelEvents();
+  }
+
+  _buildPresetSwatches() {
+    const panel = document.createElement('div');
+    panel.className = 'compact-color-picker__presets';
+    this.swatchActionsEl = document.createElement('div');
+    this.swatchActionsEl.className = 'compact-color-picker__presets-actions';
+
+    this.addCollectionBtn = document.createElement('button');
+    this.addCollectionBtn.type = 'button';
+    this.addCollectionBtn.className = 'compact-color-picker__presets-action';
+    this.addCollectionBtn.textContent = '+';
+
+    this.renameSwatchesBtn = document.createElement('button');
+    this.renameSwatchesBtn.type = 'button';
+    this.renameSwatchesBtn.className = 'compact-color-picker__presets-action';
+    this.renameSwatchesBtn.textContent = '✎';
+    this.renameSwatchesBtn.setAttribute('aria-label', 'Rename');
+    this.renameSwatchesBtn.title = 'Rename';
+
+    this.removeCollectionBtn = document.createElement('button');
+    this.removeCollectionBtn.type = 'button';
+    this.removeCollectionBtn.className = 'compact-color-picker__presets-action';
+    this.removeCollectionBtn.textContent = '🗑';
+
+    this.swatchActionsEl.append(this.addCollectionBtn, this.renameSwatchesBtn, this.removeCollectionBtn);
+
+    this.swatchScrollEl = document.createElement('div');
+    this.swatchScrollEl.className = 'compact-color-picker__presets-scroll';
+
+    this.swatchRenameFormEl = document.createElement('div');
+    this.swatchRenameFormEl.className = 'compact-color-picker__swatch-rename';
+    this.swatchRenameFormEl.hidden = true;
+
+    const renameField = document.createElement('div');
+    renameField.className = 'compact-color-picker__swatch-rename-field';
+
+    this.swatchRenameInputEl = document.createElement('input');
+    this.swatchRenameInputEl.type = 'text';
+    this.swatchRenameInputEl.className = 'compact-color-picker__swatch-rename-input';
+    this.swatchRenameInputEl.autocomplete = 'off';
+    this.swatchRenameInputEl.spellcheck = false;
+
+    this.swatchRenameClearEl = document.createElement('button');
+    this.swatchRenameClearEl.type = 'button';
+    this.swatchRenameClearEl.className = 'compact-color-picker__swatch-rename-clear';
+    this.swatchRenameClearEl.innerHTML = '<svg width="7" height="7" viewBox="0 0 8 8" fill="none"><line x1="1" y1="1" x2="7" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="1" x2="1" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+    this.swatchRenameConfirmEl = document.createElement('button');
+    this.swatchRenameConfirmEl.type = 'button';
+    this.swatchRenameConfirmEl.className = 'compact-color-picker__swatch-rename-confirm';
+    this.swatchRenameConfirmEl.innerHTML = '<svg width="12" height="9" viewBox="0 0 13 10" fill="none"><polyline points="1,5 5,9 12,1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    renameField.append(this.swatchRenameInputEl, this.swatchRenameClearEl);
+    this.swatchRenameFormEl.append(renameField, this.swatchRenameConfirmEl);
+
+    panel.append(this.swatchScrollEl, this.swatchRenameFormEl, this.swatchActionsEl);
+
+    this.addCollectionBtn.addEventListener('click', () => this._addSwatchCollection());
+    this.loadStandardSwatchesBtn.addEventListener('click', () => this._loadStandardSwatchCollections());
+    this.renameSwatchesBtn.addEventListener('click', () => this._renameSelectedSwatchTarget());
+    this.removeCollectionBtn.addEventListener('click', () => this._removeSelectedSwatchTarget());
+    this.removeCollectionBtn.addEventListener('dragover', (evt) => {
+      if (!this.dragPayload) return;
+      evt.preventDefault();
+      evt.dataTransfer.dropEffect = 'move';
+      this.removeCollectionBtn.classList.add('is-drop-target');
+    });
+    this.removeCollectionBtn.addEventListener('dragleave', () => {
+      this.removeCollectionBtn.classList.remove('is-drop-target');
+    });
+    this.removeCollectionBtn.addEventListener('drop', (evt) => {
+      if (!this.dragPayload) return;
+      evt.preventDefault();
+      this.removeCollectionBtn.classList.remove('is-drop-target');
+      if (this.dragPayload.type === 'swatch') {
+        this._deleteSwatchByRef(this.dragPayload.collectionIndex, this.dragPayload.swatchId);
+      } else if (this.dragPayload.type === 'collection') {
+        this._removeSelectedSwatchCollection(this.dragPayload.collectionIndex);
+      }
+      this.dragPayload = null;
+      this._clearDropIndicators();
+    });
+    this.swatchRenameClearEl.addEventListener('click', () => {
+      this.swatchRenameInputEl.value = '';
+      this.swatchRenameInputEl.focus();
+    });
+    this.swatchRenameConfirmEl.addEventListener('click', () => this._commitSwatchRename());
+    this.swatchRenameInputEl.addEventListener('keydown', (evt) => {
+      if (evt.key === 'Enter') this._commitSwatchRename();
+      if (evt.key === 'Escape') this._closeSwatchRename();
+    });
+    document.addEventListener('mousedown', (evt) => {
+      if (this.swatchRenameFormEl.hidden) return;
+      if (this.swatchRenameFormEl.contains(evt.target) || this.renameSwatchesBtn?.contains(evt.target)) return;
+      if (!this.swatchRenameInputEl.value.trim()) {
+        this._closeSwatchRename();
+      }
+    });
+    this.swatchesMenuBtn.addEventListener('click', (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      const open = !this.swatchesMenuEl.hidden;
+      this.swatchesMenuEl.hidden = open;
+      this.swatchesMenuBtn.classList.toggle('is-open', !open);
+    });
+    document.addEventListener('mousedown', (evt) => {
+      if (this.swatchesMenuEl.hidden) return;
+      if (this.swatchesHeaderEl.contains(evt.target)) return;
+      this.swatchesMenuEl.hidden = true;
+      this.swatchesMenuBtn.classList.remove('is-open');
+    });
+    this.loadStandardSwatchesBtn.addEventListener('click', () => {
+      this.swatchesMenuEl.hidden = true;
+      this.swatchesMenuBtn.classList.remove('is-open');
+    });
+
+    this._renderSwatchCollections();
+    return panel;
+  }
+
+  _renderSwatchCollections() {
+    if (!this.swatchScrollEl) return;
+    this.swatchScrollEl.innerHTML = '';
+
+    this.swatchCollections.forEach((group, index) => {
+      const section = document.createElement('div');
+      section.className = 'compact-color-picker__presets-section';
+      if (group.open) section.classList.add('is-open');
+      if (index === this.selectedCollectionIndex) section.classList.add('is-selected');
+
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'compact-color-picker__presets-toggle';
+      toggle.setAttribute('aria-expanded', group.open ? 'true' : 'false');
+      toggle.innerHTML = `<span class="compact-color-picker__presets-title-row"><span class="compact-color-picker__presets-title">${group.title}</span>${group.id !== 'recent' ? '<span class="compact-color-picker__presets-rename-icon" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5a1.414 1.414 0 012 2L4.5 9.5 2 10.5l1-2.5L8.5 1.5z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' : ''}</span><span class="compact-color-picker__presets-chevron"></span>`;
+      if (group.id !== 'recent') {
+        toggle.draggable = true;
+        toggle.addEventListener('dragstart', (evt) => {
+          this.dragPayload = {
+            type: 'collection',
+            collectionIndex: index,
+          };
+          section.classList.add('is-dragging');
+          evt.dataTransfer.effectAllowed = 'move';
+          evt.dataTransfer.setData('text/plain', group.title);
+        });
+        toggle.addEventListener('dragend', () => {
+          section.classList.remove('is-dragging');
+          this.dragPayload = null;
+          this.removeCollectionBtn.classList.remove('is-drop-target');
+          this._clearCollectionDropIndicators();
+        });
+      }
+
+      const content = document.createElement('div');
+      content.className = 'compact-color-picker__presets-content';
+
+      const grid = document.createElement('div');
+      grid.className = 'compact-color-picker__presets-grid';
+      grid.dataset.collectionIndex = String(index);
+      grid.addEventListener('dragover', (evt) => {
+        if (!this.dragPayload) return;
+        if (this.dragPayload.type === 'collection') return; // handled at section level
+        evt.preventDefault();
+        evt.dataTransfer.dropEffect = this.dragPayload.type === 'current' ? 'copy' : 'move';
+        this._markDropTarget(grid, group.swatches.length);
+      });
+      grid.addEventListener('dragleave', (evt) => {
+        if (!grid.contains(evt.relatedTarget)) this._clearDropIndicators();
+      });
+      grid.addEventListener('drop', (evt) => {
+        if (!this.dragPayload) return;
+        if (this.dragPayload.type === 'collection') return;
+        evt.preventDefault();
+        this._handleSwatchDrop(index, group.swatches.length);
+      });
+
+      group.swatches.forEach((swatch) => {
+        const swatchBtn = document.createElement('button');
+        swatchBtn.type = 'button';
+        swatchBtn.className = 'compact-color-picker__preset-swatch';
+        swatchBtn.dataset.collectionIndex = String(index);
+        swatchBtn.dataset.swatchId = swatch.id;
+        swatchBtn.setAttribute('aria-label', swatch.name);
+        swatchBtn.title = swatch.name;
+        swatchBtn.style.background = swatch.hex;
+        swatchBtn.draggable = true;
+        if (this.selectedSwatchRef?.collectionIndex === index && this.selectedSwatchRef?.swatchId === swatch.id) {
+          swatchBtn.classList.add('is-selected');
+        }
+        swatchBtn.addEventListener('click', () => {
+          this.selectedCollectionIndex = index;
+          this.selectedSwatchRef = { collectionIndex: index, swatchId: swatch.id };
+          this.lastSelectionType = 'swatch';
+          this.setColor(swatch.hex, { commit: true });
+          this._syncRenderedSwatchSelection();
+        });
+        swatchBtn.addEventListener('dblclick', (evt) => {
+          evt.preventDefault();
+          evt.stopPropagation();
+          this.selectedCollectionIndex = index;
+          this.selectedSwatchRef = { collectionIndex: index, swatchId: swatch.id };
+          this.lastSelectionType = 'swatch';
+          this._openSwatchRename(index, swatch.id);
+        });
+        swatchBtn.addEventListener('dragstart', (evt) => {
+          this.dragPayload = {
+            type: 'swatch',
+            collectionIndex: index,
+            swatchId: swatch.id,
+          };
+          swatchBtn.classList.add('is-dragging');
+          evt.dataTransfer.effectAllowed = 'move';
+          evt.dataTransfer.setData('text/plain', swatch.hex);
+        });
+        swatchBtn.addEventListener('dragend', () => {
+          swatchBtn.classList.remove('is-dragging');
+          this.dragPayload = null;
+          this._clearDropIndicators();
+        });
+        swatchBtn.addEventListener('dragover', (evt) => {
+          if (!this.dragPayload) return;
+          if (this.dragPayload.type === 'collection') return;
+          evt.preventDefault();
+          evt.stopPropagation();
+          evt.dataTransfer.dropEffect = this.dragPayload.type === 'current' ? 'copy' : 'move';
+          const rect = swatchBtn.getBoundingClientRect();
+          const insertBefore = evt.clientX < rect.left + (rect.width / 2);
+          const baseIndex = group.swatches.findIndex(entry => entry.id === swatch.id);
+          this._markDropTarget(grid, baseIndex + (insertBefore ? 0 : 1));
+        });
+        swatchBtn.addEventListener('drop', (evt) => {
+          if (!this.dragPayload) return;
+          if (this.dragPayload.type === 'collection') return;
+          evt.preventDefault();
+          evt.stopPropagation();
+          const rect = swatchBtn.getBoundingClientRect();
+          const insertBefore = evt.clientX < rect.left + (rect.width / 2);
+          const baseIndex = group.swatches.findIndex(entry => entry.id === swatch.id);
+          this._handleSwatchDrop(index, baseIndex + (insertBefore ? 0 : 1));
+        });
+        grid.appendChild(swatchBtn);
+      });
+
+      content.appendChild(grid);
+      section.append(toggle, content);
+      this.swatchScrollEl.appendChild(section);
+
+      const setOpen = (open, animate = false) => {
+        group.open = open;
+        section.classList.toggle('is-open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        section.classList.toggle('is-static', !animate);
+
+        if (!animate) {
+          content.style.maxHeight = open ? 'none' : '0px';
+          return;
+        }
+
+        if (open) {
+          content.style.maxHeight = '0px';
+          requestAnimationFrame(() => {
+            content.style.maxHeight = `${content.scrollHeight}px`;
+          });
+        } else {
+          if (content.style.maxHeight === 'none') {
+            content.style.maxHeight = `${content.scrollHeight}px`;
+          }
+          requestAnimationFrame(() => {
+            content.style.maxHeight = '0px';
+          });
+        }
+      };
+
+      const startInlineRename = () => {
+        if (section.querySelector('.compact-color-picker__presets-rename-form')) return;
+        const titleSpan = toggle.querySelector('.compact-color-picker__presets-title');
+        if (!titleSpan) return;
+        const renameIcon = toggle.querySelector('.compact-color-picker__presets-rename-icon');
+        const oldName = group.title;
+
+        // Hide the title and rename icon — keeps toggle layout/chevron stable
+        titleSpan.style.visibility = 'hidden';
+        if (renameIcon) renameIcon.style.visibility = 'hidden';
+
+        const form = document.createElement('div');
+        form.className = 'compact-color-picker__presets-rename-form';
+
+        const field = document.createElement('div');
+        field.className = 'compact-color-picker__presets-rename-field';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = oldName;
+        input.className = 'compact-color-picker__presets-rename-input';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'compact-color-picker__presets-rename-clear';
+        clearBtn.tabIndex = -1;
+        clearBtn.setAttribute('aria-label', 'Clear');
+        clearBtn.innerHTML = '<svg width="6" height="6" viewBox="0 0 8 8" fill="none"><line x1="1" y1="1" x2="7" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="1" x2="1" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'compact-color-picker__presets-rename-confirm';
+        confirmBtn.setAttribute('aria-label', 'Confirm rename');
+        confirmBtn.innerHTML = '<svg width="11" height="8" viewBox="0 0 13 10" fill="none"><polyline points="1,5 5,9 12,1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+        field.append(input, clearBtn);
+        form.append(field, confirmBtn);
+
+        // Append to section (a plain div with position:relative), NOT to the
+        // toggle button — inputs inside <button> elements can't receive normal
+        // cursor-placement clicks in most browsers.
+        // Position the form to pixel-match the toggle's bounds.
+        section.appendChild(form);
+        const top = toggle.offsetTop + 2;
+        const height = toggle.offsetHeight - 4;
+        form.style.top = `${top}px`;
+        form.style.height = `${height}px`;
+
+        // Defer focus+select until after the dblclick's own mouseup fires,
+        // otherwise the browser clears the selection immediately.
+        setTimeout(() => { input.focus(); input.select(); }, 0);
+
+        let committed = false;
+        const restore = () => {
+          titleSpan.style.visibility = '';
+          if (renameIcon) renameIcon.style.visibility = '';
+          form.remove();
+        };
+        const commit = () => {
+          if (committed) return;
+          committed = true;
+          const newName = input.value.trim();
+          if (newName) {
+            group.title = newName;
+            this._renderSwatchCollections();
+          } else {
+            restore();
+          }
+        };
+        const cancel = () => {
+          if (committed) return;
+          committed = true;
+          restore();
+        };
+
+        input.addEventListener('blur', () => setTimeout(commit, 120));
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+        });
+        clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
+        clearBtn.addEventListener('click', () => { input.value = ''; input.focus(); });
+        confirmBtn.addEventListener('mousedown', (e) => e.preventDefault());
+        confirmBtn.addEventListener('click', () => commit());
+      };
+
+      toggle.addEventListener('click', (evt) => {
+        if (section.querySelector('.compact-color-picker__presets-rename-form')) return;
+        if (group.id !== 'recent' && evt.target.closest('.compact-color-picker__presets-rename-icon')) {
+          this.selectedCollectionIndex = index;
+          this.lastSelectionType = 'collection';
+          this.selectedSwatchRef = null;
+          this._syncRenderedSwatchSelection();
+          startInlineRename();
+          return;
+        }
+        this.selectedCollectionIndex = index;
+        this.lastSelectionType = 'collection';
+        this.selectedSwatchRef = null;
+        this._syncRenderedSwatchSelection();
+        setOpen(!group.open, true);
+      });
+
+      content.addEventListener('transitionend', () => {
+        if (group.open) {
+          content.style.maxHeight = 'none';
+        }
+      });
+
+      setOpen(group.open, false);
+
+      // Collection-level drag-over / drop for reordering collections
+      section.addEventListener('dragover', (evt) => {
+        if (!this.dragPayload || this.dragPayload.type !== 'collection') return;
+        if (this.dragPayload.collectionIndex === index) return;
+        evt.preventDefault();
+        evt.dataTransfer.dropEffect = 'move';
+        const rect = section.getBoundingClientRect();
+        const insertBefore = evt.clientY < rect.top + rect.height / 2;
+        this._clearCollectionDropIndicators();
+        section.classList.add(insertBefore ? 'is-collection-drop-before' : 'is-collection-drop-after');
+      });
+      section.addEventListener('dragleave', (evt) => {
+        if (this.dragPayload?.type !== 'collection') return;
+        if (!section.contains(evt.relatedTarget)) {
+          section.classList.remove('is-collection-drop-before', 'is-collection-drop-after');
+        }
+      });
+      section.addEventListener('drop', (evt) => {
+        if (!this.dragPayload || this.dragPayload.type !== 'collection') return;
+        evt.preventDefault();
+        const sourceIndex = this.dragPayload.collectionIndex;
+        const rect = section.getBoundingClientRect();
+        const insertBefore = evt.clientY < rect.top + rect.height / 2;
+        const rawTarget = insertBefore ? index : index + 1;
+        this._handleCollectionReorder(sourceIndex, rawTarget);
+      });
+    });
+
+    const selectedIsRecent = this.swatchCollections[this.selectedCollectionIndex]?.id === 'recent';
+    const cannotDelete = this.swatchCollections.length <= 1 ||
+      (this.lastSelectionType !== 'swatch' && selectedIsRecent);
+    if (this.removeCollectionBtn) this.removeCollectionBtn.disabled = cannotDelete;
+  }
+
+  _addSwatchCollection() {
+    if (!this.pendingNewCollection) {
+      this.pendingNewCollection = true;
+      this.pendingCollectionRenameIndex = null;
+      this.renamingSwatch = null;
+      this.swatchRenameInputEl.value = `Collection ${this.swatchCollections.length + 1}`;
+      this.swatchRenameInputEl.placeholder = 'Collection name...';
+      this.swatchRenameFormEl.hidden = false;
+      this.swatchRenameInputEl.focus();
+      this.swatchRenameInputEl.select();
+      return;
+    }
+
+    const nextIndex = this.swatchCollections.length + 1;
+    const anchors = ['#ffffff', '#d9d9d9', '#8c8c8c', '#000000', '#ff6b6b', '#4dabf7', '#51cf66', '#ffd43b'];
+    this.swatchCollections.forEach(entry => { entry.open = false; });
+    const nextTitle = this.swatchRenameInputEl.value.trim() || `Collection ${nextIndex}`;
+    this.swatchCollections.push({
+      id: `swatch-group-${Date.now()}`,
+      title: nextTitle,
+      open: true,
+      swatches: [],
+    });
+    this.selectedCollectionIndex = this.swatchCollections.length - 1;
+    this.lastSelectionType = 'collection';
+    this.selectedSwatchRef = null;
+    this.pendingNewCollection = false;
+    this._closeSwatchRename();
+    this._renderSwatchCollections();
+  }
+
+  _loadStandardSwatchCollections() {
+    const existing = this.swatchCollections.find(c => c.id === 'recent') || { id: 'recent', title: 'Recent', open: true, swatches: [] };
+    this.swatchCollections = [
+      existing,
+      ...COLOR_SWATCH_GROUPS.map((group, groupIndex) => ({
+        id: `swatch-group-${groupIndex + 1}`,
+        title: group.title,
+        open: false,
+        swatches: generateSwatchColors(group.anchors, 72).map((hex, swatchIndex) => ({
+          id: `swatch-${groupIndex + 1}-${swatchIndex + 1}`,
+          hex,
+          name: `${group.title} ${swatchIndex + 1}`,
+        })),
+      })),
+    ];
+    this.selectedCollectionIndex = 0;
+    this.selectedSwatchRef = null;
+    this.lastSelectionType = 'collection';
+    this.pendingNewCollection = false;
+    this._closeSwatchRename();
+    this._renderSwatchCollections();
+  }
+
+  _removeSelectedSwatchCollection(collectionIndex = this.selectedCollectionIndex) {
+    if (this.swatchCollections.length <= 1) return;
+    if (this.swatchCollections[collectionIndex]?.id === 'recent') return;
+    this.swatchCollections.splice(collectionIndex, 1);
+    this.selectedCollectionIndex = Math.max(0, Math.min(this.selectedCollectionIndex, this.swatchCollections.length - 1));
+    this.selectedSwatchRef = null;
+    this.lastSelectionType = 'collection';
+    this._closeSwatchRename();
+    this._renderSwatchCollections();
+  }
+
+  _removeSelectedSwatchTarget() {
+    if (this.lastSelectionType === 'swatch' && this.selectedSwatchRef) {
+      this._deleteSwatchByRef(this.selectedSwatchRef.collectionIndex, this.selectedSwatchRef.swatchId);
+      return;
+    }
+    this._removeSelectedSwatchCollection();
+  }
+
+  _openSwatchRename(collectionIndex, swatchId) {
+    const swatch = this.swatchCollections[collectionIndex]?.swatches.find(entry => entry.id === swatchId);
+    if (!swatch || !this.swatchRenameFormEl) return;
+    this.renamingSwatch = { collectionIndex, swatchId };
+    this.swatchRenameInputEl.value = swatch.name;
+    this.swatchRenameFormEl.hidden = false;
+    this.swatchRenameInputEl.focus();
+    this.swatchRenameInputEl.select();
+  }
+
+  _closeSwatchRename() {
+    this.renamingSwatch = null;
+    this.pendingCollectionRenameIndex = null;
+    if (this.pendingNewCollection) {
+      this.pendingNewCollection = false;
+    }
+    if (this.swatchRenameFormEl) this.swatchRenameFormEl.hidden = true;
+  }
+
+  _commitSwatchRename() {
+    if (this.pendingNewCollection) {
+      this._addSwatchCollection();
+      return;
+    }
+    if (this.pendingCollectionRenameIndex !== null) {
+      const nextName = this.swatchRenameInputEl.value.trim();
+      if (nextName) this.swatchCollections[this.pendingCollectionRenameIndex].title = nextName;
+      this._closeSwatchRename();
+      this._renderSwatchCollections();
+      return;
+    }
+    if (!this.renamingSwatch) return;
+    const { collectionIndex, swatchId } = this.renamingSwatch;
+    const swatch = this.swatchCollections[collectionIndex]?.swatches.find(entry => entry.id === swatchId);
+    const nextName = this.swatchRenameInputEl.value.trim();
+    if (swatch && nextName) swatch.name = nextName;
+    this._closeSwatchRename();
+    this._renderSwatchCollections();
+  }
+
+  _renameSelectedSwatchTarget() {
+    if (this.lastSelectionType === 'swatch' && this.selectedSwatchRef) {
+      this._openSwatchRename(this.selectedSwatchRef.collectionIndex, this.selectedSwatchRef.swatchId);
+      return;
+    }
+    if (this.swatchCollections[this.selectedCollectionIndex]?.id === 'recent') return;
+    this.pendingNewCollection = false;
+    this.pendingCollectionRenameIndex = this.selectedCollectionIndex;
+    this.renamingSwatch = null;
+    this.swatchRenameInputEl.value = this.swatchCollections[this.selectedCollectionIndex]?.title || '';
+    this.swatchRenameInputEl.placeholder = 'Collection name...';
+    this.swatchRenameFormEl.hidden = false;
+    this.swatchRenameInputEl.focus();
+    this.swatchRenameInputEl.select();
+  }
+
+  _deleteSwatchByRef(collectionIndex, swatchId) {
+    const collection = this.swatchCollections[collectionIndex];
+    if (!collection) return;
+    collection.swatches = collection.swatches.filter(entry => entry.id !== swatchId);
+    if (this.selectedSwatchRef?.collectionIndex === collectionIndex && this.selectedSwatchRef?.swatchId === swatchId) {
+      this.selectedSwatchRef = null;
+      this.lastSelectionType = 'collection';
+    }
+    this._renderSwatchCollections();
+  }
+
+  _addRecentColor(hex) {
+    const recentCollection = this.swatchCollections.find(c => c.id === 'recent');
+    if (!recentCollection) return;
+    const recentIdx = this.swatchCollections.indexOf(recentCollection);
+    const existingIndex = recentCollection.swatches.findIndex(s => s.hex === hex);
+    if (existingIndex >= 0) {
+      // Don't reorder when the click came from within the Recent collection itself
+      const fromRecent = this.lastSelectionType === 'swatch' && this.selectedSwatchRef?.collectionIndex === recentIdx;
+      if (!fromRecent) {
+        const [existing] = recentCollection.swatches.splice(existingIndex, 1);
+        recentCollection.swatches.unshift(existing);
+      }
+    } else {
+      recentCollection.swatches.unshift({ id: `recent-${Date.now()}`, hex, name: hex });
+      if (recentCollection.swatches.length > 24) recentCollection.swatches.length = 24;
+    }
+    this._refreshRecentGrid(recentIdx);
+  }
+
+  // Lightweight re-render for the Recent collection grid only.
+  // Avoids a full _renderSwatchCollections() which rebuilds 500+ DOM nodes.
+  _refreshRecentGrid(recentIdx) {
+    if (!this.swatchScrollEl) return;
+    const recentCollection = this.swatchCollections[recentIdx];
+    if (!recentCollection) return;
+
+    // Find the rendered section by position in the scroll container
+    const sections = this.swatchScrollEl.querySelectorAll('.compact-color-picker__presets-section');
+    const section = sections[recentIdx];
+    if (!section) { this._renderSwatchCollections(); return; }
+
+    const grid = section.querySelector('.compact-color-picker__presets-grid');
+    if (!grid) { this._renderSwatchCollections(); return; }
+
+    // Rebuild only the Recent grid's swatch buttons
+    grid.innerHTML = '';
+    recentCollection.swatches.forEach((swatch) => {
+      const swatchBtn = document.createElement('button');
+      swatchBtn.type = 'button';
+      swatchBtn.className = 'compact-color-picker__preset-swatch';
+      swatchBtn.dataset.collectionIndex = String(recentIdx);
+      swatchBtn.dataset.swatchId = swatch.id;
+      swatchBtn.setAttribute('aria-label', swatch.name);
+      swatchBtn.title = swatch.name;
+      swatchBtn.style.background = swatch.hex;
+      swatchBtn.draggable = true;
+      if (this.selectedSwatchRef?.collectionIndex === recentIdx && this.selectedSwatchRef?.swatchId === swatch.id) {
+        swatchBtn.classList.add('is-selected');
+      }
+      swatchBtn.addEventListener('click', () => {
+        this.selectedCollectionIndex = recentIdx;
+        this.selectedSwatchRef = { collectionIndex: recentIdx, swatchId: swatch.id };
+        this.lastSelectionType = 'swatch';
+        this.setColor(swatch.hex, { commit: true });
+        this._syncRenderedSwatchSelection();
+      });
+      swatchBtn.addEventListener('dblclick', (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        this.selectedCollectionIndex = recentIdx;
+        this.selectedSwatchRef = { collectionIndex: recentIdx, swatchId: swatch.id };
+        this.lastSelectionType = 'swatch';
+        this._openSwatchRename(recentIdx, swatch.id);
+      });
+      swatchBtn.addEventListener('dragstart', (evt) => {
+        this.dragPayload = { type: 'swatch', collectionIndex: recentIdx, swatchId: swatch.id };
+        swatchBtn.classList.add('is-dragging');
+        evt.dataTransfer.effectAllowed = 'move';
+        evt.dataTransfer.setData('text/plain', swatch.hex);
+      });
+      swatchBtn.addEventListener('dragend', () => {
+        swatchBtn.classList.remove('is-dragging');
+        this.dragPayload = null;
+        this._clearDropIndicators();
+      });
+      swatchBtn.addEventListener('dragover', (evt) => {
+        if (!this.dragPayload || this.dragPayload.type === 'collection') return;
+        evt.preventDefault();
+        evt.stopPropagation();
+        evt.dataTransfer.dropEffect = this.dragPayload.type === 'current' ? 'copy' : 'move';
+        const rect = swatchBtn.getBoundingClientRect();
+        const insertBefore = evt.clientX < rect.left + (rect.width / 2);
+        const baseIndex = recentCollection.swatches.findIndex(e => e.id === swatch.id);
+        this._markDropTarget(grid, baseIndex + (insertBefore ? 0 : 1));
+      });
+      swatchBtn.addEventListener('drop', (evt) => {
+        if (!this.dragPayload || this.dragPayload.type === 'collection') return;
+        evt.preventDefault();
+        evt.stopPropagation();
+        const rect = swatchBtn.getBoundingClientRect();
+        const insertBefore = evt.clientX < rect.left + (rect.width / 2);
+        const baseIndex = recentCollection.swatches.findIndex(e => e.id === swatch.id);
+        this._handleSwatchDrop(recentIdx, baseIndex + (insertBefore ? 0 : 1));
+      });
+      grid.appendChild(swatchBtn);
+    });
+
+    // Keep the content height consistent (open/closed state is unchanged)
+    if (recentCollection.open) {
+      const content = section.querySelector('.compact-color-picker__presets-content');
+      if (content) content.style.maxHeight = 'none';
+    }
+  }
+
+  _clearCollectionDropIndicators() {
+    this.swatchScrollEl?.querySelectorAll('.compact-color-picker__presets-section').forEach(s => {
+      s.classList.remove('is-collection-drop-before', 'is-collection-drop-after');
+    });
+  }
+
+  _handleCollectionReorder(sourceIndex, targetIndex) {
+    if (sourceIndex < 1) return; // Recent can't be moved
+    targetIndex = Math.max(1, targetIndex); // Never before Recent
+    if (sourceIndex === targetIndex || sourceIndex + 1 === targetIndex) {
+      this._clearCollectionDropIndicators();
+      return;
+    }
+    const [moved] = this.swatchCollections.splice(sourceIndex, 1);
+    let insertAt = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+    insertAt = Math.max(1, insertAt);
+    this.swatchCollections.splice(insertAt, 0, moved);
+    this.selectedCollectionIndex = insertAt;
+    this.lastSelectionType = 'collection';
+    this.dragPayload = null;
+    this._clearCollectionDropIndicators();
+    this._renderSwatchCollections();
+  }
+
+  _markDropTarget(grid, index) {
+    this._clearDropIndicators();
+    grid.classList.add('is-drop-target');
+    const children = [...grid.children];
+    const markerIndex = Math.max(0, Math.min(index, children.length));
+    if (markerIndex < children.length) {
+      children[markerIndex].classList.add('is-drop-before');
+    } else if (children.length > 0) {
+      children[children.length - 1].classList.add('is-drop-after');
+    } else {
+      grid.classList.add('is-drop-empty');
+    }
+  }
+
+  _clearDropIndicators() {
+    this.swatchScrollEl?.querySelectorAll('.compact-color-picker__presets-grid').forEach(grid => {
+      grid.classList.remove('is-drop-target', 'is-drop-empty');
+    });
+    this.swatchScrollEl?.querySelectorAll('.compact-color-picker__preset-swatch').forEach(swatch => {
+      swatch.classList.remove('is-drop-before', 'is-drop-after');
+    });
+  }
+
+  _syncRenderedSwatchSelection() {
+    this.swatchScrollEl?.querySelectorAll('.compact-color-picker__presets-section').forEach((section, index) => {
+      section.classList.toggle('is-selected', index === this.selectedCollectionIndex);
+    });
+    this.swatchScrollEl?.querySelectorAll('.compact-color-picker__preset-swatch').forEach(swatchEl => {
+      const collectionIndex = Number(swatchEl.dataset.collectionIndex);
+      const swatchId = swatchEl.dataset.swatchId;
+      const selected = this.selectedSwatchRef
+        && collectionIndex === this.selectedSwatchRef.collectionIndex
+        && swatchId === this.selectedSwatchRef.swatchId;
+      swatchEl.classList.toggle('is-selected', !!selected);
+    });
+  }
+
+  _handleSwatchDrop(targetCollectionIndex, targetIndex) {
+    if (!this.dragPayload) return;
+    const targetCollection = this.swatchCollections[targetCollectionIndex];
+    if (!targetCollection) return;
+
+    if (this.dragPayload.type === 'current') {
+      targetCollection.swatches.splice(targetIndex, 0, {
+        id: `swatch-current-${Date.now()}`,
+        hex: this.dragPayload.hex,
+        name: this.dragPayload.name,
+      });
+    } else if (this.dragPayload.type === 'swatch') {
+      const sourceCollection = this.swatchCollections[this.dragPayload.collectionIndex];
+      if (!sourceCollection) return;
+      const sourceIndex = sourceCollection.swatches.findIndex(entry => entry.id === this.dragPayload.swatchId);
+      if (sourceIndex < 0) return;
+      const [moved] = sourceCollection.swatches.splice(sourceIndex, 1);
+      if (!moved) return;
+
+      let insertIndex = targetIndex;
+      if (sourceCollection === targetCollection && sourceIndex < targetIndex) {
+        insertIndex -= 1;
+      }
+      targetCollection.swatches.splice(Math.max(0, insertIndex), 0, moved);
+    }
+
+    this.dragPayload = null;
+    this._clearDropIndicators();
+    this._renderSwatchCollections();
+  }
+
+  _configureCanvasResolution() {
+    const panelWidth = this.panelEl.clientWidth || 252;
+    const innerWidth = Math.max(180, panelWidth - 20);
+    this.canvasEl.style.width = `${innerWidth}px`;
+    this.canvasEl.style.height = `${innerWidth}px`;
+    this.sliderEl.style.width = `${innerWidth}px`;
+    this.sliderEl.style.height = `${COLOR_SLIDER_HEIGHT}px`;
+
+    this.canvasEl.width = Math.round(innerWidth * this.renderScale);
+    this.canvasEl.height = Math.round(innerWidth * this.renderScale);
+    this.sliderEl.width = Math.round(innerWidth * this.renderScale);
+    this.sliderEl.height = Math.round(COLOR_SLIDER_HEIGHT * this.renderScale);
+  }
+
+  _makeModeButton(label, mode) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'compact-color-picker__mode-btn';
+    button.dataset.mode = mode;
+    button.textContent = label;
+    button.addEventListener('click', () => this.setMode(mode));
+    return button;
+  }
+
+  _buildFieldGroup(title, labels, min, max, step, keys) {
+    const group = document.createElement('div');
+    group.className = 'compact-color-picker__group';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'compact-color-picker__group-title';
+    titleEl.textContent = title;
+    group.appendChild(titleEl);
+
+    const rows = {};
+    labels.forEach((label, index) => {
+      const row = document.createElement('label');
+      row.className = 'compact-color-picker__field';
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'compact-color-picker__field-label';
+      labelEl.textContent = label;
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.inputMode = 'decimal';
+      input.className = 'value-input compact-color-picker__field-input';
+      input.min = Array.isArray(min) ? min[index] : min;
+      input.max = Array.isArray(max) ? max[index] : max;
+      input.step = Array.isArray(step) ? step[index] : step;
+      input.dataset.channel = keys[index];
+
+      row.append(labelEl, input);
+      group.appendChild(row);
+      this.wrapInput?.(input);
+      rows[keys[index]] = input;
+    });
+
+    return { group, rows };
+  }
+
+  _bindLauncher() {
+    if (!this.pickerEl) return;
+    this.pickerEl.type = 'button';
+    this.pickerEl.value = '';
+    this.pickerEl.textContent = '';
+    this.pickerEl.removeAttribute('value');
+    this.pickerEl.setAttribute('aria-label', 'Open color picker');
+    this.pickerEl.classList.add('colorPicker--launcher');
+    this.pickerEl.addEventListener('click', (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      this.isOpen ? this.close() : this.open();
+    });
+    if (this.swatchEl && this.swatchEl !== this.pickerEl) {
+      this.swatchEl.addEventListener('click', (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        this.isOpen ? this.close() : this.open();
+      });
+    }
+  }
+
+  _bindPanelEvents() {
+    this.previewHexEl.addEventListener('change', () => {
+      const normalized = this._normalizeHex(this.previewHexEl.value);
+      if (normalized) this.setColor(normalized, { commit: true });
+      else this.previewHexEl.value = this.state.hex;
+    });
+
+    this.copyHexBtn?.addEventListener('click', () => {
+      navigator.clipboard?.writeText(this.state.hex);
+    });
+    this.previewSwatchEl.addEventListener('dragstart', (evt) => {
+      this.dragPayload = {
+        type: 'current',
+        hex: this.state.hex,
+        name: 'Current Color',
+      };
+      this.previewSwatchEl.classList.add('is-dragging');
+      evt.dataTransfer.effectAllowed = 'copy';
+      evt.dataTransfer.setData('text/plain', this.state.hex);
+    });
+    this.previewSwatchEl.addEventListener('dragend', () => {
+      this.previewSwatchEl.classList.remove('is-dragging');
+      this.dragPayload = null;
+      this._clearDropIndicators?.();
+    });
+
+    this._bindGroupInputs(this.rgbInputs.rows, 'rgb');
+    this._bindGroupInputs(this.hsvInputs.rows, 'hsv');
+    this._bindGroupInputs(this.cmykInputs.rows, 'cmyk');
+    this._bindCanvasDrag(this.canvasEl, 'canvas');
+    this._bindCanvasDrag(this.sliderEl, 'slider');
+
+    document.addEventListener('mousedown', (evt) => {
+      if (!this.isOpen) return;
+      if (this.panelEl.contains(evt.target) || this.pickerEl.contains(evt.target)) return;
+      this.close();
+    });
+
+    document.addEventListener('keydown', (evt) => {
+      if (this.isOpen && evt.key === 'Escape') this.close();
+    });
+
+    window.addEventListener('resize', () => this.isOpen && this._positionPanel());
+    window.addEventListener('scroll', () => this.isOpen && this._positionPanel(), true);
+  }
+
+  _bindGroupInputs(rows, mode) {
+    Object.values(rows).forEach(input => {
+      input.addEventListener('input', () => this._applyFieldValues(mode, false));
+      input.addEventListener('change', () => this._applyFieldValues(mode, true));
+    });
+  }
+
+  _applyFieldValues(mode, commit) {
+    if (mode === 'rgb') {
+      this._setStateFromRgb({
+        r: clamp(parseFloat(this.rgbInputs.rows.r.value) || 0, 0, 255),
+        g: clamp(parseFloat(this.rgbInputs.rows.g.value) || 0, 0, 255),
+        b: clamp(parseFloat(this.rgbInputs.rows.b.value) || 0, 0, 255),
+      }, { commit });
+      return;
+    }
+
+    if (mode === 'hsv') {
+      this._setStateFromHsv({
+        h: clamp(parseFloat(this.hsvInputs.rows.h.value) || 0, 0, 360),
+        s: clamp(parseFloat(this.hsvInputs.rows.s.value) || 0, 0, 100),
+        v: clamp(parseFloat(this.hsvInputs.rows.v.value) || 0, 0, 100),
+      }, { commit });
+      return;
+    }
+
+    this._setStateFromRgb(cmykToRgb({
+      c: clamp(parseFloat(this.cmykInputs.rows.c.value) || 0, 0, 100),
+      m: clamp(parseFloat(this.cmykInputs.rows.m.value) || 0, 0, 100),
+      y: clamp(parseFloat(this.cmykInputs.rows.y.value) || 0, 0, 100),
+      k: clamp(parseFloat(this.cmykInputs.rows.k.value) || 0, 0, 100),
+    }), { commit });
+  }
+
+  _bindCanvasDrag(element, target) {
+    element.addEventListener('pointerdown', (evt) => {
+      evt.preventDefault();
+      this.dragTarget = target;
+      this.isDragging = true;
+      element.setPointerCapture(evt.pointerId);
+      this._handlePointer(evt, target, false);
+    });
+
+    element.addEventListener('pointermove', (evt) => {
+      if (this.isDragging && this.dragTarget === target) this._handlePointer(evt, target, false);
+    });
+
+    element.addEventListener('pointerup', (evt) => {
+      if (!this.isDragging || this.dragTarget !== target) return;
+      this._handlePointer(evt, target, true);
+      this.isDragging = false;
+      this.dragTarget = null;
+      element.releasePointerCapture(evt.pointerId);
+    });
+  }
+
+  _handlePointer(evt, target, commit) {
+    const pos = pointerPosition(evt, target === 'canvas' ? this.canvasEl : this.sliderEl);
+    const hsv = { ...this.state.hsv };
+
+    if (target === 'canvas') {
+      if (this.mode === 'square') {
+        hsv.s = (pos.x / pos.width) * 100;
+        hsv.v = (1 - pos.y / pos.height) * 100;
+      } else {
+        const cx = pos.width / 2;
+        const cy = pos.height / 2;
+        const dx = pos.x - cx;
+        const dy = pos.y - cy;
+        const radius = Math.min(pos.width, pos.height) / 2;
+        const distance = clamp(Math.sqrt(dx * dx + dy * dy), 0, radius);
+        hsv.h = ((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360;
+        hsv.s = (distance / radius) * 100;
+      }
+    } else if (this.mode === 'square') {
+      hsv.h = (pos.x / pos.width) * 360;
+    } else {
+      hsv.v = (pos.x / pos.width) * 100;
+    }
+
+    this._setStateFromHsv(hsv, { commit });
+  }
+
+  _normalizeHex(value) {
+    const normalized = String(value || '').trim();
+    const withHash = normalized.startsWith('#') ? normalized : `#${normalized}`;
+    return /^#[0-9a-fA-F]{6}$/.test(withHash) ? withHash.toLowerCase() : null;
+  }
+
+  open() {
+    if (CompactColorPicker.active && CompactColorPicker.active !== this) CompactColorPicker.active.close();
+    CompactColorPicker.active = this;
+    this.isOpen = true;
+    this.panelEl.hidden = false;
+    this._configureCanvasResolution();
+    this._positionPanel();
+    this.render();
+  }
+
+  close() {
+    if (CompactColorPicker.active === this) CompactColorPicker.active = null;
+    this.isOpen = false;
+    this.panelEl.hidden = true;
+  }
+
+  setMode(mode) {
+    this.mode = mode;
+    this.squareModeBtn.classList.toggle('is-active', mode === 'square');
+    this.circleModeBtn.classList.toggle('is-active', mode === 'circle');
+    this.canvasEl.classList.toggle('is-round', mode === 'circle');
+    this.render();
+  }
+
+  setColor(hex, options = {}) {
+    const normalized = this._normalizeHex(hex);
+    if (!normalized) return;
+    const rgb = hexToRgb(normalized);
+    if (rgb) this._setStateFromRgb(rgb, options);
+  }
+
+  _setStateFromRgb(rgb, { emit = true, commit = false } = {}) {
+    const normalizedRgb = {
+      r: clamp(Math.round(rgb.r), 0, 255),
+      g: clamp(Math.round(rgb.g), 0, 255),
+      b: clamp(Math.round(rgb.b), 0, 255),
+    };
+    this.state.rgb = normalizedRgb;
+    this.state.hex = rgbToHex(normalizedRgb);
+    this.state.hsv = rgbToHsv(normalizedRgb);
+    this.state.cmyk = rgbToCmyk(normalizedRgb);
+    this._syncUI(emit, commit);
+  }
+
+  _setStateFromHsv(hsv, { emit = true, commit = false } = {}) {
+    this.state.hsv = {
+      h: clamp(hsv.h, 0, 360),
+      s: clamp(hsv.s, 0, 100),
+      v: clamp(hsv.v, 0, 100),
+    };
+    this.state.rgb = hsvToRgb(this.state.hsv);
+    this.state.hex = rgbToHex(this.state.rgb);
+    this.state.cmyk = rgbToCmyk(this.state.rgb);
+    this._syncUI(emit, commit);
+  }
+
+  _syncUI(emit, commit) {
+    const { hex, rgb, hsv, cmyk } = this.state;
+    this.pickerEl.value = '';
+    this.pickerEl.textContent = '';
+    this.pickerEl.removeAttribute('value');
+    this.pickerEl.style.setProperty('--picker-color', hex);
+    this.hexEl.value = hex;
+    if (this.swatchEl) this.swatchEl.style.background = hex;
+    this.previewSwatchEl.style.background = hex;
+    this.previewHexEl.value = hex;
+
+    this.rgbInputs.rows.r.value = Math.round(rgb.r);
+    this.rgbInputs.rows.g.value = Math.round(rgb.g);
+    this.rgbInputs.rows.b.value = Math.round(rgb.b);
+    this.hsvInputs.rows.h.value = Math.round(hsv.h);
+    this.hsvInputs.rows.s.value = Math.round(hsv.s);
+    this.hsvInputs.rows.v.value = Math.round(hsv.v);
+    this.cmykInputs.rows.c.value = Math.round(cmyk.c);
+    this.cmykInputs.rows.m.value = Math.round(cmyk.m);
+    this.cmykInputs.rows.y.value = Math.round(cmyk.y);
+    this.cmykInputs.rows.k.value = Math.round(cmyk.k);
+
+    this.render();
+    if (emit) this.onLiveChange?.(hex);
+    if (commit) {
+      this.onCommitChange?.(hex);
+      this._addRecentColor(hex);
+    }
+  }
+
+  _positionPanel() {
+    const anchorEl = this.swatchEl || this.pickerEl;
+    const rect = anchorEl.getBoundingClientRect();
+    const panelWidth = this.panelEl.offsetWidth || 252;
+    const panelHeight = this.panelEl.offsetHeight || 362;
+    let left = rect.right - panelWidth;
+    let top = rect.bottom + 8;
+
+    if (left + panelWidth > window.innerWidth - 8) left = window.innerWidth - panelWidth - 8;
+    if (top + panelHeight > window.innerHeight - 8) top = rect.top - panelHeight - 8;
+    if (top < 8) top = 8;
+    if (left < 8) left = 8;
+
+    this.panelEl.style.left = `${Math.round(left)}px`;
+    this.panelEl.style.top = `${Math.round(top)}px`;
+  }
+
+  render() {
+    const ctx = this.canvasEl.getContext('2d');
+    const sliderCtx = this.sliderEl.getContext('2d');
+    const { hsv } = this.state;
+    if (!ctx || !sliderCtx) return;
+    ctx.imageSmoothingEnabled = true;
+    sliderCtx.imageSmoothingEnabled = true;
+    ctx.clearRect(0, 0, this.canvasEl.width, this.canvasEl.height);
+    sliderCtx.clearRect(0, 0, this.sliderEl.width, this.sliderEl.height);
+
+    if (this.mode === 'square') {
+      this._drawSquare(ctx, hsv);
+      this._drawHueSlider(sliderCtx);
+      this.sliderLabelEl.textContent = 'Hue';
+    } else {
+      this._drawWheel(ctx, hsv);
+      this._drawValueSlider(sliderCtx, hsv);
+      this.sliderLabelEl.textContent = 'Brightness';
+    }
+  }
+
+  _drawSquare(ctx, hsv) {
+    const { width, height } = this.canvasEl;
+    ctx.fillStyle = `hsl(${hsv.h}, 100%, 50%)`;
+    ctx.fillRect(0, 0, width, height);
+
+    const whiteGradient = ctx.createLinearGradient(0, 0, width, 0);
+    whiteGradient.addColorStop(0, '#fff');
+    whiteGradient.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = whiteGradient;
+    ctx.fillRect(0, 0, width, height);
+
+    const blackGradient = ctx.createLinearGradient(0, 0, 0, height);
+    blackGradient.addColorStop(0, 'rgba(0,0,0,0)');
+    blackGradient.addColorStop(1, '#000');
+    ctx.fillStyle = blackGradient;
+    ctx.fillRect(0, 0, width, height);
+
+    const x = (hsv.s / 100) * width;
+    const y = height - (hsv.v / 100) * height;
+    this._drawCrosshair(ctx, x, y);
+  }
+
+  _drawWheel(ctx, hsv) {
+    const { width, height } = this.canvasEl;
+    const image = ctx.createImageData(width, height);
+    // Firefox can show a faint clipped gap when the wheel stops exactly at the
+    // masked circle edge, so we intentionally overdraw a little past the clip.
+    const cx = (width - 1) / 2;
+    const cy = (height - 1) / 2;
+    const radius = (Math.min(width, height) / 2) + (this.renderScale * 2);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const index = (y * width + x) * 4;
+        if (distance > radius) {
+          image.data[index + 3] = 0;
+          continue;
+        }
+        const saturation = (distance / radius) * 100;
+        const hue = ((Math.atan2(dy, dx) / TWO_PI) * 360 + 360) % 360;
+        const rgb = hsvToRgb({ h: hue, s: saturation, v: hsv.v });
+        image.data[index] = rgb.r;
+        image.data[index + 1] = rgb.g;
+        image.data[index + 2] = rgb.b;
+        image.data[index + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(image, 0, 0);
+    const angle = (hsv.h / 180) * Math.PI;
+    const distance = (hsv.s / 100) * radius;
+    this._drawCrosshair(ctx, cx + Math.cos(angle) * distance, cy + Math.sin(angle) * distance);
+  }
+
+  _drawHueSlider(ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, this.sliderEl.width, 0);
+    [
+      [0, '#ff0000'],
+      [1 / 6, '#ffff00'],
+      [2 / 6, '#00ff00'],
+      [3 / 6, '#00ffff'],
+      [4 / 6, '#0000ff'],
+      [5 / 6, '#ff00ff'],
+      [1, '#ff0000'],
+    ].forEach(([stop, color]) => gradient.addColorStop(stop, color));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, this.sliderEl.width, this.sliderEl.height);
+    this._drawSliderMarker(ctx, (this.state.hsv.h / 360) * this.sliderEl.width);
+  }
+
+  _drawValueSlider(ctx, hsv) {
+    const gradient = ctx.createLinearGradient(0, 0, this.sliderEl.width, 0);
+    gradient.addColorStop(0, '#000');
+    gradient.addColorStop(1, rgbToHex(hsvToRgb({ h: hsv.h, s: hsv.s, v: 100 })));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, this.sliderEl.width, this.sliderEl.height);
+    this._drawSliderMarker(ctx, (hsv.v / 100) * this.sliderEl.width);
+  }
+
+  _drawSliderMarker(ctx, x) {
+    const scale = this.renderScale;
+    ctx.save();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2 * scale;
+    ctx.beginPath();
+    ctx.moveTo(x, 1 * scale);
+    ctx.lineTo(x, this.sliderEl.height - (1 * scale));
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  _drawCrosshair(ctx, x, y) {
+    const scale = this.renderScale;
+    ctx.save();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2 * scale;
+    ctx.beginPath();
+    ctx.arc(x, y, 6 * scale, 0, TWO_PI);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 1 * scale;
+    ctx.beginPath();
+    ctx.arc(x, y, 8 * scale, 0, TWO_PI);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 // ── Reusable custom styled dropdown with optional thumbnail support ──────────
 export class CustomSelect {
   constructor(container) {
@@ -222,6 +1733,7 @@ export class ControlsManager {
   constructor(callbacks) {
     this.callbacks = callbacks;
     this.elements = {};
+    this.colorPickers = new Map();
     this.initialize();
   }
 
@@ -365,8 +1877,9 @@ export class ControlsManager {
       log(`⚠️ Missing UI elements: ${missing.join(', ')}`);
     }
 
-    this.setupEventListeners();
     this.initColorSwatches();
+    this.enhanceValueInputs();
+    this.setupEventListeners();
     this._setupChannelPickers();
     this.initMaterialSections();
     this.initGridSettings();
@@ -392,19 +1905,23 @@ export class ControlsManager {
     ];
     pairs.forEach(([pickerKey, swatchKey, hexKey]) => {
       const picker = this.elements[pickerKey];
-      const swatch = this.elements[swatchKey];
+      const swatch = this.elements[swatchKey] || this._ensureColorSwatch(picker, swatchKey);
       const hex = this.elements[hexKey];
       if (picker && swatch) {
         swatch.style.backgroundColor = picker.value;
-        swatch.style.width = '16px';
-        swatch.style.height = '16px';
-        swatch.style.display = 'inline-block';
-        swatch.style.borderRadius = '3px';
-        swatch.style.border = '1px solid #555';
-        swatch.style.marginRight = '4px';
       }
       if (hex && picker) hex.value = picker.value;
     });
+  }
+
+  _ensureColorSwatch(picker, swatchKey) {
+    if (!picker) return null;
+    const field = picker.parentElement?.querySelector('.color-field');
+    if (!field) return null;
+
+    field.insertBefore(picker, field.firstChild);
+    this.elements[swatchKey] = picker;
+    return picker;
   }
 
   initMaterialSections() {
@@ -438,20 +1955,87 @@ export class ControlsManager {
     this.linkSliderInput(el.gridSubsSlider,       el.gridSubsInput,    (v) => this.callbacks.onGridChange?.('subdivisions', Math.max(0, Math.round(v))));
   }
 
+  enhanceValueInputs() {
+    document.querySelectorAll('.value-input[type="number"]').forEach(input => this.wrapValueInput(input));
+  }
+
+  wrapValueInput(input) {
+    if (!input || input.dataset.hasSpinner === 'true') return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'value-input-wrap';
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+
+    const arrows = document.createElement('div');
+    arrows.className = 'value-input-arrows';
+
+    const incBtn = document.createElement('button');
+    incBtn.type = 'button';
+    incBtn.className = 'value-input-arrow';
+    incBtn.innerHTML = '<svg viewBox="0 0 8 6" aria-hidden="true"><path d="M1 5L4 1L7 5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    const decBtn = document.createElement('button');
+    decBtn.type = 'button';
+    decBtn.className = 'value-input-arrow';
+    decBtn.innerHTML = '<svg viewBox="0 0 8 6" aria-hidden="true"><path d="M1 1L4 5L7 1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    const nudge = (direction) => {
+      const current = parseFloat(input.value || '0') || 0;
+      const step = parseFloat(input.step || '1') || 1;
+      const min = input.min !== '' ? parseFloat(input.min) : -Infinity;
+      const max = input.max !== '' ? parseFloat(input.max) : Infinity;
+      const next = clamp(current + (direction * step), min, max);
+      input.value = Number.isInteger(step) ? String(Math.round(next)) : String(Number(next.toFixed(4)));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.focus({ preventScroll: true });
+    };
+
+    incBtn.addEventListener('click', () => nudge(1));
+    decBtn.addEventListener('click', () => nudge(-1));
+
+    arrows.append(incBtn, decBtn);
+    wrapper.appendChild(arrows);
+    input.dataset.hasSpinner = 'true';
+  }
+
   _bindMaterialSection(toggleEl, contentEl, openByDefault) {
     if (!toggleEl || !contentEl) return;
     const sectionEl = toggleEl.closest('.material-section');
-    const setExpanded = (expanded) => {
+    const setExpanded = (expanded, immediate = false) => {
       toggleEl.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       if (sectionEl) sectionEl.classList.toggle('is-open', expanded);
-      contentEl.style.maxHeight = expanded ? `${contentEl.scrollHeight}px` : '0px';
+      if (expanded) {
+        if (immediate) {
+          contentEl.style.maxHeight = 'none';
+        } else {
+          contentEl.style.maxHeight = `${contentEl.scrollHeight}px`;
+        }
+      } else if (immediate) {
+        contentEl.style.maxHeight = '0px';
+      } else {
+        if (contentEl.style.maxHeight === 'none') {
+          contentEl.style.maxHeight = `${contentEl.scrollHeight}px`;
+        }
+        requestAnimationFrame(() => { contentEl.style.maxHeight = '0px'; });
+      }
     };
 
-    setExpanded(openByDefault);
-    requestAnimationFrame(() => setExpanded(openByDefault));
+    setExpanded(openByDefault, true);
+    requestAnimationFrame(() => {
+      if (toggleEl.getAttribute('aria-expanded') === 'true') {
+        contentEl.style.maxHeight = 'none';
+      }
+    });
+    contentEl.addEventListener('transitionend', () => {
+      if (toggleEl.getAttribute('aria-expanded') === 'true') {
+        contentEl.style.maxHeight = 'none';
+      }
+    });
     window.addEventListener('resize', () => {
       if (toggleEl.getAttribute('aria-expanded') === 'true') {
-        contentEl.style.maxHeight = `${contentEl.scrollHeight}px`;
+        contentEl.style.maxHeight = 'none';
       }
     });
     toggleEl.addEventListener('click', () => {
@@ -479,24 +2063,40 @@ export class ControlsManager {
 
   // ─── Helper: sync color picker ↔ hex input + swatch ─────────
   linkColorPicker(pickerEl, hexEl, swatchEl, callback) {
-    const sync = (hex) => {
-      if (pickerEl) pickerEl.value = hex;
-      if (hexEl) hexEl.value = hex;
+    if (!pickerEl || !hexEl) return;
+
+    const sync = (hex, commit = false) => {
+      pickerEl.value = '';
+      pickerEl.textContent = '';
+      pickerEl.removeAttribute('value');
+      pickerEl.style.setProperty('--picker-color', hex);
+      hexEl.value = hex;
       if (swatchEl) swatchEl.style.backgroundColor = hex;
-      if (callback) callback(hex);
+      callback?.(hex);
+      if (commit) pickerEl.dispatchEvent(new Event('change', { bubbles: true }));
     };
-    if (pickerEl) {
-      pickerEl.addEventListener('input', () => sync(pickerEl.value));
-    }
-    if (hexEl) {
-      hexEl.addEventListener('change', () => {
-        const raw = hexEl.value.trim();
-        const normalized = raw.startsWith('#') ? raw : '#' + raw;
-        if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
-          sync(normalized);
-        }
-      });
-    }
+
+    const control = new CompactColorPicker({
+      pickerEl,
+      hexEl,
+      swatchEl,
+      wrapInput: (input) => this.wrapValueInput(input),
+      onLiveChange: (hex) => sync(hex, false),
+      onCommitChange: (hex) => sync(hex, true),
+    });
+
+    this.colorPickers.set(pickerEl.id, control);
+    pickerEl._compactColorPicker = control;
+
+    hexEl.addEventListener('change', () => {
+      const raw = hexEl.value.trim();
+      const normalized = raw.startsWith('#') ? raw : `#${raw}`;
+      if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+        control.setColor(normalized, { commit: true });
+      } else {
+        hexEl.value = pickerEl.value;
+      }
+    });
   }
 
   setupEventListeners() {
@@ -1004,9 +2604,13 @@ export class ControlsManager {
     };
     const setColor = (picker, hex, swatch, color) => {
       const hexStr = '#' + color.getHexString();
-      if (picker) picker.value = hexStr;
-      if (hex) hex.value = hexStr;
-      if (swatch) swatch.style.backgroundColor = hexStr;
+      if (picker?._compactColorPicker) {
+        picker._compactColorPicker.setColor(hexStr, { emit: false });
+      } else {
+        if (picker) picker.value = hexStr;
+        if (hex) hex.value = hexStr;
+        if (swatch) swatch.style.backgroundColor = hexStr;
+      }
     };
 
     setColor(el.basecolorPicker, el.basecolorHex, el.basecolorSwatch, material.color);
