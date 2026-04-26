@@ -9,7 +9,9 @@
   <script>
     window.__SUPABASE_URL__      = 'https://zrrvjedvxkvjcmmywucy.supabase.co';
     window.__SUPABASE_ANON_KEY__ = 'sb_publishable_H3p7vYsRAdxV0_08JDRINg_1SZzbhwy';
-    window.__API_BASE__          = 'http://localhost:8080';
+    window.__API_BASE__          = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      ? 'http://localhost:8080'
+      : 'https://renderdeck-xb46.onrender.com';
   </script>
 </head>
 <body class="projects-page">
