@@ -25,6 +25,8 @@ export class PropManager {
     this.transformControls = null;
     this.transformMode = 'translate';
     this.snapEnabled = false;
+    this._vertexSnapEnabled = false;
+    this._vertexCache = [];
     this.collisionEnabled = false;
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
@@ -71,6 +73,10 @@ export class PropManager {
 
     this.transformControls.addEventListener('objectChange', () => {
       if (this.selectedProp) {
+        if (this._vertexSnapEnabled && this.transformMode === 'translate') {
+          const snapped = this._snapToNearestVertex(this.selectedProp.object3D.position);
+          if (snapped) this.selectedProp.object3D.position.copy(snapped);
+        }
         this._updatePropTransform(this.selectedProp);
       }
       this._outlineDirty = true;
@@ -361,6 +367,7 @@ export class PropManager {
     this._addOutline(prop);
     this.transformControls.attach(prop.object3D);
     if (this._tcHelper) this._tcHelper.visible = this._editModeEnabled;
+    if (this._vertexSnapEnabled) this._buildVertexCache();
 
     this._updatePropsList();
     this.log(`Selected: ${prop.displayName}`);
@@ -660,6 +667,44 @@ export class PropManager {
       this.transformControls.setRotationSnap(null);
       this.transformControls.setScaleSnap(null);
     }
+  }
+
+  setVertexSnapEnabled(enabled) {
+    this._vertexSnapEnabled = enabled;
+    if (enabled) this._buildVertexCache();
+  }
+
+  _buildVertexCache() {
+    this._vertexCache = [];
+    const MAX_VERTS = 2000;
+    const excluded = this.selectedProp?.object3D ?? null;
+    const sources = [this.mainModel, ...this.props.map(p => p.object3D)].filter(Boolean);
+    const tempVec = new THREE.Vector3();
+
+    for (const root of sources) {
+      if (root === excluded) continue;
+      root.traverse(child => {
+        if (this._vertexCache.length >= MAX_VERTS) return;
+        if (!child.isMesh || !child.geometry) return;
+        const pos = child.geometry.attributes.position;
+        if (!pos) return;
+        const step = Math.max(1, Math.floor(pos.count / Math.ceil(MAX_VERTS / sources.length)));
+        for (let i = 0; i < pos.count && this._vertexCache.length < MAX_VERTS; i += step) {
+          tempVec.fromBufferAttribute(pos, i);
+          this._vertexCache.push(child.localToWorld(tempVec.clone()));
+        }
+      });
+    }
+  }
+
+  _snapToNearestVertex(position, threshold = 0.5) {
+    let nearest = null;
+    let nearestDistSq = threshold * threshold;
+    for (const v of this._vertexCache) {
+      const dSq = position.distanceToSquared(v);
+      if (dSq < nearestDistSq) { nearestDistSq = dSq; nearest = v; }
+    }
+    return nearest;
   }
 
   setEditMode(enabled) {

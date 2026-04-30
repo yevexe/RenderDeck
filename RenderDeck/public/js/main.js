@@ -1588,9 +1588,7 @@ const controls = new ControlsManager({
     // Grid size input is in display units (cm or in); convert to Three.js units (1 unit = 1 cm)
     tfGridCfg[field] = (field === 'size' && measureUnit === 'in') ? value * 2.54 : value;
     rebuildGrid();
-    if (tfSnapOn) {
-      propManager.setSnapEnabled(true, gridSnapStep());
-    }
+    if (tfSnapOn) applySnapState();
   },
 
   onModelChange: (name) => {
@@ -2582,8 +2580,10 @@ let gridSubHelper = null;   // dashed subdivision lines
 let axesHelper    = null;
 
 // Grid toolbar state (shared between setupTransformToolbar and Controls callbacks)
-let tfGridOn  = false;
-let tfSnapOn  = false;
+let tfGridOn     = false;
+let tfSnapOn     = false;
+let tfSnapGrid   = true;
+let tfSnapVertex = false;
 const tfGridCfg = { size: 10, divisions: 10, subdivisions: 5 };
 let measureUnit = 'cm'; // 'cm' | 'in'  — 1 Three.js unit = 1 cm
 
@@ -2591,6 +2591,11 @@ function gridSnapStep() {
   const { size, divisions, subdivisions } = tfGridCfg;
   const totalDivs = subdivisions > 0 ? divisions * subdivisions : divisions;
   return size / totalDivs;
+}
+
+function applySnapState() {
+  propManager.setSnapEnabled(tfSnapOn && tfSnapGrid, gridSnapStep());
+  propManager.setVertexSnapEnabled(tfSnapOn && tfSnapVertex);
 }
 
 function rebuildGrid() {
@@ -3113,20 +3118,72 @@ function setupTransformToolbar() {
   const btnSnap      = document.getElementById('tf-snap');
   const modeBtns     = [btnTranslate, btnRotate, btnScale];
 
+  const tsPanel  = document.getElementById('transform-sensitivity-panel');
+  const tsModes  = ['translate', 'rotate', 'scale'];
+  tsModes.forEach(m => {
+    const slider = document.getElementById(`ts-${m}-slider`);
+    const label  = document.getElementById(`ts-${m}-value`);
+    slider?.addEventListener('input', () => {
+      if (label) label.value = parseFloat(slider.value).toFixed(2);
+    });
+  });
+
+  function closeToolbarPopups() {
+    document.querySelectorAll('.toolbar-popup').forEach(p => { p.style.display = 'none'; });
+    document.getElementById('tf-grid-settings')?.classList.remove('tf-btn--active');
+    document.getElementById('tf-dim-settings')?.classList.remove('tf-btn--active');
+  }
+
   function activateMode(mode, btn) {
     modeBtns.forEach(b => b?.classList.remove('tf-btn--active'));
     btn?.classList.add('tf-btn--active');
     propManager.setTransformMode(mode);
+
+    closeToolbarPopups();
+    if (tsPanel) {
+      tsPanel.style.display = '';
+      tsModes.forEach(m => {
+        const el = document.getElementById(`ts-${m}`);
+        if (el) el.style.display = m === mode ? '' : 'none';
+      });
+    }
   }
 
   btnTranslate?.addEventListener('click', () => activateMode('translate', btnTranslate));
   btnRotate?.addEventListener('click',    () => activateMode('rotate',    btnRotate));
   btnScale?.addEventListener('click',     () => activateMode('scale',     btnScale));
 
+  const btnSnapSettings = document.getElementById('tf-snap-settings');
+  const snapPopup       = document.getElementById('snap-settings-popup');
+  const snapGridBtn     = document.getElementById('snap-grid-btn');
+  const snapVertexBtn   = document.getElementById('snap-vertex-btn');
+
   btnSnap?.addEventListener('click', () => {
     tfSnapOn = !tfSnapOn;
-    propManager.setSnapEnabled(tfSnapOn, gridSnapStep());
     btnSnap.classList.toggle('tf-btn--active', tfSnapOn);
+    applySnapState();
+  });
+
+  btnSnapSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = snapPopup?.style.display !== 'none';
+    closeToolbarPopups();
+    if (!open) {
+      if (snapPopup) snapPopup.style.display = 'block';
+      btnSnapSettings.classList.add('tf-btn--active');
+    }
+  });
+
+  snapGridBtn?.addEventListener('click', () => {
+    tfSnapGrid = !tfSnapGrid;
+    snapGridBtn.classList.toggle('unit-btn--active', tfSnapGrid);
+    applySnapState();
+  });
+
+  snapVertexBtn?.addEventListener('click', () => {
+    tfSnapVertex = !tfSnapVertex;
+    snapVertexBtn.classList.toggle('unit-btn--active', tfSnapVertex);
+    applySnapState();
   });
 
   // ── Edit-mode lock ──────────────────────────────────────────────
@@ -3184,8 +3241,11 @@ function setupTransformToolbar() {
   btnDimSettings?.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = dimPopup?.style.display !== 'none';
-    if (dimPopup) dimPopup.style.display = open ? 'none' : 'block';
-    btnDimSettings.classList.toggle('tf-btn--active', !open);
+    closeToolbarPopups();
+    if (!open) {
+      if (dimPopup) dimPopup.style.display = 'block';
+      btnDimSettings.classList.add('tf-btn--active');
+    }
   });
 
   document.addEventListener('click', (e) => {

@@ -2933,12 +2933,21 @@ export class ControlsManager {
     const el = this.elements;
     if (!el.gridSettingsBtn || !el.gridSettingsPopup) return;
 
+    function closeToolbarPopups() {
+      document.querySelectorAll('.toolbar-popup').forEach(p => { p.style.display = 'none'; });
+      document.getElementById('tf-grid-settings')?.classList.remove('tf-btn--active');
+      document.getElementById('tf-dim-settings')?.classList.remove('tf-btn--active');
+    }
+
     // Popup open / close
     el.gridSettingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const open = el.gridSettingsPopup.style.display !== 'none';
-      el.gridSettingsPopup.style.display = open ? 'none' : 'block';
-      el.gridSettingsBtn.classList.toggle('tf-btn--active', !open);
+      closeToolbarPopups();
+      if (!open) {
+        el.gridSettingsPopup.style.display = 'block';
+        el.gridSettingsBtn.classList.add('tf-btn--active');
+      }
     });
 
     document.addEventListener('click', (e) => {
