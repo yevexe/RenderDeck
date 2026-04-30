@@ -46,48 +46,55 @@
             <div id="transform-toolbar" class="transform-toolbar">
               <!-- Edit-mode lock: when active (green) transform gizmo is live; when grey gizmo is hidden -->
               <button id="tf-editmode" class="tf-btn tf-btn--active" title="Toggle Transform Edit Mode">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                 </svg>
               </button>
               <div class="tf-sep"></div>
               <button id="tf-translate" class="tf-btn tf-btn--active" title="Move (G)">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/>
                   <polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>
                   <line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>
                 </svg>
               </button>
               <button id="tf-rotate" class="tf-btn" title="Rotate (R)">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="23 4 23 10 17 10"/>
                   <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                 </svg>
               </button>
               <button id="tf-scale" class="tf-btn" title="Scale (S)">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
                   <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
                 </svg>
               </button>
               <div class="tf-sep"></div>
-              <button id="tf-snap" class="tf-btn" title="Toggle Grid Snap">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <button id="tf-snap" class="tf-btn" title="Toggle Snap">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M6 15A6 6 0 0 0 18 15"/>
                   <line x1="6" y1="15" x2="6" y2="3"/><line x1="18" y1="15" x2="18" y2="3"/>
                   <line x1="3" y1="6" x2="6" y2="6"/><line x1="18" y1="6" x2="21" y2="6"/>
                 </svg>
               </button>
+              <button id="tf-snap-settings" class="tf-btn" title="Snap Options">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="4" y1="6" x2="20" y2="6"/><circle cx="8" cy="6" r="2"/>
+                  <line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2"/>
+                  <line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2"/>
+                </svg>
+              </button>
               <div class="tf-sep"></div>
               <button id="tf-grid" class="tf-btn" title="Toggle Grid">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
                   <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
                 </svg>
               </button>
               <button id="tf-grid-settings" class="tf-btn" title="Grid Settings">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="4" y1="6" x2="20" y2="6"/><circle cx="8" cy="6" r="2"/>
                   <line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2"/>
                   <line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2"/>
@@ -95,7 +102,7 @@
               </button>
               <div class="tf-sep"></div>
               <button id="tf-dimensions" class="tf-btn tf-btn--active" title="Toggle Dimension Labels">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                   <line x1="3" y1="21" x2="21" y2="21"/>
                   <line x1="9" y1="21" x2="9" y2="9"/>
@@ -104,15 +111,20 @@
                 </svg>
               </button>
               <button id="tf-dim-settings" class="tf-btn" title="Dimension Label Settings">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="3"/>
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
                 </svg>
               </button>
             </div>
 
+            <div class="tf-history">
+              <button id="tf-undo" class="tf-btn tf-btn--text" title="Undo (Ctrl+Z)">↩</button>
+              <button id="tf-redo" class="tf-btn tf-btn--text" title="Redo (Ctrl+Shift+Z)">↪</button>
+            </div>
+
             <!-- Grid settings popup — shown/hidden by tf-grid-settings button -->
-            <div id="grid-settings-popup" class="grid-settings-popup" style="display:none;">
+            <div id="grid-settings-popup" class="grid-settings-popup toolbar-popup" style="display:none;">
               <!-- Unit toggle at top -->
               <p class="popup-section-label">Units</p>
               <div class="unit-toggle">
@@ -137,14 +149,52 @@
               </div>
             </div>
             <!-- Dimension label settings popup -->
-            <div id="dim-settings-popup" class="grid-settings-popup" style="display:none;">
+            <div id="dim-settings-popup" class="grid-settings-popup toolbar-popup" style="display:none;">
               <p class="popup-section-label">Label Style</p>
               <div class="unit-toggle">
                 <button id="dim-style-default" class="unit-btn unit-btn--active">Default</button>
                 <button id="dim-style-parallel" class="unit-btn">Parallel</button>
               </div>
             </div>
+
+            <!-- Snap options popup -->
+            <div id="snap-settings-popup" class="grid-settings-popup toolbar-popup" style="display:none;">
+              <p class="popup-section-label">Snap To</p>
+              <div class="snap-toggle-list">
+                <button id="snap-grid-btn" class="unit-btn unit-btn--active">Grid</button>
+                <button id="snap-vertex-btn" class="unit-btn">Vertices</button>
+              </div>
+            </div>
+
+            <!-- Transform sensitivity panel -->
+            <div id="transform-sensitivity-panel" class="transform-sensitivity-panel toolbar-popup" style="display:none;">
+              <div class="ts-mode" id="ts-translate" style="display:none;">
+                <p class="popup-section-label">Move</p>
+                <div class="ts-row">
+                  <span class="ts-row-label">Sensitivity</span>
+                  <input type="range" class="ts-slider" id="ts-translate-slider" min="0.05" max="3" step="0.05" value="1">
+                  <input type="number" class="ts-value-input" id="ts-translate-value" min="0.05" max="3" step="0.05" value="1.00" readonly>
+                </div>
+              </div>
+              <div class="ts-mode" id="ts-rotate" style="display:none;">
+                <p class="popup-section-label">Rotate</p>
+                <div class="ts-row">
+                  <span class="ts-row-label">Sensitivity</span>
+                  <input type="range" class="ts-slider" id="ts-rotate-slider" min="0.05" max="3" step="0.05" value="1">
+                  <input type="number" class="ts-value-input" id="ts-rotate-value" min="0.05" max="3" step="0.05" value="1.00" readonly>
+                </div>
+              </div>
+              <div class="ts-mode" id="ts-scale" style="display:none;">
+                <p class="popup-section-label">Scale</p>
+                <div class="ts-row">
+                  <span class="ts-row-label">Sensitivity</span>
+                  <input type="range" class="ts-slider" id="ts-scale-slider" min="0.05" max="3" step="0.05" value="1">
+                  <input type="number" class="ts-value-input" id="ts-scale-value" min="0.05" max="3" step="0.05" value="1.00" readonly>
+                </div>
+              </div>
+            </div>
           </div>
+
           <div class="editor-stage-content">
             <div id="scene-view-placeholder" class="scene-view-placeholder">
               <div id="loading-overlay" class="loading-overlay">
@@ -1541,7 +1591,34 @@
       }
       document.getElementById(settingName).style.display = 'block';
       evt.currentTarget.classList.add('active');
+
+      const toolbar = document.querySelector('.editor-stage-toolbar');
+      if (toolbar) {
+        toolbar.classList.remove('editor-stage-toolbar-scene', 'editor-stage-toolbar-design', 'editor-stage-toolbar-material');
+        if      (settingName === 'Setting1') toolbar.classList.add('editor-stage-toolbar-scene');
+        else if (settingName === 'Setting2') toolbar.classList.add('editor-stage-toolbar-design');
+        else if (settingName === 'Setting3') toolbar.classList.add('editor-stage-toolbar-material');
+      }
     }
+
+    (function () {
+      const toolbar = document.querySelector('.editor-stage-toolbar');
+      toolbar?.classList.add('editor-stage-toolbar-scene');
+
+      function undoTarget() {
+        if (toolbar?.classList.contains('editor-stage-toolbar-design'))  return document.getElementById('design-undo-btn');
+        if (toolbar?.classList.contains('editor-stage-toolbar-material')) return document.getElementById('mat-undo-btn');
+        return document.getElementById('scene-undo-btn');
+      }
+      function redoTarget() {
+        if (toolbar?.classList.contains('editor-stage-toolbar-design'))  return document.getElementById('design-redo-btn');
+        if (toolbar?.classList.contains('editor-stage-toolbar-material')) return document.getElementById('mat-redo-btn');
+        return document.getElementById('scene-redo-btn');
+      }
+
+      document.getElementById('tf-undo')?.addEventListener('click', () => undoTarget()?.click());
+      document.getElementById('tf-redo')?.addEventListener('click', () => redoTarget()?.click());
+    })();
   </script>
 
   <script type="module" src="js/main.js"></script>

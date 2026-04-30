@@ -325,9 +325,15 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 .editor-stage-toolbar {
   flex: 0 0 auto;
   display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   align-items: flex-start;
   position: relative; /* anchor for grid-settings-popup */
 }
+
+.editor-stage-toolbar-scene,
+.editor-stage-toolbar-design,
+.editor-stage-toolbar-material {}
 
 .editor-stage-content {
   flex: 1 1 auto;
@@ -3091,8 +3097,8 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 }
 
 .tf-btn {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3101,7 +3107,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
     linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.18) 120%),
     rgba(26, 26, 26, 0.88);
   border: 1px solid #444;
-  border-radius: 6px;
+  border-radius: 5px;
   color: #aaa;
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
@@ -3118,17 +3124,122 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 .tf-btn--active {
   background:
     linear-gradient(to bottom, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.22) 100%),
-    rgba(28, 68, 28, 0.92) !important;
-  border-color: #4CAF50 !important;
-  color: #4CAF50 !important;
+    rgba(8, 38, 68, 0.92) !important;
+  border-color: #2A9ED4 !important;
+  color: #4DA8CC !important;
 }
 
 .tf-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .tf-sep { height: 1px; background: #444; margin: 2px 0; }
+
+/* ── Transform sensitivity panel ────────────────────────────────── */
+.transform-sensitivity-panel {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 0;
+  z-index: 200;
+  width: max-content;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.snap-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ts-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.ts-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #d4d4d4;
+}
+
+.ts-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 90px;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.ts-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  background: #777;
+  border-radius: 2px;
+}
+
+.ts-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffff 0%, #e5e5e5 35%, #7a7a7a 100%);
+  border: none;
+  margin-top: -5.5px;
+  box-shadow: 0px 1px 1px rgba(0,0,0,0.6), inset 0 1px 1px rgba(255,255,255,0.35);
+  transition: transform 0.2s ease;
+}
+
+.ts-slider:active::-webkit-slider-thumb { transform: scale(1.12); }
+.ts-slider:focus { outline: none; }
+
+.ts-slider::-moz-range-track { height: 3px; background: #777; border-radius: 2px; }
+.ts-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffff 0%, #e5e5e5 35%, #7a7a7a 100%);
+  border: none;
+  box-shadow: 0px 1px 1px rgba(0,0,0,0.6);
+}
+
+.ts-value-input {
+  width: 56px;
+  box-sizing: border-box;
+  padding: 2px 5px;
+  background: #1a1a1a;
+  color: #fff;
+  border: 1px solid #444;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-value-input::-webkit-outer-spin-button,
+.ts-value-input::-webkit-inner-spin-button { -webkit-appearance: none; }
+.ts-value-input[type="number"] { appearance: textfield; }
+
+.tf-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tf-btn--text {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  font-size: 9px;
+}
 
 .hiddenToggleOn{
     display: none;
@@ -3161,7 +3272,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   left: calc(100% + 8px);
   top: 0;
   z-index: 200;
-  width: 260px;
+  width: max-content;
   background: #1e1e1e;
   border: 1px solid #444;
   border-radius: 6px;
