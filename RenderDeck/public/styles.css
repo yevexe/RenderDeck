@@ -458,7 +458,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   border: 1px solid #3a3a3a;
   padding: 5px 26px 5px 10px;
   cursor: pointer;
-  clip-path: polygon(0% 0%, calc(100% - 14px) 0%, 100% 100%, 0% 100%);
+  clip-path: none;
   color: #888;
   font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   text-align: left;
@@ -475,7 +475,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 .folder-tab h4 {
   margin: 0;
   color: inherit;
-  font-size: 19px;
+  font-size: 12px;
   font-weight: 500;
   text-shadow: none;
 }
@@ -500,6 +500,274 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   position: relative;
   z-index: 0;
 }
+
+.compact-color-picker .folder-tabs-bar {
+  --tab-slant: 16px;
+}
+
+.compact-color-picker .folder-tab {
+  clip-path: polygon(0 0, calc(100% - var(--tab-slant)) 0, 100% 100%, 0 100%);
+  padding-right: calc(var(--tab-slant) + 10px);
+  background: transparent;
+  border: none;
+  filter: none;
+  overflow: visible;
+}
+
+/* Border layer — fills the full trapezoid shape at border colour */
+.compact-color-picker .folder-tab::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #3a3a3a;
+  z-index: -2;
+}
+
+/* Fill layer — 1px inset on every side, including the slant */
+.compact-color-picker .folder-tab::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 100%), #1a1a1a;
+  clip-path: polygon(
+    1px 1px,
+    calc(100% - var(--tab-slant) - 1px) 1px,
+    calc(100% - 1px) calc(100% - 1px),
+    1px calc(100% - 1px)
+  );
+  z-index: -1;
+}
+
+/* Active: lighter border colour, fill matches panel, bottom edge open */
+.compact-color-picker .folder-tab.active {
+  filter: none;
+}
+
+.compact-color-picker .folder-tab.active::before {
+  background: #4a4a4a;
+}
+
+.compact-color-picker .folder-tab.active::after {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 100%), #161616;
+  clip-path: polygon(
+    1px 1px,
+    calc(100% - var(--tab-slant) - 1px) 1px,
+    calc(100% - 1px) 100%,
+    1px 100%
+  );
+}
+
+.compact-color-picker .folder-tab + .folder-tab {
+  margin-left: calc(-1 * var(--tab-slant) + 6px);
+}
+
+#obj-props-tabs-bar {
+  --tab-slant: 16px;
+}
+
+#obj-props-tabs-bar .folder-tab h4 {
+  font-size: 19px;
+  font-weight: 500;
+}
+
+#obj-props-tabs-bar .folder-tab {
+  clip-path: polygon(0 0, calc(100% - var(--tab-slant)) 0, 100% 100%, 0 100%);
+  padding-right: calc(var(--tab-slant) + 10px);
+  background: transparent;
+  border: none;
+  filter: none;
+  overflow: visible;
+}
+
+#obj-props-tabs-bar .folder-tab::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #3a3a3a;
+  z-index: -2;
+}
+
+#obj-props-tabs-bar .folder-tab::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 100%), #1a1a1a;
+  clip-path: polygon(
+    1px 1px,
+    calc(100% - var(--tab-slant) - 1px) 1px,
+    calc(100% - 1px) calc(100% - 1px),
+    1px calc(100% - 1px)
+  );
+  z-index: -1;
+}
+
+#obj-props-tabs-bar .folder-tab.active::before {
+  background: #4a4a4a;
+}
+
+#obj-props-tabs-bar .folder-tab.active::after {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 100%), #161616;
+  clip-path: polygon(
+    1px 1px,
+    calc(100% - var(--tab-slant) - 1px) 1px,
+    calc(100% - 1px) 100%,
+    1px 100%
+  );
+}
+
+#obj-props-tabs-bar .folder-tab + .folder-tab {
+  margin-left: calc(-1 * var(--tab-slant) + 6px);
+}
+
+.compact-color-picker__extractor-preview {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  background: #101010;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.compact-color-picker__extractor-preview.drag-over {
+  border-color: #6a9fd8;
+  background: #0e1e2e;
+  box-shadow: inset 0 0 0 2px rgba(106, 159, 216, 0.25);
+}
+
+.compact-color-picker__extractor-img {
+  width: 100%;
+  height: 100%;
+  max-height: 160px;
+  object-fit: contain;
+  border-radius: 7px;
+  display: block;
+}
+
+.compact-color-picker__extractor-hint {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #999;
+}
+
+.compact-color-picker__extractor-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.compact-color-picker__extractor-upload-btn {
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.compact-color-picker__extractor-upload-btn:hover {
+  background: #373737;
+}
+
+.compact-color-picker__extractor-accepted {
+  color: #a7a7a7;
+  font-size: 11px;
+  line-height: 1.4;
+  flex: 1 1 100%;
+}
+
+.compact-color-picker__extractor-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.compact-color-picker__extractor-action {
+  border-radius: 4px;
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.compact-color-picker__extractor-action:hover {
+  background: #2c2c2c;
+}
+
+.compact-color-picker__extractor-results {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compact-color-picker__extractor-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+}
+
+.compact-color-picker__extractor-swatch {
+  aspect-ratio: 1 / 1;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.08);
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+  padding: 0;
+}
+
+.compact-color-picker__extractor-swatch:hover {
+  transform: scale(1.12);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  z-index: 1;
+  position: relative;
+}
+
+.compact-color-picker__extractor-add-all {
+  width: 100%;
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.compact-color-picker__extractor-limit-msg {
+  margin: 0;
+  padding: 6px 10px;
+  background: #1a1a2a;
+  border: 1px solid #3a3a6b;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant: small-caps;
+  color: #5a5a99;
+  line-height: 1.4;
+}
+
+.compact-color-picker__extractor-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.compact-color-picker__extractor-sliders .control-row .slider {
+  width: 88px;
+  flex: 0 0 88px;
+}
+
+.compact-color-picker__extractor-sliders .control-label {
+  white-space: nowrap;
+}
+
 
 /* Subtle text depth for content inside tabs (not buttons) */
 .tabcontent h2,
@@ -1464,7 +1732,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 .compact-color-picker{
   position: fixed;
   z-index: 1200;
-  width: 252px;
+  width: 270px;
   max-width: calc(100vw - 16px);
   padding: 10px;
   box-sizing: border-box;
@@ -1475,10 +1743,10 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 }
 
 .compact-color-picker__section-title{
-  margin-top: 8px;
+  margin-top: 0px;
   margin-bottom: 6px;
   color: #d7d7d7;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.01em;
   font-kerning: normal;
@@ -1536,7 +1804,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   border-radius: 6px;
   background: #171717;
   box-shadow: 0 10px 24px rgba(0,0,0,0.32);
-  z-index: 2;
+  z-index: 9999;
 }
 
 .compact-color-picker__menu-item{
@@ -1637,6 +1905,51 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   color: #fff;
 }
 
+.compact-color-picker__harmony-section {
+  margin-bottom: 8px;
+}
+
+.compact-color-picker__harmony-title {
+  margin: 0;
+  color: #d7d7d7;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.compact-color-picker__harmony-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.compact-color-picker__harmony-btn {
+  min-height: 22px;
+  border: 1px solid #343434;
+  border-radius: 5px;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.06) 0%, rgba(0,0,0,0.18) 100%), #1a1a1a;
+  color: #c8c8c8;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-color-picker__harmony-btn.is-active {
+  border-color: #888;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.22) 100%), #2a2a2a;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.35);
+  color: #fff;
+}
+
+.compact-color-picker__harmony-btn:hover:not(.is-active) {
+  color: #fff;
+  border-color: #555;
+}
+
 .compact-color-picker__canvas-wrap{
   display: flex;
   flex-direction: column;
@@ -1654,7 +1967,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 
 .compact-color-picker__canvas{
   height: auto;
-  border-radius: 10px;
+  border-radius: 4px;
 }
 
 .compact-color-picker__canvas.is-round{
@@ -1850,7 +2163,6 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   align-items: center;
   gap: 4px;
   min-width: 0;
-  overflow: hidden;
 }
 
 .compact-color-picker__presets-title{
@@ -1858,8 +2170,12 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   letter-spacing: 0.01em;
   font-kerning: normal;
   font-weight: 800;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
   padding-left: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .compact-color-picker__presets-rename-icon{
@@ -2003,12 +2319,12 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 
 /* Collection drag-to-reorder drop indicators */
 .compact-color-picker__presets-section.is-collection-drop-before{
-  box-shadow: 0 -2px 0 0 #5b9bd5;
+  box-shadow: 0 -1px 0 0 #ffffff;
   z-index: 3;
 }
 
 .compact-color-picker__presets-section.is-collection-drop-after{
-  box-shadow: 0 2px 0 0 #5b9bd5;
+  box-shadow: 0 1px 0 0 #ffffff;
   z-index: 3;
 }
 
@@ -2016,7 +2332,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 0;
-  padding: 0 6px 6px;
+  padding: 0;
 }
 
 .compact-color-picker__presets-grid:empty{
@@ -2053,6 +2369,15 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 
 .compact-color-picker__preset-swatch.is-drop-after{
   box-shadow: inset -5px 0 0 #ffffff;
+}
+
+.compact-color-picker__preset-swatch.is-multi-selected {
+  box-shadow: inset 0 0 0 2px #000000;
+}
+
+.compact-color-picker__presets-section.is-multi-selected .compact-color-picker__presets-toggle {
+  background: linear-gradient(to bottom, rgba(80,130,220,0.10) 0%, rgba(80,130,220,0.05) 100%), #141414;
+  color: #7aabee;
 }
 
 .compact-color-picker__swatch-rename{
