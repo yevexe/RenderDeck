@@ -2333,7 +2333,7 @@ export class CompactColorPicker {
       if (!moved) break;
     }
 
-    return centroids.map(c => rgbToHex({ r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b) }));
+    return this._deduplicateColors(centroids.map(c => rgbToHex({ r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b) })), count);
   }
 
   _extractMedianCut(pixels, count, noise = 0) {
@@ -2511,7 +2511,7 @@ export class CompactColorPicker {
       if (!moved) break;
     }
 
-    return centroids.map(lab => rgbToHex(labToRgb(lab)));
+    return this._deduplicateColors(centroids.map(lab => rgbToHex(labToRgb(lab))), count);
   }
 }
 
