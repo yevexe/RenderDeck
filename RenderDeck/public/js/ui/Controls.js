@@ -133,6 +133,31 @@ function cmykToRgb({ c, m, y, k }) {
   };
 }
 
+function rgbToLab({ r, g, b }) {
+  const lin = c => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lr = lin(r), lg = lin(g), lb = lin(b);
+  const x = lr * 0.4124564 + lg * 0.3575761 + lb * 0.1804375;
+  const y = lr * 0.2126729 + lg * 0.7151522 + lb * 0.0721750;
+  const z = lr * 0.0193339 + lg * 0.1191920 + lb * 0.9503041;
+  const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  const fy = f(y); // Y white-point = 1, no normalisation needed
+  return { L: 116 * fy - 16, a: 500 * (f(x / 0.95047) - fy), b: 200 * (fy - f(z / 1.08883)) };
+}
+
+function labToRgb({ L, a, b }) {
+  const fy = (L + 16) / 116;
+  const f3 = t => t > 0.206897 ? t * t * t : (t - 16 / 116) / 7.787;
+  const x = f3(a / 500 + fy) * 0.95047;
+  const y = f3(fy);
+  const z = f3(fy - b / 200) * 1.08883;
+  const delin = c => { c = Math.max(0, Math.min(1, c)); return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055; };
+  return {
+    r: Math.round(delin(x * 3.2404542 - y * 1.5371385 - z * 0.4985314) * 255),
+    g: Math.round(delin(-x * 0.9692660 + y * 1.8760108 + z * 0.0415560) * 255),
+    b: Math.round(delin(x * 0.0556434 - y * 0.2040259 + z * 1.0572252) * 255),
+  };
+}
+
 function pointerPosition(evt, element) {
   const rect = element.getBoundingClientRect();
   return {
@@ -179,6 +204,8 @@ export class CompactColorPicker {
     this.onLiveChange = onLiveChange;
     this.onCommitChange = onCommitChange;
     this.mode = 'square';
+    this.harmonyMode = 'none';
+    this._harmonyHit = false;
     this.isOpen = false;
     this.isDragging = false;
     this.dragTarget = null;
@@ -186,11 +213,15 @@ export class CompactColorPicker {
     this.selectedCollectionIndex = 0;
     this.selectedSwatchRef = null;
     this.lastSelectionType = 'collection';
+    this.selectedSwatchKeys = new Set();
+    this.selectedCollectionIds = new Set();
+    this._anchorSwatchInfo = null;
+    this._anchorCollectionId = null;
     this.pendingNewCollection = false;
     this.pendingCollectionRenameIndex = null;
     this.dragPayload = null;
     this.skipPresetAnimationOnce = false;
-    this.swatchCollections = [
+    const defaultCollections = [
       { id: 'recent', title: 'Recent', open: true, swatches: [] },
       ...COLOR_SWATCH_GROUPS.map((group, groupIndex) => ({
         id: `swatch-group-${groupIndex + 1}`,
@@ -203,6 +234,7 @@ export class CompactColorPicker {
         })),
       })),
     ];
+    this.swatchCollections = this._loadCollections() ?? defaultCollections;
     this.state = {
       hex: '#ffffff',
       rgb: { r: 255, g: 255, b: 255 },
@@ -211,7 +243,7 @@ export class CompactColorPicker {
     };
 
     this._build();
-    this.setMode('square');
+    this.setMode('circle');
     this._bindLauncher();
     this.setColor(this.hexEl?.value || this.pickerEl?.value || '#ffffff', { emit: false });
   }
@@ -222,14 +254,21 @@ export class CompactColorPicker {
     this.panelEl.hidden = true;
 
     this.titleEl = document.createElement('div');
-    this.titleEl.className = 'compact-color-picker__section-title';
-    this.titleEl.textContent = 'Color Picker';
+    this.titleEl.className = 'folder-tabs-bar';
+    this.titleEl.innerHTML = `
+      <button class="folder-tab active" data-target="color-picker-panel">
+        <h4>Color Picker</h4>
+      </button>
+      <button class="folder-tab" data-target="color-extractor-panel">
+        <h4>Color Extractor</h4>
+      </button>
+    `;
 
     this.toggleRowEl = document.createElement('div');
     this.toggleRowEl.className = 'compact-color-picker__mode';
-    this.squareModeBtn = this._makeModeButton('Square', 'square');
     this.circleModeBtn = this._makeModeButton('Circle', 'circle');
-    this.toggleRowEl.append(this.squareModeBtn, this.circleModeBtn);
+    this.squareModeBtn = this._makeModeButton('Square', 'square');
+    this.toggleRowEl.append(this.circleModeBtn, this.squareModeBtn);
 
     this.canvasWrapEl = document.createElement('div');
     this.canvasWrapEl.className = 'compact-color-picker__canvas-wrap';
@@ -302,10 +341,198 @@ export class CompactColorPicker {
 
     this.swatchPanelEl = this._buildPresetSwatches();
 
-    this.panelEl.append(this.titleEl, this.toggleRowEl, this.canvasWrapEl, this.fieldsEl, this.footerEl, this.swatchesHeaderEl, this.swatchPanelEl);
+    this.harmonySectionEl = document.createElement('div');
+    this.harmonySectionEl.className = 'compact-color-picker__harmony-section';
+
+    const harmonyTitle = document.createElement('div');
+    harmonyTitle.className = 'compact-color-picker__harmony-title';
+    harmonyTitle.textContent = 'Harmony';
+
+    this.harmonyRowEl = document.createElement('div');
+    this.harmonyRowEl.className = 'compact-color-picker__harmony-row';
+    this.harmonyBtns = {};
+    [
+      { label: 'None',        mode: 'none' },
+      { label: 'Complement',  mode: 'complementary' },
+      { label: 'Split Comp',  mode: 'split-comp' },
+      { label: 'Analogous',   mode: 'analogous' },
+      { label: 'Triadic',     mode: 'triadic' },
+      { label: 'Tetradic',    mode: 'tetradic' },
+      { label: 'Square',      mode: 'square' },
+    ].forEach(({ label, mode }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'compact-color-picker__harmony-btn';
+      btn.textContent = label;
+      btn.dataset.harmonyMode = mode;
+      if (mode === 'none') btn.classList.add('is-active');
+      this.harmonyBtns[mode] = btn;
+      this.harmonyRowEl.appendChild(btn);
+    });
+    this.harmonySectionEl.append(harmonyTitle, this.harmonyRowEl);
+
+    this.colorPickerPanel = document.createElement('div');
+    this.colorPickerPanel.className = 'folder-panel';
+    this.colorPickerPanel.id = 'color-picker-panel';
+    this.colorPickerPanel.append(this.toggleRowEl, this.canvasWrapEl, this.harmonySectionEl, this.fieldsEl);
+
+    this.extractorPanel = document.createElement('div');
+    this.extractorPanel.className = 'folder-panel';
+    this.extractorPanel.id = 'color-extractor-panel';
+    this.extractorPanel.style.display = 'none';
+
+    this.extractorPreviewEl = document.createElement('div');
+    this.extractorPreviewEl.className = 'compact-color-picker__extractor-preview';
+    this.extractorPreviewImgEl = document.createElement('img');
+    this.extractorPreviewImgEl.className = 'compact-color-picker__extractor-img';
+    this.extractorPreviewImgEl.alt = '';
+    this.extractorPreviewImgEl.style.display = 'none';
+    this.extractorPreviewTextEl = document.createElement('p');
+    this.extractorPreviewTextEl.className = 'compact-color-picker__extractor-hint';
+    this.extractorPreviewTextEl.textContent = 'Upload an image to preview and extract colors';
+    this.extractorPreviewEl.append(this.extractorPreviewImgEl, this.extractorPreviewTextEl);
+
+    this.extractorFileInput = document.createElement('input');
+    this.extractorFileInput.type = 'file';
+    this.extractorFileInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
+    this.extractorFileInput.style.display = 'none';
+
+    this.extractorControlsEl = document.createElement('div');
+    this.extractorControlsEl.className = 'compact-color-picker__extractor-controls';
+
+    this.uploadImageBtn = document.createElement('button');
+    this.uploadImageBtn.type = 'button';
+    this.uploadImageBtn.className = 'compact-color-picker__extractor-upload-btn button-medium';
+    this.uploadImageBtn.textContent = 'Upload Image';
+    this.uploadImageBtn.addEventListener('click', () => this.extractorFileInput.click());
+
+    this.extractorAcceptedEl = document.createElement('div');
+    this.extractorAcceptedEl.className = 'compact-color-picker__extractor-accepted';
+    this.extractorAcceptedEl.textContent = 'Supports JPG, PNG, WebP, GIF';
+
+    this.extractorControlsEl.append(this.uploadImageBtn, this.extractorAcceptedEl);
+
+    this.extractorSlidersEl = document.createElement('div');
+    this.extractorSlidersEl.className = 'compact-color-picker__extractor-sliders';
+
+    const countRow = document.createElement('div');
+    countRow.className = 'control-row';
+    const countName = document.createElement('p');
+    countName.className = 'control-label';
+    countName.textContent = 'Swatches';
+    this.extractorCountSlider = document.createElement('input');
+    this.extractorCountSlider.type = 'range';
+    this.extractorCountSlider.className = 'slider';
+    this.extractorCountSlider.min = '1';
+    this.extractorCountSlider.max = '32';
+    this.extractorCountSlider.value = '24';
+    this.extractorCountField = document.createElement('input');
+    this.extractorCountField.type = 'number';
+    this.extractorCountField.className = 'value-input';
+    this.extractorCountField.min = '1';
+    this.extractorCountField.max = '32';
+    this.extractorCountField.value = '24';
+    this.extractorCountSlider.addEventListener('input', () => {
+      this.extractorCountField.value = this.extractorCountSlider.value;
+    });
+    this.extractorCountField.addEventListener('input', () => {
+      const v = clamp(parseInt(this.extractorCountField.value, 10) || 1, 1, 32);
+      this.extractorCountSlider.value = v;
+    });
+    this.extractorCountField.addEventListener('blur', () => {
+      const v = clamp(parseInt(this.extractorCountField.value, 10) || 1, 1, 32);
+      this.extractorCountField.value = v;
+      this.extractorCountSlider.value = v;
+    });
+    countRow.append(countName, this.extractorCountSlider, this.extractorCountField);
+
+    const noiseRow = document.createElement('div');
+    noiseRow.className = 'control-row';
+    const noiseName = document.createElement('p');
+    noiseName.className = 'control-label';
+    noiseName.textContent = 'Noise %';
+    this.extractorNoiseSlider = document.createElement('input');
+    this.extractorNoiseSlider.type = 'range';
+    this.extractorNoiseSlider.className = 'slider';
+    this.extractorNoiseSlider.min = '0';
+    this.extractorNoiseSlider.max = '100';
+    this.extractorNoiseSlider.value = '0';
+    this.extractorNoiseField = document.createElement('input');
+    this.extractorNoiseField.type = 'number';
+    this.extractorNoiseField.className = 'value-input';
+    this.extractorNoiseField.min = '0';
+    this.extractorNoiseField.max = '100';
+    this.extractorNoiseField.step = '0.01';
+    this.extractorNoiseField.value = '0.00';
+    this.extractorNoiseSlider.addEventListener('input', () => {
+      this.extractorNoiseField.value = parseFloat(this.extractorNoiseSlider.value).toFixed(2);
+    });
+    this.extractorNoiseField.addEventListener('input', () => {
+      const v = clamp(parseFloat(this.extractorNoiseField.value) || 0, 0, 100);
+      this.extractorNoiseSlider.value = v;
+    });
+    this.extractorNoiseField.addEventListener('blur', () => {
+      const v = clamp(parseFloat(this.extractorNoiseField.value) || 0, 0, 100);
+      this.extractorNoiseField.value = v.toFixed(2);
+      this.extractorNoiseSlider.value = v;
+    });
+    noiseRow.append(noiseName, this.extractorNoiseSlider, this.extractorNoiseField);
+
+    this.extractorSlidersEl.append(countRow, noiseRow);
+
+    this.extractorActionsEl = document.createElement('div');
+    this.extractorActionsEl.className = 'compact-color-picker__extractor-actions';
+    const extractorAlgorithms = [
+      { label: 'Most Common',          algo: 'most-common' },
+      { label: 'Least Common',         algo: 'least-common' },
+      { label: 'Darkest',              algo: 'darkest' },
+      { label: 'Lightest',             algo: 'lightest' },
+      { label: 'Vibrant Colors',       algo: 'vibrant' },
+      { label: 'Muted Colors',         algo: 'muted' },
+      { label: 'MMCQ',                 algo: 'mmcq' },
+      { label: 'Median Cut',           algo: 'median-cut' },
+      { label: 'K-Means Clustering',   algo: 'kmeans' },
+      { label: 'Histogram Peaks',      algo: 'histogram' },
+      { label: 'Weighted Regions',     algo: 'weighted-regions' },
+      { label: 'Perceptual (LAB)',      algo: 'lab-kmeans' },
+    ];
+    extractorAlgorithms.forEach(({ label, algo }) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'compact-color-picker__extractor-action button-medium';
+      button.textContent = label;
+      button.dataset.algo = algo;
+      this.extractorActionsEl.append(button);
+    });
+
+    this.extractorResultsEl = document.createElement('div');
+    this.extractorResultsEl.className = 'compact-color-picker__extractor-results';
+    this.extractorResultsEl.style.display = 'none';
+
+    this.extractorPanel.append(
+      this.extractorPreviewEl,
+      this.extractorControlsEl,
+      this.extractorSlidersEl,
+      this.extractorFileInput,
+      this.extractorActionsEl,
+      this.extractorResultsEl,
+    );
+
+    this.panelEl.append(this.titleEl, this.colorPickerPanel, this.extractorPanel, this.footerEl, this.swatchesHeaderEl, this.swatchPanelEl);
     document.body.appendChild(this.panelEl);
     this._configureCanvasResolution();
     this._bindPanelEvents();
+
+    this.titleEl.querySelectorAll('.folder-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        this.titleEl.querySelectorAll('.folder-tab').forEach(btn => btn.classList.remove('active'));
+        tab.classList.add('active');
+        const targetId = tab.dataset.target;
+        [this.colorPickerPanel, this.extractorPanel].forEach(panel => {
+          panel.style.display = panel.id === targetId ? '' : 'none';
+        });
+      });
+    });
   }
 
   _buildPresetSwatches() {
@@ -367,7 +594,13 @@ export class CompactColorPicker {
     this.addCollectionBtn.addEventListener('click', () => this._addSwatchCollection());
     this.loadStandardSwatchesBtn.addEventListener('click', () => this._loadStandardSwatchCollections());
     this.renameSwatchesBtn.addEventListener('click', () => this._renameSelectedSwatchTarget());
-    this.removeCollectionBtn.addEventListener('click', () => this._removeSelectedSwatchTarget());
+    this.removeCollectionBtn.addEventListener('click', () => {
+      if (this.selectedSwatchKeys.size > 0 || this.selectedCollectionIds.size > 0) {
+        this._deleteSelected();
+      } else {
+        this._removeSelectedSwatchTarget();
+      }
+    });
     this.removeCollectionBtn.addEventListener('dragover', (evt) => {
       if (!this.dragPayload) return;
       evt.preventDefault();
@@ -381,7 +614,9 @@ export class CompactColorPicker {
       if (!this.dragPayload) return;
       evt.preventDefault();
       this.removeCollectionBtn.classList.remove('is-drop-target');
-      if (this.dragPayload.type === 'swatch') {
+      if (this.dragPayload.type === 'multi-swatch' || this.dragPayload.type === 'multi-collection') {
+        this._deleteSelected();
+      } else if (this.dragPayload.type === 'swatch') {
         this._deleteSwatchByRef(this.dragPayload.collectionIndex, this.dragPayload.swatchId);
       } else if (this.dragPayload.type === 'collection') {
         this._removeSelectedSwatchCollection(this.dragPayload.collectionIndex);
@@ -436,6 +671,7 @@ export class CompactColorPicker {
       section.className = 'compact-color-picker__presets-section';
       if (group.open) section.classList.add('is-open');
       if (index === this.selectedCollectionIndex) section.classList.add('is-selected');
+      if (this.selectedCollectionIds.has(group.id)) section.classList.add('is-multi-selected');
 
       const toggle = document.createElement('button');
       toggle.type = 'button';
@@ -445,13 +681,16 @@ export class CompactColorPicker {
       if (group.id !== 'recent') {
         toggle.draggable = true;
         toggle.addEventListener('dragstart', (evt) => {
-          this.dragPayload = {
-            type: 'collection',
-            collectionIndex: index,
-          };
+          if (this.selectedCollectionIds.has(group.id) && this.selectedCollectionIds.size > 1) {
+            this.dragPayload = { type: 'multi-collection', ids: [...this.selectedCollectionIds] };
+            evt.dataTransfer.effectAllowed = 'move';
+            evt.dataTransfer.setData('text/plain', `${this.selectedCollectionIds.size} collections`);
+          } else {
+            this.dragPayload = { type: 'collection', collectionIndex: index };
+            evt.dataTransfer.effectAllowed = 'move';
+            evt.dataTransfer.setData('text/plain', group.title);
+          }
           section.classList.add('is-dragging');
-          evt.dataTransfer.effectAllowed = 'move';
-          evt.dataTransfer.setData('text/plain', group.title);
         });
         toggle.addEventListener('dragend', () => {
           section.classList.remove('is-dragging');
@@ -467,6 +706,9 @@ export class CompactColorPicker {
       const grid = document.createElement('div');
       grid.className = 'compact-color-picker__presets-grid';
       grid.dataset.collectionIndex = String(index);
+      grid.style.gridTemplateColumns = group.id === 'recent'
+        ? 'repeat(8, 1fr)'
+        : `repeat(${Math.min(Math.max(group.swatches.length, 1), 8)}, 1fr)`;
       grid.addEventListener('dragover', (evt) => {
         if (!this.dragPayload) return;
         if (this.dragPayload.type === 'collection') return; // handled at section level
@@ -497,13 +739,31 @@ export class CompactColorPicker {
         if (this.selectedSwatchRef?.collectionIndex === index && this.selectedSwatchRef?.swatchId === swatch.id) {
           swatchBtn.classList.add('is-selected');
         }
-        swatchBtn.addEventListener('click', () => {
+        swatchBtn.addEventListener('click', (evt) => {
+          const key = `${group.id}~~${swatch.id}`;
+          if (evt.shiftKey && this._anchorSwatchInfo?.groupId === group.id) {
+            const anchorIdx = group.swatches.findIndex(s => s.id === this._anchorSwatchInfo.swatchId);
+            const thisIdx = group.swatches.findIndex(s => s.id === swatch.id);
+            if (anchorIdx >= 0 && thisIdx >= 0) {
+              const [lo, hi] = anchorIdx < thisIdx ? [anchorIdx, thisIdx] : [thisIdx, anchorIdx];
+              this.selectedSwatchKeys.clear();
+              this.selectedCollectionIds.clear();
+              for (let i = lo; i <= hi; i++) {
+                this.selectedSwatchKeys.add(`${group.id}~~${group.swatches[i].id}`);
+              }
+              this._renderSwatchCollections();
+              return;
+            }
+          }
+          this._clearMultiSelect();
+          this._anchorSwatchInfo = { groupId: group.id, swatchId: swatch.id };
           this.selectedCollectionIndex = index;
           this.selectedSwatchRef = { collectionIndex: index, swatchId: swatch.id };
           this.lastSelectionType = 'swatch';
           this.setColor(swatch.hex, { commit: true });
           this._syncRenderedSwatchSelection();
         });
+        if (this.selectedSwatchKeys.has(`${group.id}~~${swatch.id}`)) swatchBtn.classList.add('is-multi-selected');
         swatchBtn.addEventListener('dblclick', (evt) => {
           evt.preventDefault();
           evt.stopPropagation();
@@ -513,14 +773,23 @@ export class CompactColorPicker {
           this._openSwatchRename(index, swatch.id);
         });
         swatchBtn.addEventListener('dragstart', (evt) => {
-          this.dragPayload = {
-            type: 'swatch',
-            collectionIndex: index,
-            swatchId: swatch.id,
-          };
+          const key = `${group.id}~~${swatch.id}`;
+          if (this.selectedSwatchKeys.has(key) && this.selectedSwatchKeys.size > 1) {
+            const items = [];
+            this.swatchCollections.forEach((col, ci) => {
+              col.swatches.forEach(sw => {
+                if (this.selectedSwatchKeys.has(`${col.id}~~${sw.id}`)) items.push({ collectionIndex: ci, swatchId: sw.id });
+              });
+            });
+            this.dragPayload = { type: 'multi-swatch', items };
+            evt.dataTransfer.effectAllowed = 'move';
+            evt.dataTransfer.setData('text/plain', `${items.length} swatches`);
+          } else {
+            this.dragPayload = { type: 'swatch', collectionIndex: index, swatchId: swatch.id };
+            evt.dataTransfer.effectAllowed = 'move';
+            evt.dataTransfer.setData('text/plain', swatch.hex);
+          }
           swatchBtn.classList.add('is-dragging');
-          evt.dataTransfer.effectAllowed = 'move';
-          evt.dataTransfer.setData('text/plain', swatch.hex);
         });
         swatchBtn.addEventListener('dragend', () => {
           swatchBtn.classList.remove('is-dragging');
@@ -679,6 +948,19 @@ export class CompactColorPicker {
           startInlineRename();
           return;
         }
+        if (evt.shiftKey && group.id !== 'recent' && this._anchorCollectionId) {
+          const anchorIdx = this.swatchCollections.findIndex(c => c.id === this._anchorCollectionId);
+          const [lo, hi] = anchorIdx < index ? [anchorIdx, index] : [index, anchorIdx];
+          this.selectedCollectionIds.clear();
+          this.selectedSwatchKeys.clear();
+          for (let i = lo; i <= hi; i++) {
+            if (this.swatchCollections[i].id !== 'recent') this.selectedCollectionIds.add(this.swatchCollections[i].id);
+          }
+          this._renderSwatchCollections();
+          return;
+        }
+        this._clearMultiSelect();
+        this._anchorCollectionId = group.id !== 'recent' ? group.id : null;
         this.selectedCollectionIndex = index;
         this.lastSelectionType = 'collection';
         this.selectedSwatchRef = null;
@@ -696,29 +978,43 @@ export class CompactColorPicker {
 
       // Collection-level drag-over / drop for reordering collections
       section.addEventListener('dragover', (evt) => {
-        if (!this.dragPayload || this.dragPayload.type !== 'collection') return;
-        if (this.dragPayload.collectionIndex === index) return;
+        if (!this.dragPayload || (this.dragPayload.type !== 'collection' && this.dragPayload.type !== 'multi-collection')) return;
+        if (this.dragPayload.type === 'collection' && this.dragPayload.collectionIndex === index) return;
         evt.preventDefault();
         evt.dataTransfer.dropEffect = 'move';
         const rect = section.getBoundingClientRect();
-        const insertBefore = evt.clientY < rect.top + rect.height / 2;
+        const y = evt.clientY - rect.top;
+        const height = rect.height;
+        let insertBefore;
+        if (y < height * 0.45) {
+          insertBefore = true;
+        } else if (y > height * 0.55) {
+          insertBefore = false;
+        } else {
+          this._clearCollectionDropIndicators();
+          return;
+        }
         this._clearCollectionDropIndicators();
         section.classList.add(insertBefore ? 'is-collection-drop-before' : 'is-collection-drop-after');
       });
       section.addEventListener('dragleave', (evt) => {
-        if (this.dragPayload?.type !== 'collection') return;
+        if (this.dragPayload?.type !== 'collection' && this.dragPayload?.type !== 'multi-collection') return;
         if (!section.contains(evt.relatedTarget)) {
           section.classList.remove('is-collection-drop-before', 'is-collection-drop-after');
         }
       });
       section.addEventListener('drop', (evt) => {
-        if (!this.dragPayload || this.dragPayload.type !== 'collection') return;
+        if (!this.dragPayload) return;
         evt.preventDefault();
-        const sourceIndex = this.dragPayload.collectionIndex;
         const rect = section.getBoundingClientRect();
         const insertBefore = evt.clientY < rect.top + rect.height / 2;
         const rawTarget = insertBefore ? index : index + 1;
-        this._handleCollectionReorder(sourceIndex, rawTarget);
+        if (this.dragPayload.type === 'collection') {
+          const sourceIndex = this.dragPayload.collectionIndex;
+          this._handleCollectionReorder(sourceIndex, rawTarget);
+        } else if (this.dragPayload.type === 'multi-collection') {
+          this._handleMultiCollectionReorder(rawTarget);
+        }
       });
     });
 
@@ -726,6 +1022,7 @@ export class CompactColorPicker {
     const cannotDelete = this.swatchCollections.length <= 1 ||
       (this.lastSelectionType !== 'swatch' && selectedIsRecent);
     if (this.removeCollectionBtn) this.removeCollectionBtn.disabled = cannotDelete;
+    this._saveCollections();
   }
 
   _addSwatchCollection() {
@@ -868,6 +1165,59 @@ export class CompactColorPicker {
     this._renderSwatchCollections();
   }
 
+  _clearMultiSelect() {
+    this.selectedSwatchKeys.clear();
+    this.selectedCollectionIds.clear();
+    this._anchorSwatchInfo = null;
+    this._anchorCollectionId = null;
+  }
+
+  _deleteSelected() {
+    if (this.selectedSwatchKeys.size > 0) {
+      this.selectedSwatchKeys.forEach(key => {
+        const sep = key.indexOf('~~');
+        const groupId = key.slice(0, sep), swatchId = key.slice(sep + 2);
+        const col = this.swatchCollections.find(c => c.id === groupId);
+        if (!col) return;
+        const idx = col.swatches.findIndex(s => s.id === swatchId);
+        if (idx >= 0) col.swatches.splice(idx, 1);
+      });
+      this._clearMultiSelect();
+      this._renderSwatchCollections();
+      return;
+    }
+    if (this.selectedCollectionIds.size > 0) {
+      this.swatchCollections = this.swatchCollections.filter(c => c.id === 'recent' || !this.selectedCollectionIds.has(c.id));
+      this._clearMultiSelect();
+      this.selectedCollectionIndex = Math.max(0, Math.min(this.selectedCollectionIndex, this.swatchCollections.length - 1));
+      this._renderSwatchCollections();
+    }
+  }
+
+  _handleMultiCollectionReorder(rawTarget) {
+    const ids = this.dragPayload.ids;
+    let adjustedTarget = rawTarget;
+    this.swatchCollections.forEach((c, i) => { if (i < rawTarget && ids.includes(c.id)) adjustedTarget--; });
+    const moving = this.swatchCollections.filter(c => ids.includes(c.id));
+    this.swatchCollections = this.swatchCollections.filter(c => !ids.includes(c.id));
+    const insertAt = Math.max(1, adjustedTarget);
+    this.swatchCollections.splice(insertAt, 0, ...moving);
+    this._clearMultiSelect();
+    this.dragPayload = null;
+    this._clearCollectionDropIndicators();
+    this._renderSwatchCollections();
+  }
+
+  _addHarmonyColorsToRecent() {
+    if (this.harmonyMode === 'none') return;
+    const { hsv } = this.state;
+    const offsets = this._harmonyOffsets(this.harmonyMode);
+    offsets.forEach(offset => {
+      const hh = ((hsv.h + offset) % 360 + 360) % 360;
+      this._addRecentColor(rgbToHex(hsvToRgb({ h: hh, s: hsv.s, v: hsv.v })));
+    });
+  }
+
   _addRecentColor(hex) {
     const recentCollection = this.swatchCollections.find(c => c.id === 'recent');
     if (!recentCollection) return;
@@ -904,6 +1254,7 @@ export class CompactColorPicker {
 
     // Rebuild only the Recent grid's swatch buttons
     grid.innerHTML = '';
+    grid.style.gridTemplateColumns = 'repeat(8, 1fr)';
     recentCollection.swatches.forEach((swatch) => {
       const swatchBtn = document.createElement('button');
       swatchBtn.type = 'button';
@@ -970,6 +1321,25 @@ export class CompactColorPicker {
       const content = section.querySelector('.compact-color-picker__presets-content');
       if (content) content.style.maxHeight = 'none';
     }
+    this._saveCollections();
+  }
+
+  _saveCollections() {
+    try {
+      localStorage.setItem('renderdeck-swatch-collections', JSON.stringify(this.swatchCollections));
+    } catch (_) {}
+  }
+
+  _loadCollections() {
+    try {
+      const raw = localStorage.getItem('renderdeck-swatch-collections');
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data) || !data.length) return null;
+      return data;
+    } catch (_) {
+      return null;
+    }
   }
 
   _clearCollectionDropIndicators() {
@@ -1021,15 +1391,18 @@ export class CompactColorPicker {
 
   _syncRenderedSwatchSelection() {
     this.swatchScrollEl?.querySelectorAll('.compact-color-picker__presets-section').forEach((section, index) => {
-      section.classList.toggle('is-selected', index === this.selectedCollectionIndex);
+      const group = this.swatchCollections[index];
+      section.classList.toggle('is-selected', index === this.selectedCollectionIndex && this.selectedCollectionIds.size === 0);
+      section.classList.toggle('is-multi-selected', !!(group && this.selectedCollectionIds.has(group.id)));
     });
     this.swatchScrollEl?.querySelectorAll('.compact-color-picker__preset-swatch').forEach(swatchEl => {
-      const collectionIndex = Number(swatchEl.dataset.collectionIndex);
-      const swatchId = swatchEl.dataset.swatchId;
-      const selected = this.selectedSwatchRef
-        && collectionIndex === this.selectedSwatchRef.collectionIndex
-        && swatchId === this.selectedSwatchRef.swatchId;
-      swatchEl.classList.toggle('is-selected', !!selected);
+      const ci = Number(swatchEl.dataset.collectionIndex);
+      const sid = swatchEl.dataset.swatchId;
+      const group = this.swatchCollections[ci];
+      const key = group ? `${group.id}~~${sid}` : null;
+      const singleSelected = this.selectedSwatchRef && ci === this.selectedSwatchRef.collectionIndex && sid === this.selectedSwatchRef.swatchId && this.selectedSwatchKeys.size === 0;
+      swatchEl.classList.toggle('is-selected', !!singleSelected);
+      swatchEl.classList.toggle('is-multi-selected', !!(key && this.selectedSwatchKeys.has(key)));
     });
   }
 
@@ -1057,6 +1430,30 @@ export class CompactColorPicker {
         insertIndex -= 1;
       }
       targetCollection.swatches.splice(Math.max(0, insertIndex), 0, moved);
+    } else if (this.dragPayload.type === 'multi-swatch') {
+      const items = this.dragPayload.items;
+      const movedSwatches = items.map(({ collectionIndex: ci, swatchId: sid }) =>
+        this.swatchCollections[ci]?.swatches.find(s => s.id === sid)
+      ).filter(Boolean);
+      let insertIdx = targetIndex;
+      items.forEach(({ collectionIndex: ci, swatchId: sid }) => {
+        if (ci !== targetCollectionIndex) return;
+        const idx = this.swatchCollections[ci]?.swatches.findIndex(s => s.id === sid) ?? -1;
+        if (idx >= 0 && idx < insertIdx) insertIdx--;
+      });
+      const byCol = new Map();
+      items.forEach(({ collectionIndex: ci, swatchId: sid }) => {
+        if (!byCol.has(ci)) byCol.set(ci, []);
+        byCol.get(ci).push(sid);
+      });
+      byCol.forEach((ids, ci) => {
+        const col = this.swatchCollections[ci];
+        if (!col) return;
+        const indices = ids.map(id => col.swatches.findIndex(s => s.id === id)).filter(i => i >= 0).sort((a, b) => b - a);
+        indices.forEach(i => col.swatches.splice(i, 1));
+      });
+      targetCollection.swatches.splice(Math.max(0, Math.min(insertIdx, targetCollection.swatches.length)), 0, ...movedSwatches);
+      this._clearMultiSelect();
     }
 
     this.dragPayload = null;
@@ -1065,8 +1462,8 @@ export class CompactColorPicker {
   }
 
   _configureCanvasResolution() {
-    const panelWidth = this.panelEl.clientWidth || 252;
-    const innerWidth = Math.max(180, panelWidth - 20);
+    const panelWidth = this.canvasWrapEl.clientWidth || 252;
+    const innerWidth = Math.max(180, panelWidth);
     this.canvasEl.style.width = `${innerWidth}px`;
     this.canvasEl.style.height = `${innerWidth}px`;
     this.sliderEl.style.width = `${innerWidth}px`;
@@ -1147,6 +1544,14 @@ export class CompactColorPicker {
   }
 
   _bindPanelEvents() {
+    Object.values(this.harmonyBtns).forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.harmonyMode = btn.dataset.harmonyMode;
+        Object.values(this.harmonyBtns).forEach(b => b.classList.toggle('is-active', b === btn));
+        this.render();
+      });
+    });
+
     this.previewHexEl.addEventListener('change', () => {
       const normalized = this._normalizeHex(this.previewHexEl.value);
       if (normalized) this.setColor(normalized, { commit: true });
@@ -1177,6 +1582,7 @@ export class CompactColorPicker {
     this._bindGroupInputs(this.cmykInputs.rows, 'cmyk');
     this._bindCanvasDrag(this.canvasEl, 'canvas');
     this._bindCanvasDrag(this.sliderEl, 'slider');
+    this._bindExtractorEvents();
 
     document.addEventListener('mousedown', (evt) => {
       if (!this.isOpen) return;
@@ -1190,6 +1596,20 @@ export class CompactColorPicker {
 
     window.addEventListener('resize', () => this.isOpen && this._positionPanel());
     window.addEventListener('scroll', () => this.isOpen && this._positionPanel(), true);
+    this._bindKeyboardEvents();
+  }
+
+  _bindKeyboardEvents() {
+    document.addEventListener('keydown', (evt) => {
+      if (!this.panelEl?.isConnected) return;
+      if (evt.target.tagName === 'INPUT' || evt.target.tagName === 'TEXTAREA') return;
+      if (evt.key === 'Delete' || evt.key === 'Backspace') {
+        if (this.selectedSwatchKeys.size > 0 || this.selectedCollectionIds.size > 0) {
+          evt.preventDefault();
+          this._deleteSelected();
+        }
+      }
+    });
   }
 
   _bindGroupInputs(rows, mode) {
@@ -1232,16 +1652,33 @@ export class CompactColorPicker {
       this.dragTarget = target;
       this.isDragging = true;
       element.setPointerCapture(evt.pointerId);
+      if (target === 'canvas' && this.mode === 'circle' && this.harmonyMode !== 'none') {
+        const pos = pointerPosition(evt, this.canvasEl);
+        const hitIdx = this._harmonyHitTest(pos);
+        if (hitIdx > 0) {
+          this._harmonyHit = true;
+          const hh = ((this.state.hsv.h + this._harmonyOffsets(this.harmonyMode)[hitIdx]) % 360 + 360) % 360;
+          this._setStateFromHsv({ ...this.state.hsv, h: hh }, { commit: false });
+          return;
+        }
+      }
+      this._harmonyHit = false;
       this._handlePointer(evt, target, false);
     });
 
     element.addEventListener('pointermove', (evt) => {
-      if (this.isDragging && this.dragTarget === target) this._handlePointer(evt, target, false);
+      if (!this.isDragging || this.dragTarget !== target || this._harmonyHit) return;
+      this._handlePointer(evt, target, false);
     });
 
     element.addEventListener('pointerup', (evt) => {
       if (!this.isDragging || this.dragTarget !== target) return;
-      this._handlePointer(evt, target, true);
+      if (this._harmonyHit) {
+        this._setStateFromHsv(this.state.hsv, { commit: true });
+      } else {
+        this._handlePointer(evt, target, true);
+      }
+      this._harmonyHit = false;
       this.isDragging = false;
       this.dragTarget = null;
       element.releasePointerCapture(evt.pointerId);
@@ -1302,6 +1739,7 @@ export class CompactColorPicker {
     this.squareModeBtn.classList.toggle('is-active', mode === 'square');
     this.circleModeBtn.classList.toggle('is-active', mode === 'circle');
     this.canvasEl.classList.toggle('is-round', mode === 'circle');
+    this.harmonySectionEl.style.display = mode === 'circle' ? '' : 'none';
     this.render();
   }
 
@@ -1363,7 +1801,11 @@ export class CompactColorPicker {
     if (emit) this.onLiveChange?.(hex);
     if (commit) {
       this.onCommitChange?.(hex);
-      this._addRecentColor(hex);
+      if (this.mode === 'circle' && this.harmonyMode !== 'none') {
+        this._addHarmonyColorsToRecent();
+      } else {
+        this._addRecentColor(hex);
+      }
     }
   }
 
@@ -1457,9 +1899,43 @@ export class CompactColorPicker {
     }
 
     ctx.putImageData(image, 0, 0);
-    const angle = (hsv.h / 180) * Math.PI;
-    const distance = (hsv.s / 100) * radius;
-    this._drawCrosshair(ctx, cx + Math.cos(angle) * distance, cy + Math.sin(angle) * distance);
+
+    const visualRadius = Math.min(width, height) / 2;
+    const primaryAngle = (hsv.h / 180) * Math.PI;
+    const primaryDist = (hsv.s / 100) * visualRadius;
+    const px = cx + Math.cos(primaryAngle) * primaryDist;
+    const py = cy + Math.sin(primaryAngle) * primaryDist;
+
+    if (this.harmonyMode !== 'none') {
+      const offsets = this._harmonyOffsets(this.harmonyMode);
+      const handles = offsets.map(offset => {
+        const hh = ((hsv.h + offset) % 360 + 360) % 360;
+        const angle = (hh / 180) * Math.PI;
+        const dist = (hsv.s / 100) * visualRadius;
+        return { x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist, hh };
+      });
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 1.5 * this.renderScale;
+      ctx.setLineDash([3 * this.renderScale, 3 * this.renderScale]);
+      handles.forEach((h, i) => {
+        if (i === 0) return;
+        ctx.beginPath();
+        ctx.moveTo(handles[0].x, handles[0].y);
+        ctx.lineTo(h.x, h.y);
+        ctx.stroke();
+      });
+      ctx.restore();
+
+      handles.forEach((h, i) => {
+        if (i === 0) return;
+        const harmonyHex = rgbToHex(hsvToRgb({ h: h.hh, s: hsv.s, v: hsv.v }));
+        this._drawHarmonyHandle(ctx, h.x, h.y, harmonyHex, this.renderScale);
+      });
+    }
+
+    this._drawCrosshair(ctx, px, py);
   }
 
   _drawHueSlider(ctx) {
@@ -1513,6 +1989,529 @@ export class CompactColorPicker {
     ctx.arc(x, y, 8 * scale, 0, TWO_PI);
     ctx.stroke();
     ctx.restore();
+  }
+
+  _harmonyOffsets(mode) {
+    switch (mode) {
+      case 'complementary': return [0, 180];
+      case 'split-comp':    return [0, 150, 210];
+      case 'analogous':     return [0, -30, 30];
+      case 'triadic':       return [0, 120, 240];
+      case 'tetradic':      return [0, 60, 180, 240];
+      case 'square':        return [0, 90, 180, 270];
+      default:              return [0];
+    }
+  }
+
+  _harmonyHitTest(pos) {
+    if (this.harmonyMode === 'none') return -1;
+    const offsets = this._harmonyOffsets(this.harmonyMode);
+    const cx = pos.width / 2;
+    const cy = pos.height / 2;
+    const radius = Math.min(pos.width, pos.height) / 2;
+    for (let i = 1; i < offsets.length; i++) {
+      const hh = ((this.state.hsv.h + offsets[i]) % 360 + 360) % 360;
+      const angle = (hh / 180) * Math.PI;
+      const dist = (this.state.hsv.s / 100) * radius;
+      const hx = cx + Math.cos(angle) * dist;
+      const hy = cy + Math.sin(angle) * dist;
+      if (Math.sqrt((pos.x - hx) ** 2 + (pos.y - hy) ** 2) <= 14) return i;
+    }
+    return -1;
+  }
+
+  _drawHarmonyHandle(ctx, x, y, hex, scale) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, 6 * scale, 0, TWO_PI);
+    ctx.fillStyle = hex;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 1 * scale;
+    ctx.beginPath();
+    ctx.arc(x, y, 8 * scale, 0, TWO_PI);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── Color Extractor ─────────────────────────────────────────────────────────
+
+  _bindExtractorEvents() {
+    this.extractorFileInput.addEventListener('change', (evt) => {
+      const file = evt.target.files?.[0];
+      if (file) this._loadExtractorImage(file);
+      evt.target.value = '';
+    });
+
+    const preview = this.extractorPreviewEl;
+    let dragCounter = 0;
+
+    preview.addEventListener('dragenter', (evt) => {
+      evt.preventDefault();
+      dragCounter++;
+      preview.classList.add('drag-over');
+    });
+
+    preview.addEventListener('dragleave', () => {
+      dragCounter--;
+      if (dragCounter === 0) preview.classList.remove('drag-over');
+    });
+
+    preview.addEventListener('dragover', (evt) => {
+      evt.preventDefault();
+    });
+
+    preview.addEventListener('drop', (evt) => {
+      evt.preventDefault();
+      dragCounter = 0;
+      preview.classList.remove('drag-over');
+      const file = evt.dataTransfer.files?.[0];
+      if (file && file.type.startsWith('image/')) this._loadExtractorImage(file);
+    });
+
+    this.extractorActionsEl.querySelectorAll('[data-algo]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!this._extractorPixels?.length) return;
+        this._runExtractor(btn.dataset.algo);
+      });
+    });
+  }
+
+  _loadExtractorImage(file) {
+    this._extractorFilename = file.name.replace(/\.[^.]+$/, '');
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      this.extractorPreviewImgEl.src = url;
+      this.extractorPreviewImgEl.style.display = '';
+      this.extractorPreviewTextEl.style.display = 'none';
+
+      const MAX_DIM = 300;
+      const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const imageData = ctx.getImageData(0, 0, w, h);
+
+      this._extractorWidth = w;
+      this._extractorHeight = h;
+      const data = imageData.data;
+      this._extractorRawData = data;
+
+      const pixels = [];
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] < 128) continue;
+        pixels.push({ r: data[i], g: data[i + 1], b: data[i + 2] });
+      }
+      this._extractorPixels = pixels;
+
+      this.extractorResultsEl.style.display = 'none';
+      this.extractorResultsEl.innerHTML = '';
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      this.extractorPreviewTextEl.textContent = 'Could not load image. Try JPG or PNG.';
+      this.extractorPreviewTextEl.style.display = '';
+    };
+    img.src = url;
+  }
+
+  _runExtractor(algo) {
+    const pixels = this._extractorPixels;
+    if (!pixels?.length) return;
+    const count = parseInt(this.extractorCountSlider.value, 10);
+    const noise = clamp(parseFloat(this.extractorNoiseField.value) || 0, 0, 100) / 100;
+    let colors;
+    switch (algo) {
+      case 'most-common':      colors = this._extractMostCommon(pixels, count, noise); break;
+      case 'least-common':     colors = this._extractLeastCommon(pixels, count, noise); break;
+      case 'darkest':          colors = this._extractDarkest(pixels, count, noise); break;
+      case 'lightest':         colors = this._extractLightest(pixels, count, noise); break;
+      case 'kmeans':           colors = this._extractKMeans(pixels, count, 20, noise); break;
+      case 'median-cut':       colors = this._extractMedianCut(pixels, count, noise); break;
+      case 'mmcq':             colors = this._extractMMCQ(pixels, count, noise); break;
+      case 'histogram':        colors = this._extractHistogram(pixels, count, noise); break;
+      case 'weighted-regions': colors = this._extractWeightedRegions(count, noise); break;
+      case 'vibrant':          colors = this._extractVibrant(pixels, count, noise); break;
+      case 'muted':            colors = this._extractMuted(pixels, count, noise); break;
+      case 'lab-kmeans':       colors = this._extractLabKMeans(pixels, count, 20, noise); break;
+      default: return;
+    }
+    this._showExtractorResults(colors);
+  }
+
+  _showExtractorResults(colors) {
+    const count = parseInt(this.extractorCountSlider.value, 10);
+    const el = this.extractorResultsEl;
+    el.innerHTML = '';
+    el.style.display = '';
+
+    if (colors.length < count) {
+      const msg = document.createElement('p');
+      msg.className = 'compact-color-picker__extractor-limit-msg';
+      msg.textContent = 'algorithm cannot detect more color swatches';
+      el.appendChild(msg);
+    }
+
+    const swatchRow = document.createElement('div');
+    swatchRow.className = 'compact-color-picker__extractor-swatches';
+    swatchRow.style.gridTemplateColumns = `repeat(${Math.min(colors.length, 8)}, 1fr)`;
+
+    colors.forEach(hex => {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'compact-color-picker__extractor-swatch';
+      swatch.style.background = hex;
+      swatch.title = hex;
+      swatch.addEventListener('click', () => { this.setColor(hex, { commit: true }); this._addRecentColor(hex); });
+      swatchRow.appendChild(swatch);
+    });
+
+    const addAllBtn = document.createElement('button');
+    addAllBtn.type = 'button';
+    addAllBtn.className = 'compact-color-picker__extractor-add-all button-medium';
+    addAllBtn.textContent = 'Add All to Collection';
+    addAllBtn.addEventListener('click', () => {
+      const noiseRaw = clamp(parseFloat(this.extractorNoiseField.value) || 0, 0, 100);
+      const noiseStr = noiseRaw % 1 === 0 ? String(noiseRaw) : noiseRaw.toFixed(2).replace('.', 'p');
+      const title = `${this._extractorFilename || 'image'}-S${count}-N${noiseStr}`;
+      this.swatchCollections.forEach(c => { c.open = false; });
+      this.swatchCollections.push({
+        id: `swatch-ext-${Date.now()}`,
+        title,
+        open: true,
+        swatches: colors.map(hex => ({ id: `swatch-ext-${Date.now()}-${Math.random().toString(36).slice(2)}`, hex, name: hex })),
+      });
+      this.selectedCollectionIndex = this.swatchCollections.length - 1;
+      this.lastSelectionType = 'collection';
+      this.selectedSwatchRef = null;
+      this._renderSwatchCollections();
+    });
+
+    el.append(swatchRow, addAllBtn);
+  }
+
+  // ── Shared helpers ──────────────────────────────────────────────────────────
+
+  _sampleN(pixels, n, noise = 0) {
+    if (pixels.length <= n) return pixels;
+    const step = pixels.length / n;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const jitter = noise > 0 ? (Math.random() - 0.5) * noise * step : 0;
+      out.push(pixels[Math.min(pixels.length - 1, Math.max(0, Math.floor(i * step + jitter)))]);
+    }
+    return out;
+  }
+
+  _colorDistSq(a, b) {
+    const dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+    return dr * dr + dg * dg + db * db;
+  }
+
+  _deduplicateColors(hexList, count, threshold = 30) {
+    const result = [];
+    const threshSq = threshold * threshold;
+    for (const hex of hexList) {
+      if (result.length >= count) break;
+      const rgb = hexToRgb(hex);
+      if (!rgb) continue;
+      if (!result.some(({ rgb: c }) => this._colorDistSq(rgb, c) < threshSq)) {
+        result.push({ hex, rgb });
+      }
+    }
+    return result.map(({ hex }) => hex);
+  }
+
+  _boxRange(box) {
+    let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
+    for (const { r, g, b } of box) {
+      if (r < rMin) rMin = r; if (r > rMax) rMax = r;
+      if (g < gMin) gMin = g; if (g > gMax) gMax = g;
+      if (b < bMin) bMin = b; if (b > bMax) bMax = b;
+    }
+    const rRange = rMax - rMin, gRange = gMax - gMin, bRange = bMax - bMin;
+    const max = Math.max(rRange, gRange, bRange);
+    const channel = max === rRange ? 'r' : max === gRange ? 'g' : 'b';
+    return { max, channel };
+  }
+
+  _splitBox(box, noise = 0) {
+    const { channel } = this._boxRange(box);
+    const sorted = [...box].sort((a, b) => a[channel] - b[channel]);
+    const jitter = noise > 0 ? Math.round((Math.random() - 0.5) * noise * sorted.length * 0.3) : 0;
+    const mid = Math.max(1, Math.min(sorted.length - 1, Math.floor(sorted.length / 2) + jitter));
+    return [sorted.slice(0, mid), sorted.slice(mid)];
+  }
+
+  // ── Algorithms ──────────────────────────────────────────────────────────────
+
+  _extractMostCommon(pixels, count, noise = 0) {
+    const freq = new Map();
+    for (const { r, g, b } of pixels) {
+      const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      freq.set(key, (freq.get(key) || 0) + 1);
+    }
+    let sorted = [...freq.entries()].sort((a, b) => b[1] - a[1]);
+    if (noise > 0) {
+      const poolSize = Math.min(sorted.length, Math.ceil(count * (1 + noise * 3)));
+      sorted = sorted.slice(0, poolSize).sort(() => Math.random() - 0.5);
+    }
+    const candidates = sorted.map(([key]) => {
+      const r = ((key >> 10) & 31) << 3;
+      const g = ((key >> 5) & 31) << 3;
+      const b = (key & 31) << 3;
+      return rgbToHex({ r, g, b });
+    });
+    return this._deduplicateColors(candidates, count);
+  }
+
+  _extractLeastCommon(pixels, count, noise = 0) {
+    const freq = new Map();
+    for (const { r, g, b } of pixels) {
+      const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      freq.set(key, (freq.get(key) || 0) + 1);
+    }
+    let sorted = [...freq.entries()].sort((a, b) => a[1] - b[1]);
+    if (noise > 0) {
+      const poolSize = Math.min(sorted.length, Math.ceil(count * (1 + noise * 3)));
+      sorted = sorted.slice(0, poolSize).sort(() => Math.random() - 0.5);
+    }
+    const candidates = sorted.map(([key]) => {
+      const r = ((key >> 10) & 31) << 3;
+      const g = ((key >> 5) & 31) << 3;
+      const b = (key & 31) << 3;
+      return rgbToHex({ r, g, b });
+    });
+    return this._deduplicateColors(candidates, count);
+  }
+
+  _extractByLuminance(pixels, count, asc, noise = 0) {
+    const lums = pixels.map(p => {
+      const base = 0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b;
+      return noise > 0 ? base + (Math.random() - 0.5) * noise * 40 : base;
+    });
+    const indices = Array.from({ length: pixels.length }, (_, i) => i);
+    indices.sort((a, b) => asc ? lums[a] - lums[b] : lums[b] - lums[a]);
+    return this._deduplicateColors(indices.map(i => rgbToHex(pixels[i])), count);
+  }
+
+  _extractDarkest(pixels, count, noise = 0)  { return this._extractByLuminance(pixels, count, true, noise);  }
+  _extractLightest(pixels, count, noise = 0) { return this._extractByLuminance(pixels, count, false, noise); }
+
+  _extractKMeans(pixels, count, maxIter = 20, noise = 0) {
+    const sample = this._sampleN(pixels, 3000, noise);
+    const initPool = noise > 0 ? [...sample].sort(() => Math.random() - 0.5) : sample;
+    let centroids = this._sampleN(initPool, count).map(p => ({ r: p.r, g: p.g, b: p.b }));
+
+    for (let iter = 0; iter < maxIter; iter++) {
+      const sums = Array.from({ length: count }, () => ({ r: 0, g: 0, b: 0, n: 0 }));
+      for (const px of sample) {
+        let best = 0, bestDist = Infinity;
+        for (let c = 0; c < centroids.length; c++) {
+          const d = this._colorDistSq(px, centroids[c]);
+          if (d < bestDist) { bestDist = d; best = c; }
+        }
+        sums[best].r += px.r; sums[best].g += px.g; sums[best].b += px.b; sums[best].n++;
+      }
+      let moved = false;
+      for (let c = 0; c < count; c++) {
+        if (sums[c].n === 0) continue;
+        const next = { r: sums[c].r / sums[c].n, g: sums[c].g / sums[c].n, b: sums[c].b / sums[c].n };
+        if (this._colorDistSq(next, centroids[c]) > 1) moved = true;
+        centroids[c] = next;
+      }
+      if (!moved) break;
+    }
+
+    return centroids.map(c => rgbToHex({ r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b) }));
+  }
+
+  _extractMedianCut(pixels, count, noise = 0) {
+    const sample = this._sampleN(pixels, 5000, noise);
+    let boxes = [sample];
+
+    while (boxes.length < count) {
+      let bestBox = 0, bestRange = -1;
+      for (let i = 0; i < boxes.length; i++) {
+        const { max } = this._boxRange(boxes[i]);
+        if (max > bestRange) { bestRange = max; bestBox = i; }
+      }
+      const [left, right] = this._splitBox(boxes[bestBox], noise);
+      if (!left.length || !right.length) break;
+      boxes.splice(bestBox, 1, left, right);
+    }
+
+    return boxes.map(box => {
+      const n = box.length;
+      const r = Math.round(box.reduce((s, p) => s + p.r, 0) / n);
+      const g = Math.round(box.reduce((s, p) => s + p.g, 0) / n);
+      const b = Math.round(box.reduce((s, p) => s + p.b, 0) / n);
+      return rgbToHex({ r, g, b });
+    });
+  }
+
+  _extractMMCQ(pixels, count, noise = 0) {
+    const sample = this._sampleN(pixels, 5000, noise);
+    let boxes = [[sample, this._boxRange(sample)]];
+
+    while (boxes.length < count) {
+      boxes.sort(([aBox, aR], [bBox, bR]) => bBox.length * bR.max - aBox.length * aR.max);
+      const [topBox] = boxes[0];
+      const [left, right] = this._splitBox(topBox, noise);
+      if (!left.length || !right.length) break;
+      boxes.splice(0, 1, [left, this._boxRange(left)], [right, this._boxRange(right)]);
+    }
+
+    return boxes.map(([box, { channel }]) => {
+      const sorted = [...box].sort((a, b) => a[channel] - b[channel]);
+      return rgbToHex(sorted[Math.floor(sorted.length / 2)]);
+    });
+  }
+
+  _extractHistogram(pixels, count, noise = 0) {
+    const BITS = 4;
+    const LEVELS = 1 << BITS;
+    const freq = new Uint32Array(LEVELS * LEVELS * LEVELS);
+
+    for (const { r, g, b } of pixels) {
+      freq[((r >> (8 - BITS)) * LEVELS + (g >> (8 - BITS))) * LEVELS + (b >> (8 - BITS))]++;
+    }
+
+    const indices = [];
+    for (let i = 0; i < freq.length; i++) {
+      if (freq[i] > 0) indices.push(i);
+    }
+    indices.sort((a, b) => freq[b] - freq[a]);
+
+    if (noise > 0) {
+      const poolSize = Math.min(indices.length, Math.ceil(count * (1 + noise * 4)));
+      for (let i = poolSize - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = indices[i]; indices[i] = indices[j]; indices[j] = tmp;
+      }
+      indices.length = poolSize;
+    }
+
+    const results = [];
+    const taken = [];
+    const scale = 255 / (LEVELS - 1);
+    const binGapSq = 9;
+
+    for (const idx of indices) {
+      if (results.length >= count) break;
+      const ri = (idx >> (BITS * 2)) & (LEVELS - 1);
+      const gi = (idx >> BITS) & (LEVELS - 1);
+      const bi = idx & (LEVELS - 1);
+      const tooClose = taken.some(([pr, pg, pb]) => {
+        const dr = ri - pr, dg = gi - pg, db = bi - pb;
+        return dr * dr + dg * dg + db * db < binGapSq;
+      });
+      if (tooClose) continue;
+      taken.push([ri, gi, bi]);
+      results.push(rgbToHex({ r: Math.round(ri * scale), g: Math.round(gi * scale), b: Math.round(bi * scale) }));
+    }
+
+    return results;
+  }
+
+  _extractWeightedRegions(count, noise = 0) {
+    const data = this._extractorRawData;
+    const W = this._extractorWidth;
+    const H = this._extractorHeight;
+    if (!data || !W || !H) return [];
+
+    const GRID = Math.ceil(Math.sqrt(count * 2));
+    const cellW = W / GRID;
+    const cellH = H / GRID;
+
+    const cx = W / 2 + (noise > 0 ? (Math.random() - 0.5) * noise * W * 0.3 : 0);
+    const cy = H / 2 + (noise > 0 ? (Math.random() - 0.5) * noise * H * 0.3 : 0);
+    const maxDistSq = cx * cx + cy * cy;
+
+    const cells = Array.from({ length: GRID * GRID }, () => ({ r: 0, g: 0, b: 0, w: 0 }));
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = (y * W + x) * 4;
+        if (data[idx + 3] < 128) continue;
+        const ci = Math.min(GRID - 1, Math.floor(x / cellW));
+        const cj = Math.min(GRID - 1, Math.floor(y / cellH));
+        const dx = x - cx, dy = y - cy;
+        const weight = 1 - (dx * dx + dy * dy) / maxDistSq;
+        const cell = cells[cj * GRID + ci];
+        cell.r += data[idx] * weight;
+        cell.g += data[idx + 1] * weight;
+        cell.b += data[idx + 2] * weight;
+        cell.w += weight;
+      }
+    }
+
+    const candidates = cells
+      .filter(c => c.w > 0)
+      .sort((a, b) => b.w - a.w)
+      .map(c => rgbToHex({ r: Math.round(c.r / c.w), g: Math.round(c.g / c.w), b: Math.round(c.b / c.w) }));
+
+    return this._deduplicateColors(candidates, count);
+  }
+
+  _filterHSV(pixels, sPred, vMin, vMax) {
+    return pixels.filter(({ r, g, b }) => {
+      const max = Math.max(r, g, b) / 255, min = Math.min(r, g, b) / 255;
+      const s = max === 0 ? 0 : (max - min) / max;
+      return sPred(s) && max > vMin && max < vMax;
+    });
+  }
+
+  _extractVibrant(pixels, count, noise = 0) {
+    const filtered = this._filterHSV(pixels, s => s > 0.35, 0.25, 0.97);
+    if (filtered.length < count) return this._extractKMeans(pixels, count, 20, noise);
+    return this._extractKMeans(filtered, count, 20, noise);
+  }
+
+  _extractMuted(pixels, count, noise = 0) {
+    const filtered = this._filterHSV(pixels, s => s < 0.4, 0.2, 0.92);
+    if (filtered.length < count) return this._extractKMeans(pixels, count, 20, noise);
+    return this._extractKMeans(filtered, count, 20, noise);
+  }
+
+  _extractLabKMeans(pixels, count, maxIter = 20, noise = 0) {
+    const sample = this._sampleN(pixels, 3000, noise).map(p => rgbToLab(p));
+    const initPool = noise > 0 ? [...sample].sort(() => Math.random() - 0.5) : sample;
+    let centroids = this._sampleN(initPool, count).map(s => ({ ...s }));
+
+    for (let iter = 0; iter < maxIter; iter++) {
+      const sums = Array.from({ length: count }, () => ({ L: 0, a: 0, b: 0, n: 0 }));
+      for (const lab of sample) {
+        let best = 0, bestDist = Infinity;
+        for (let c = 0; c < centroids.length; c++) {
+          const dL = lab.L - centroids[c].L, da = lab.a - centroids[c].a, db = lab.b - centroids[c].b;
+          const d = dL * dL + da * da + db * db;
+          if (d < bestDist) { bestDist = d; best = c; }
+        }
+        sums[best].L += lab.L; sums[best].a += lab.a; sums[best].b += lab.b; sums[best].n++;
+      }
+      let moved = false;
+      for (let c = 0; c < count; c++) {
+        if (sums[c].n === 0) continue;
+        const next = { L: sums[c].L / sums[c].n, a: sums[c].a / sums[c].n, b: sums[c].b / sums[c].n };
+        const dL = next.L - centroids[c].L, da = next.a - centroids[c].a, db = next.b - centroids[c].b;
+        if (dL * dL + da * da + db * db > 0.5) moved = true;
+        centroids[c] = next;
+      }
+      if (!moved) break;
+    }
+
+    return centroids.map(lab => rgbToHex(labToRgb(lab)));
   }
 }
 
