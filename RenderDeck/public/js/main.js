@@ -3986,8 +3986,13 @@ async function setupAuthHeader() {
 
   render(await getUser());
 
+  // Only reload on SIGNED_OUT — the page needs to drop cloud state and
+  // re-bootstrap as a guest. SIGNED_IN intentionally NOT handled because
+  // Supabase fires it on every page load when a session is restored from
+  // localStorage, which would cause an infinite reload loop. Real sign-in
+  // events come from login.html which already navigates here fresh.
   onAuthChange((event) => {
-    if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+    if (event === 'SIGNED_OUT') {
       clearSignedUrls();
       location.reload();
     }
