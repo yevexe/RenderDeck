@@ -388,17 +388,8 @@ export class CompactColorPicker {
     this.extractorPreviewImgEl.alt = '';
     this.extractorPreviewImgEl.style.display = 'none';
     this.extractorPreviewTextEl = document.createElement('p');
-    this.extractorPreviewTextEl.className = 'compact-color-picker__extractor-hint';
+    this.extractorPreviewTextEl.className = 'hint';
     this.extractorPreviewTextEl.textContent = 'Upload an image to preview and extract colors';
-    this.extractorPreviewEl.append(this.extractorPreviewImgEl, this.extractorPreviewTextEl);
-
-    this.extractorFileInput = document.createElement('input');
-    this.extractorFileInput.type = 'file';
-    this.extractorFileInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
-    this.extractorFileInput.style.display = 'none';
-
-    this.extractorControlsEl = document.createElement('div');
-    this.extractorControlsEl.className = 'compact-color-picker__extractor-controls';
 
     this.uploadImageBtn = document.createElement('button');
     this.uploadImageBtn.type = 'button';
@@ -407,10 +398,15 @@ export class CompactColorPicker {
     this.uploadImageBtn.addEventListener('click', () => this.extractorFileInput.click());
 
     this.extractorAcceptedEl = document.createElement('div');
-    this.extractorAcceptedEl.className = 'compact-color-picker__extractor-accepted';
+    this.extractorAcceptedEl.className = 'hint';
     this.extractorAcceptedEl.textContent = 'Supports JPG, PNG, WebP, GIF';
 
-    this.extractorControlsEl.append(this.uploadImageBtn, this.extractorAcceptedEl);
+    this.extractorPreviewEl.append(this.extractorPreviewImgEl, this.extractorPreviewTextEl, this.uploadImageBtn, this.extractorAcceptedEl);
+
+    this.extractorFileInput = document.createElement('input');
+    this.extractorFileInput.type = 'file';
+    this.extractorFileInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
+    this.extractorFileInput.style.display = 'none';
 
     this.extractorSlidersEl = document.createElement('div');
     this.extractorSlidersEl.className = 'compact-color-picker__extractor-sliders';
@@ -511,7 +507,6 @@ export class CompactColorPicker {
 
     this.extractorPanel.append(
       this.extractorPreviewEl,
-      this.extractorControlsEl,
       this.extractorSlidersEl,
       this.extractorFileInput,
       this.extractorActionsEl,
