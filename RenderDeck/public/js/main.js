@@ -54,6 +54,9 @@ import {
   uploadPropAsset,
   deletePropAsset,
   getAssetSignedUrl,
+  listMaterialPresets,
+  saveMaterialPreset,
+  deleteMaterialPreset,
 } from './storage/StorageService.js';
 import { init as initAuth, getUser, onAuthChange, signOut } from './auth/AuthService.js';
 
@@ -1232,6 +1235,34 @@ function getChannelThumbnailOverrides() {
 //   POST /api/projects/:projectId/materials
 //   { id, name, materialData: { channelMaps: { ch: storageAssetUuid } } }
 
+// Push a single material preset to the cloud (no-op for guests). Reads the
+// current in-memory state of the named preset (PBR scalars + channel maps)
+// and orchestrates the cloud upsert via StorageService. Channel maps that
+// are still signed URLs (round-tripped from listMaterialPresets) are skipped
+// inside saveMaterialPreset; only fresh data URLs get uploaded.
+async function pushPresetToCloud(name, materialValues, channelMaps) {
+  try {
+    const projectId = getActiveProjectIdSync();
+    if (!projectId) return;
+    const id = materialManager.getPresetId(name);
+    await saveMaterialPreset(projectId, { id, name, materialValues, channelMaps });
+  } catch (err) {
+    logError(`Cloud preset save failed for "${name}": ${err.message}`);
+  }
+}
+
+// Delete a preset from the cloud by id (no-op for guests).
+async function deletePresetFromCloud(presetId) {
+  if (!presetId) return;
+  try {
+    const projectId = getActiveProjectIdSync();
+    if (!projectId) return;
+    await deleteMaterialPreset(projectId, presetId);
+  } catch (err) {
+    logError(`Cloud preset delete failed: ${err.message}`);
+  }
+}
+
 async function savePresetChannelMapsToIDB() {
   try {
     const projectId = await getActiveProjectId();
@@ -2235,8 +2266,11 @@ document.getElementById('add-new-material')?.addEventListener('click', () => {
   const env     = sceneManager.getScene().environment;
   materialManager.applyEnvironment(forked, env);
   activeMesh.material = forked;
-  materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked), _channelMaps: serializeChannelMaps() || undefined });
+  const _newProps = extractPropertiesForPreset(forked);
+  const _newChannelMaps = serializeChannelMaps() || undefined;
+  materialManager.addUserPreset(newName, { ..._newProps, _channelMaps: _newChannelMaps });
   savePresetChannelMapsToIDB();
+  pushPresetToCloud(newName, _newProps, _newChannelMaps);
   updateMaterialPresetList();
   controls.setMaterialPresetValue(newName);
   setMaterialNameField(newName);
@@ -2277,12 +2311,16 @@ function _commitRename() {
     const forked = materialManager.forkMaterial(activeMesh.material, newName);
     materialManager.applyEnvironment(forked, sceneManager.getScene().environment);
     activeMesh.material = forked;
-    materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked), _channelMaps: serializeChannelMaps() || undefined });
+    const _renameProps = extractPropertiesForPreset(forked);
+    const _renameChannelMaps = serializeChannelMaps() || undefined;
+    materialManager.addUserPreset(newName, { ..._renameProps, _channelMaps: _renameChannelMaps });
     savePresetChannelMapsToIDB();
+    pushPresetToCloud(newName, _renameProps, _renameChannelMaps);
     scheduleThumbnailUpdate(newName, uvEditor.getCleanMaterialForThumbnail(), true);
     log(`Forked "${current}" → "${newName}"`);
   } else {
-    // User preset — rename in place
+    // User preset — rename in place. Cloud upsert uses the same id, so the
+    // backend row updates with the new name without losing channel maps.
     materialManager.renamePreset(current, newName);
     if (_matThumbCache.has(current)) {
       const dataUrl = _matThumbCache.get(current);
@@ -2291,6 +2329,14 @@ function _commitRename() {
       IDBStorage.put('blobs', THUMB_IDB_PREFIX + newName, dataUrl).catch(() => {});
       IDBStorage.del('blobs', THUMB_IDB_PREFIX + current).catch(() => {});
     }
+    // Push the PRESET's saved state (not the live material's edits — live
+    // slider changes don't auto-save in current UX, so renaming shouldn't
+    // silently bake them in). Strip underscore-prefixed internals before sending.
+    const _renamedParams = materialManager._userPresetParams[newName] || {};
+    const _renamedValues = Object.fromEntries(
+      Object.entries(_renamedParams).filter(([k]) => !k.startsWith('_'))
+    );
+    pushPresetToCloud(newName, _renamedValues, _renamedParams._channelMaps);
     log(`Renamed "${current}" → "${newName}"`);
   }
 
@@ -2322,10 +2368,17 @@ document.getElementById('delete-current-material')?.addEventListener('click', ()
   const fallback = materialManager.getPresetNames().find(n => n !== current);
   if (fallback) applyMaterialPreset(fallback);
 
+  // Capture the cloud preset id BEFORE deleteUserPreset removes the name → id mapping
+  const _deletedPresetId = materialManager.getPresetId(current);
+
   if (materialManager.isStandardPreset(current)) {
     materialManager.hideStandardPreset(current);
   } else if (!materialManager.deleteUserPreset(current)) {
     materialManager.dispose(activeMesh?.material);
+  } else {
+    // User preset successfully deleted locally — also delete from cloud (no-op for guests).
+    // Backend cascades: drops channel maps + their underlying assets in one tx.
+    deletePresetFromCloud(_deletedPresetId);
   }
   savePresetChannelMapsToIDB();
   _matThumbCache.delete(current);
@@ -4071,10 +4124,35 @@ async function initializeApp() {
       window.location.href = 'projects.html';
     });
   }
-  // Reload material presets now that the active project ID is confirmed
-  materialManager.reloadUserPresetsForProject(activeProject.id);
-  // Load preset channel maps from IDB (too large for localStorage)
-  await loadPresetChannelMapsFromIDB(activeProject.id);
+  // Reload material presets now that the active project ID is confirmed.
+  // Cloud users hydrate from the backend (with channel-map signed URLs);
+  // guests stay on the localStorage + IDB pathway as before.
+  const _isCloudUserForMaterials = !!(await getUser());
+  if (_isCloudUserForMaterials) {
+    try {
+      // Cloud is single source of truth: drop the stale localStorage cache
+      // for this project so reloadUserPresetsForProject loads nothing, then
+      // re-populate from cloud. Each addUserPreset writes through to
+      // localStorage as a cache, so the cache rebuilds with cloud truth.
+      try { localStorage.removeItem(`rd_user_presets:${activeProject.id}`); } catch (_) {}
+      materialManager.reloadUserPresetsForProject(activeProject.id);
+      const cloudPresets = await listMaterialPresets(activeProject.id);
+      for (const preset of cloudPresets) {
+        const params = { ...preset.materialValues, _id: preset.id };
+        if (preset.channelMaps && Object.keys(preset.channelMaps).length > 0) {
+          params._channelMaps = preset.channelMaps;
+        }
+        materialManager.addUserPreset(preset.name, params);
+      }
+      if (cloudPresets.length > 0) log(`Loaded ${cloudPresets.length} cloud material preset(s)`);
+    } catch (err) {
+      logError(`Failed to load cloud material presets: ${err.message}`);
+    }
+  } else {
+    materialManager.reloadUserPresetsForProject(activeProject.id);
+    // Load preset channel maps from IDB (too large for localStorage)
+    await loadPresetChannelMapsFromIDB(activeProject.id);
+  }
 
   const restored = await restoreSessionState();
   if (!restored && STANDARD_OBJECTS.length > 0) {

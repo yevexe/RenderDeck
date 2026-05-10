@@ -14,6 +14,7 @@ import * as cloud from './CloudStorage.js';
 import * as ProjectStorage from './ProjectStorage.js';
 import { CustomSceneStorage } from '../scenes/CustomSceneStorage.js';
 import * as signedUrls from './signedUrlCache.js';
+import { dataURLToFile } from './fileHelpers.js';
 
 // Lazy singletons so guest delegation reuses one instance per page lifetime.
 let _sceneStorage = null;
@@ -107,42 +108,81 @@ export async function ensureActiveProject() {
     return created;
 }
 
-// ─── Materials ───────────────────────────────────────────────────────────────
+// ─── Materials (presets + channel maps) ──────────────────────────────────────
+// Decision #7: cloud materials show in the same UI as local presets (no
+// separate section). All cloud paths return null/empty for guests so callers
+// can blindly invoke without branching themselves.
 
-export async function listMaterials(projectId) {
-    if (await isLoggedInAsync()) return cloud.get(`/api/projects/${projectId}/materials`);
-    throw guestNotRouted('listMaterials');
+// Fetch all material presets for a project, with channel map signed URLs
+// already resolved + cached. Returns shape MaterialManager can consume:
+//   [{ id, name, materialValues, channelMaps: { channel: signedUrl } }]
+export async function listMaterialPresets(projectId) {
+    if (!(await isLoggedInAsync())) return [];
+    const materials = await cloud.get(`/api/projects/${projectId}/materials`);
+    return Promise.all(materials.map(async m => {
+        const cms = await cloud.get(`/api/projects/${projectId}/materials/${m.id}/channel-maps`);
+        const channelMaps = {};
+        await Promise.all(cms.map(async cm => {
+            channelMaps[cm.channel] = await getAssetSignedUrl(cm.assetId);
+        }));
+        return {
+            id: m.id,
+            name: m.name,
+            materialValues: m.materialValues || {},
+            channelMaps,
+        };
+    }));
 }
 
-// Backend PUT /api/projects/{projectId}/materials/{materialId} is upsert,
-// so we generate a UUID client-side when the material is new.
-export async function saveMaterial(projectId, material) {
-    if (await isLoggedInAsync()) {
-        const id = material.id || crypto.randomUUID();
-        await cloud.put(`/api/projects/${projectId}/materials/${id}`, {
-            name: material.name,
-            materialValues: material.values,
-        });
-        return id;
-    }
-    throw guestNotRouted('saveMaterial');
-}
-
-export async function deleteMaterial(projectId, materialId) {
-    if (await isLoggedInAsync()) {
-        return cloud.del(`/api/projects/${projectId}/materials/${materialId}`);
-    }
-    throw guestNotRouted('deleteMaterial');
-}
-
-export async function saveChannelMap(projectId, materialId, channel, file) {
-    if (await isLoggedInAsync()) {
-        return cloud.putFile(
-            `/api/projects/${projectId}/materials/${materialId}/channel-maps/${channel}`,
-            file
+// Upsert a preset (PUT material header) and upload any provided channel maps
+// in parallel. Backend's upsertChannelMap cascades old asset cleanup, so
+// uploading a new image for an existing channel automatically deletes the
+// old file (Decision #7 cleanup). Returns the preset id (generated if new).
+export async function saveMaterialPreset(projectId, { id, name, materialValues, channelMaps }) {
+    if (!(await isLoggedInAsync())) return null;
+    const presetId = id || crypto.randomUUID();
+    await cloud.put(`/api/projects/${projectId}/materials/${presetId}`, {
+        name,
+        materialValues: materialValues || {},
+    });
+    if (channelMaps && Object.keys(channelMaps).length > 0) {
+        await Promise.all(
+            Object.entries(channelMaps).map(async ([channel, value]) => {
+                if (!value) return;
+                // Skip already-uploaded entries (signed URLs round-tripped from
+                // listMaterialPresets — no need to re-upload). Only data URLs
+                // come from the in-memory editor and need to be pushed.
+                if (typeof value !== 'string' || !value.startsWith('data:')) return;
+                const file = await dataURLToFile(value, `${channel}.png`, 'image/png');
+                await cloud.putFile(
+                    `/api/projects/${projectId}/materials/${presetId}/channel-maps/${channel}`,
+                    file
+                );
+                // The new asset id is unknown to us here — evict the channel's
+                // cached signed URL by assetId would require a fresh fetch.
+                // On next listMaterialPresets, fresh signed URL will be issued.
+            })
         );
     }
-    throw guestNotRouted('saveChannelMap');
+    return presetId;
+}
+
+// Delete a material preset. Backend cascades — drops all channel maps and
+// their underlying Assets + bucket files in one transaction.
+export async function deleteMaterialPreset(projectId, presetId) {
+    if (!(await isLoggedInAsync())) return null;
+    return cloud.del(`/api/projects/${projectId}/materials/${presetId}`);
+}
+
+// Delete a single channel map (when user clears one channel without deleting
+// the whole preset). Backend's DELETE endpoint takes channelMapId, so we list
+// + find by channel name first.
+export async function deleteMaterialChannelMap(projectId, materialId, channel) {
+    if (!(await isLoggedInAsync())) return null;
+    const list = await cloud.get(`/api/projects/${projectId}/materials/${materialId}/channel-maps`);
+    const match = list.find(cm => cm.channel === channel);
+    if (!match) return null;
+    return cloud.del(`/api/projects/${projectId}/materials/${materialId}/channel-maps/${match.id}`);
 }
 
 // ─── Scenes ──────────────────────────────────────────────────────────────────
