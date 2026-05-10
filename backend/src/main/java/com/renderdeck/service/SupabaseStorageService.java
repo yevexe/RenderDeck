@@ -16,14 +16,19 @@ public class SupabaseStorageService {
 
     private final RestClient restClient;
     private final String bucket;
+    // Held for prepending to signed-URL paths — Supabase returns just
+    // "/object/sign/..." which would resolve against the frontend's origin
+    // and 404. Need the full https://{ref}.supabase.co/storage/v1 prefix.
+    private final String storageBaseUrl;
 
     public SupabaseStorageService(
             @Value("${supabase.url}") String supabaseUrl,
             @Value("${supabase.service-key}") String serviceKey,
             @Value("${supabase.storage.bucket}") String bucket) {
         this.bucket = bucket;
+        this.storageBaseUrl = supabaseUrl + "/storage/v1";
         this.restClient = RestClient.builder()
-                .baseUrl(supabaseUrl + "/storage/v1")
+                .baseUrl(this.storageBaseUrl)
                 .defaultHeader("Authorization", "Bearer " + serviceKey)
                 .defaultHeader("apikey", serviceKey)
                 .build();
@@ -66,6 +71,9 @@ public class SupabaseStorageService {
         if (response == null || !response.containsKey("signedURL")) {
             throw new RuntimeException("Failed to get signed URL for: " + storagePath);
         }
-        return (String) response.get("signedURL");
+        // Supabase returns a relative path like "/object/sign/bucket/...".
+        // Prepend the storage base URL so the frontend's TextureLoader can
+        // load it directly without resolving against its own origin.
+        return storageBaseUrl + (String) response.get("signedURL");
     }
 }
