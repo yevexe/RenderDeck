@@ -116,21 +116,34 @@ export async function ensureActiveProject() {
 // Fetch all material presets for a project, with channel map signed URLs
 // already resolved + cached. Returns shape MaterialManager can consume:
 //   [{ id, name, materialValues, channelMaps: { channel: signedUrl } }]
+//
+// Per-channel-map errors are swallowed: a missing or orphaned Asset (e.g.
+// row exists but bucket file got deleted) skips that one channel map but
+// the rest of the material — and every other material — still loads.
+// Otherwise one bad asset would cascade-kill the whole preset list.
 export async function listMaterialPresets(projectId) {
     if (!(await isLoggedInAsync())) return [];
     const materials = await cloud.get(`/api/projects/${projectId}/materials`);
     return Promise.all(materials.map(async m => {
-        const cms = await cloud.get(`/api/projects/${projectId}/materials/${m.id}/channel-maps`);
-        const channelMaps = {};
-        await Promise.all(cms.map(async cm => {
-            channelMaps[cm.channel] = await getAssetSignedUrl(cm.assetId);
-        }));
-        return {
+        const base = {
             id: m.id,
             name: m.name,
             materialValues: m.materialValues || {},
-            channelMaps,
+            channelMaps: {},
         };
+        try {
+            const cms = await cloud.get(`/api/projects/${projectId}/materials/${m.id}/channel-maps`);
+            await Promise.all(cms.map(async cm => {
+                try {
+                    base.channelMaps[cm.channel] = await getAssetSignedUrl(cm.assetId);
+                } catch (err) {
+                    console.warn(`Skipping channel map "${cm.channel}" for material ${m.id} (asset ${cm.assetId}): ${err.message}`);
+                }
+            }));
+        } catch (err) {
+            console.warn(`Failed to fetch channel maps for material ${m.id}: ${err.message}`);
+        }
+        return base;
     }));
 }
 

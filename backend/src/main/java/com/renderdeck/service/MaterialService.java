@@ -56,10 +56,16 @@ public class MaterialService {
                 .orElseThrow(() -> new NotFoundException("Material not found"));
         if (!material.getUserId().equals(userId)) throw new ForbiddenException();
 
-        // Remove old channel map asset if one exists for this channel
+        // Remove old channel map asset if one exists for this channel.
+        // Order matters: delete the channel_map row FIRST and flush so the FK
+        // reference is gone before assetService.delete tries to drop the asset
+        // row. Otherwise Postgres rejects with FK constraint violation, which
+        // also leaves the bucket file deleted but the row dangling (orphan).
         channelMapRepository.findByMaterialIdAndChannel(materialId, channel).ifPresent(existing -> {
-            assetService.delete(existing.getAssetId(), userId);
+            UUID oldAssetId = existing.getAssetId();
             channelMapRepository.delete(existing);
+            channelMapRepository.flush();
+            assetService.delete(oldAssetId, userId);
         });
 
         Asset asset = assetService.upload(userId, material.getProjectId(), file);
@@ -84,9 +90,16 @@ public class MaterialService {
                 .orElseThrow(() -> new NotFoundException("Material not found"));
         if (!material.getUserId().equals(requestingUserId)) throw new ForbiddenException();
 
+        // Delete channel_map rows first so the asset FK references are gone
+        // before assetService.delete drops the asset rows. Flush in between to
+        // commit the channel_map removal to the DB before the asset delete
+        // queries fire (otherwise Postgres rejects with FK violation and leaves
+        // bucket files orphaned).
         List<MaterialChannelMap> maps = channelMapRepository.findByMaterialId(materialId);
-        maps.forEach(m -> assetService.delete(m.getAssetId(), requestingUserId));
+        List<UUID> assetIds = maps.stream().map(MaterialChannelMap::getAssetId).toList();
         channelMapRepository.deleteByMaterialId(materialId);
+        channelMapRepository.flush();
+        assetIds.forEach(assetId -> assetService.delete(assetId, requestingUserId));
         materialRepository.delete(material);
     }
 
@@ -97,7 +110,11 @@ public class MaterialService {
         Material material = materialRepository.findById(map.getMaterialId())
                 .orElseThrow(() -> new NotFoundException("Material not found"));
         if (!material.getUserId().equals(requestingUserId)) throw new ForbiddenException();
-        assetService.delete(map.getAssetId(), requestingUserId);
+        // Same FK-ordering reason as upsertChannelMap: drop the channel_map row
+        // first (flush to commit), then delete the asset.
+        UUID assetId = map.getAssetId();
         channelMapRepository.delete(map);
+        channelMapRepository.flush();
+        assetService.delete(assetId, requestingUserId);
     }
 }

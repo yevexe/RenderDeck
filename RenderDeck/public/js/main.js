@@ -4153,6 +4153,10 @@ async function initializeApp() {
     // Load preset channel maps from IDB (too large for localStorage)
     await loadPresetChannelMapsFromIDB(activeProject.id);
   }
+  // The earlier updateMaterialPresetList() ran before the project-scoped
+  // presets were loaded into MaterialManager, so the dropdown is stale.
+  // Refresh it now that both cloud and guest paths have populated state.
+  updateMaterialPresetList();
 
   const restored = await restoreSessionState();
   if (!restored && STANDARD_OBJECTS.length > 0) {
