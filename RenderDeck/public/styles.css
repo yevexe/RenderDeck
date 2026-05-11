@@ -1752,7 +1752,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 
 .compact-color-picker{
   position: fixed;
-  z-index: 1200;
+  z-index: 10000;
   width: 270px;
   max-width: calc(100vw - 16px);
   padding: 10px;
@@ -3151,19 +3151,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 
 .tf-sep { height: 1px; background: #444; margin: 2px 0; }
 
-/* ── Transform sensitivity panel ────────────────────────────────── */
-.transform-sensitivity-panel {
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 0;
-  z-index: 200;
-  width: max-content;
-  background: #1e1e1e;
-  border: 1px solid #444;
-  border-radius: 6px;
-  padding: 8px 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-}
+/* ── Transform sensitivity panel — styled via .toolbar-popup ──────── */
 
 .snap-toggle-list {
   display: flex;
@@ -3281,8 +3269,8 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   margin-left: 6px;
 }
 
-/* ── Grid settings popup ─────────────────────────────────────── */
-.grid-settings-popup {
+/* ── Shared toolbar popup — covers grid, dim, snap, sensitivity panels ── */
+.toolbar-popup {
   position: absolute;
   left: calc(100% + 8px);
   top: 0;
@@ -3294,6 +3282,27 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   padding: 8px 10px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.5);
 }
+
+.popup-close-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: #555;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.1s;
+}
+.popup-close-btn:hover { color: #ccc; }
 
 /* ── Unit toggle buttons (cm/in, Default/Parallel) ─────────── */
 .popup-section-label {
@@ -3480,4 +3489,845 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 /* Thumbnail in the trigger button sits to the left of the label */
 .custom-select__trigger-thumb {
   margin-right: 2px;
+}
+
+/* ── Expert section launch UI ── */
+.expert-tab-desc {
+  font-size: 11px;
+  color: #777;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.expert-launch-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.expert-launch-sub {
+  font-size: 10px;
+  color: #666;
+  line-height: 1.4;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   NODE EDITOR
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Overlay shell ── */
+.ne-overlay {
+  position: fixed;
+  z-index: 8000;
+  display: flex;
+  flex-direction: column;
+  background: #141414;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.75);
+  overflow: hidden;
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #ccc;
+  min-width: 480px;
+  min-height: 300px;
+}
+
+/* ── Title bar ── */
+.ne-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #242424;
+  flex-shrink: 0;
+  cursor: move;
+  user-select: none;
+}
+
+.ne-titlebar-title {
+  font-size: 19px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+
+.ne-close-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: #555;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+.ne-close-btn:hover { color: #ccc; }
+
+/* ── Content layout ── */
+.ne-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Left panel ── */
+.ne-left {
+  width: 186px;
+  flex-shrink: 0;
+  background: #111;
+  border-right: 1px solid #1f1f1f;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ne-left-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  background: #181818;
+  border-bottom: 1px solid #222;
+  position: relative;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.ne-left-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ── Burger button ── */
+.ne-menu-btn {
+  padding: 0;
+  margin-right: 0;
+  border: none;
+  background: none;
+  outline: none;
+  color: #c8c8c8;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+.ne-menu-btn:hover { color: #fff; }
+.ne-menu-btn span {
+  width: 10px;
+  height: 1px;
+  background: currentColor;
+  display: block;
+}
+
+/* ── Dropdown (position:fixed, coords set by JS) ── */
+.ne-menu {
+  position: fixed;
+  min-width: 148px;
+  padding: 2px;
+  border: 1px solid #343434;
+  border-radius: 6px;
+  background: #171717;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.5);
+  z-index: 9999;
+}
+
+.ne-menu-item {
+  display: block;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #d0d0d0;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ne-menu-item:hover { background: #252525; }
+
+/* ── Scroll area ── */
+.ne-left-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ne-left-scroll::-webkit-scrollbar { width: 4px; }
+.ne-left-scroll::-webkit-scrollbar-track { background: #0a0a0a; }
+.ne-left-scroll::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+.ne-left-scroll::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+
+/* ── Collections ── */
+.ne-collection + .ne-collection { margin-top: -1px; }
+
+.ne-collection {
+  position: relative;
+  z-index: 0;
+  background: #0f0f0f;
+  border: 1px solid #1e1e1e;
+  overflow: hidden;
+}
+
+.ne-collection.is-selected {
+  z-index: 2;
+  border-color: #555;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.04);
+}
+
+.ne-collection-toggle {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 10px 5px;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.18) 100%), #141414;
+  border: none;
+  color: #8c8c8c;
+  cursor: pointer;
+  text-align: left;
+}
+.ne-collection.is-selected .ne-collection-toggle {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.22) 100%), #2a2a2a;
+  color: #c0c0c0;
+}
+
+.ne-collection-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #c8c8c8;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.ne-collection-chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.ne-collection.is-open .ne-collection-chevron {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.ne-collection-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.18s ease;
+}
+.ne-collection.is-open .ne-collection-content {
+  max-height: 600px;
+}
+
+/* ── Items ── */
+.ne-item {
+  display: block;
+  width: 100%;
+  padding: 4px 16px;
+  border: none;
+  border-bottom: 1px solid #151515;
+  background: #0a0a0a;
+  color: #666;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.ne-item:last-child { border-bottom: none; }
+.ne-item:hover { background: #181818; color: #ccc; }
+
+/* ── Canvas area ── */
+.ne-canvas {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ne-canvas-area {
+  flex: 1;
+  overflow: hidden;
+  background-color: #0d0d0d;
+  background-image: radial-gradient(circle, #272727 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ── Bottom canvas toolbar ── */
+.ne-canvas-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 26px;
+  flex-shrink: 0;
+  background: #111;
+  border-top: 1px solid #1e1e1e;
+}
+
+.ne-bar-btn {
+  padding: 2px 8px;
+  background: #1a1a1a;
+  border: 1px solid #2e2e2e;
+  border-radius: 3px;
+  color: #999;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.ne-bar-btn:hover { background: #252525; color: #ddd; }
+
+.ne-bar-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ne-bar-label {
+  font-size: 11px;
+  color: #555;
+}
+
+.ne-bar-select {
+  padding: 1px 4px;
+  background: #1a1a1a;
+  border: 1px solid #2e2e2e;
+  border-radius: 3px;
+  color: #999;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+}
+.ne-bar-select:focus { border-color: #444; }
+
+/* ── Inline rename form ── */
+.ne-rename-form {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid #5a5a5a;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #111;
+  z-index: 4;
+  box-sizing: border-box;
+}
+.ne-rename-form:focus-within { border-color: #888; }
+
+.ne-rename-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.ne-rename-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 22px 0 8px;
+  background: transparent;
+  color: #d0d0d0;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  line-height: 1;
+  caret-color: #c8c8c8;
+}
+
+.ne-rename-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  background: #3a3a3a;
+  border: none;
+  border-radius: 50%;
+  color: #999;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ne-rename-clear:hover { background: #505050; color: #e0e0e0; }
+
+.ne-rename-confirm {
+  flex-shrink: 0;
+  align-self: stretch;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.22) 100%), #1e1e1e;
+  color: #c8c8c8;
+  border: none;
+  border-left: 1px solid #4a4a4a;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.ne-rename-confirm:hover {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.16) 0%, rgba(0,0,0,0.22) 100%), #2a2a2a;
+  color: #fff;
+}
+
+/* ── Resize handles ── */
+.ne-resize {
+  position: absolute;
+  z-index: 10;
+  background: transparent;
+}
+/* Edge strips */
+.ne-resize--n { top: 0;    left: 12px;  right: 12px; height: 5px; cursor: n-resize; }
+.ne-resize--s { bottom: 0; left: 12px;  right: 12px; height: 5px; cursor: s-resize; }
+.ne-resize--e { right: 0;  top: 12px; bottom: 12px;  width: 5px;  cursor: e-resize; }
+.ne-resize--w { left: 0;   top: 12px; bottom: 12px;  width: 5px;  cursor: w-resize; }
+/* Corner handles */
+.ne-resize--ne { top: 0;    right: 0;  width: 12px; height: 12px; cursor: ne-resize; }
+.ne-resize--se { bottom: 0; right: 0;  width: 12px; height: 12px; cursor: se-resize; }
+.ne-resize--sw { bottom: 0; left: 0;   width: 12px; height: 12px; cursor: sw-resize; }
+.ne-resize--nw { top: 0;    left: 0;   width: 12px; height: 12px; cursor: nw-resize; }
+
+/* ─────────────────────────────────────────────────────────────
+   Node graph — HTML/CSS nodes, SVG connections only
+   ───────────────────────────────────────────────────────────── */
+
+.ne-canvas-area { position: relative; }
+
+/* Viewport: all nodes + SVG connection layer live here */
+.ne-viewport {
+  position: absolute;
+  top: 0; left: 0;
+  transform-origin: 0 0;
+}
+
+/* ── Node shell ── */
+.ne-node {
+  position: absolute;
+  width: 227px;            /* 6 cm @ 96 dpi */
+  background: #1b1b1b;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #2e2e2e, 0 4px 16px rgba(0,0,0,0.5);
+  overflow: visible;       /* ports stick out */
+  font-family: 'Inter', system-ui, sans-serif;
+  transition: box-shadow 0.12s;
+  cursor: default;
+  box-sizing: border-box;
+}
+.ne-node:hover {
+  box-shadow: 0 0 0 1px #484848, 0 4px 20px rgba(0,0,0,0.6);
+}
+
+/* ── Header ── */
+.ne-node-header {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px 0 10px;
+  border-radius: 8px 8px 0 0;
+  cursor: grab;
+  user-select: none;
+}
+.ne-node-header:active { cursor: grabbing; }
+
+.ne-node-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* ── Delete button ── */
+.ne-del {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.35);
+  color: #aaa;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 2px;
+  transition: background 0.1s, color 0.1s;
+}
+.ne-del:hover { background: #b92d2d; color: #fff; }
+
+/* ── Preview canvas ── */
+.ne-node-preview-wrap {
+  padding: 10px;           /* must equal PAD constant */
+  box-sizing: border-box;
+}
+.ne-node-preview {
+  display: block;
+  width: 207px;            /* PREV_SZ = NODE_W - 2*PAD */
+  height: 207px;
+  border-radius: 3px;
+}
+
+/* ── Port section ── */
+.ne-port-section { }
+
+.ne-port-row {
+  height: 26px;            /* must equal PORT_ROW_H constant */
+  display: flex;
+  align-items: center;
+}
+
+.ne-port-slot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.ne-port-slot--r {
+  justify-content: flex-end;
+}
+
+.ne-port {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.ne-port-dot {
+  width: 14px;             /* diameter = 2 * PORT_R */
+  height: 14px;
+  border-radius: 50%;
+  background: #3a3a3a;
+  border: 1.5px solid #4a8cff;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  cursor: crosshair;
+  transition: background 0.1s, border-color 0.1s;
+}
+.ne-port--in  .ne-port-dot { margin-left:  -7px; }   /* sticks out left  */
+.ne-port--out .ne-port-dot { margin-right: -7px; }   /* sticks out right */
+
+.ne-port-dot:hover  { background: #4a8cff; border-color: #89c0ff; }
+
+.ne-port-label {
+  font-size: 10px;
+  color: #6a6a6a;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* ── Connection SVG (only bezier curves, no node shapes) ── */
+.ne-conn {
+  cursor: pointer;
+  pointer-events: stroke;
+  transition: stroke 0.1s, stroke-width 0.1s;
+}
+.ne-conn:hover { stroke: #89c0ff !important; stroke-width: 3 !important; }
+
+/* ── Controls ── */
+.ne-node-controls {
+  padding: 10px;           /* PAD */
+  box-sizing: border-box;
+}
+
+/* Scoped overrides so shared .control-row/.slider/.value-input fit the 207px node body */
+.ne-node-controls .control-row {
+  height: 32px;
+  box-sizing: border-box;
+}
+.ne-node-controls .control-row .slider {
+  width: 80px;
+  flex: 0 0 80px;
+  margin: 0;
+}
+.ne-node-controls .control-row .value-input {
+  width: 78px;
+  min-width: 0;
+}
+
+/* Output dot embedded in control row — pokes through the 10px padding to land on node edge */
+.ne-port-dot--out {
+  margin-right: -17px; /* -(PAD + PORT_R) = -(10 + 7) */
+  margin-left: 5px;
+  flex-shrink: 0;
+  cursor: crosshair;
+}
+
+/* ── Material Output node ── */
+.ne-node--material-output {
+  width: 280px;
+}
+.ne-node--material-output .ne-node-header {
+  cursor: grab;
+}
+.ne-node--material-output .ne-node-header:active {
+  cursor: grabbing;
+}
+
+.ne-mat-info {
+  box-sizing: border-box;
+  height: 46px;
+  padding: 7px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #1b1b1b;
+  border-bottom: 1px solid #252525;
+}
+.ne-mat-info-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  overflow: hidden;
+}
+.ne-mat-info-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #7a7a7a;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ne-mat-info-value {
+  font-size: 10px;
+  font-weight: 400;
+  color: #b8b8b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ne-mat-section {
+  border-top: 1px solid #252525;
+}
+
+.ne-mat-section-toggle {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px 0 8px;
+  border: none;
+  background: #1e1e1e;
+  color: #7a7a7a;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  user-select: none;
+  transition: background 0.1s, color 0.1s;
+}
+.ne-mat-section-toggle:hover {
+  background: #252525;
+  color: #b0b0b0;
+}
+
+.ne-mat-section-chevron {
+  width: 0; height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.ne-mat-section.is-open .ne-mat-section-chevron {
+  transform: rotate(180deg);
+}
+
+.ne-mat-section-content {
+  display: none;
+}
+.ne-mat-section.is-open .ne-mat-section-content {
+  display: block;
+}
+
+/* Color-type port dots get an orange tint to distinguish them from scalar ports */
+.ne-port-dot--color-type {
+  border-color: #c87830;
+}
+.ne-port-dot--color-type:hover {
+  background: #c87830;
+  border-color: #e8a060;
+}
+
+/* Texture-type port dots get a teal tint */
+.ne-port-dot--texture-type {
+  border-color: #30a8a8;
+}
+.ne-port-dot--texture-type:hover {
+  background: #30a8a8;
+  border-color: #60d0d0;
+}
+
+/* Connected input dot — shows grab cursor to hint it's draggable to disconnect */
+.ne-port-dot--wired {
+  cursor: grab;
+}
+.ne-port-dot--wired:active {
+  cursor: grabbing;
+}
+
+/* Port rows inside material-output */
+.ne-node--material-output .ne-port-row {
+  padding-left: 0;
+}
+.ne-node--material-output .ne-port-row--has-ctrl {
+  padding-right: 4px;
+}
+/* dot-only port element — shrink to just the dot width */
+.ne-node--material-output .ne-port-row--has-ctrl .ne-port--in {
+  flex-shrink: 0;
+  width: 7px;    /* PORT_R = half of 14px dot, the rest hangs left */
+}
+/* control-row fills remaining width */
+.ne-node--material-output .ne-port-row--has-ctrl .control-row {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: 4px;
+}
+/* label truncates so it doesn't push slider off-screen */
+.ne-node--material-output .ne-port-row--has-ctrl .control-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* narrow the slider to fit */
+.ne-node--material-output .ne-port-row--has-ctrl .slider {
+  width: 100px;
+  flex: 0 0 100px;
+  margin: 0;
+}
+/* narrow the number input to fit */
+.ne-node--material-output .ne-port-row--has-ctrl .value-input {
+  width: 50px;
+  min-width: 0;
+}
+/* hex field matches number input width */
+.ne-node--material-output .ne-port-row--has-ctrl .color-field {
+  flex: 0 0 auto;
+}
+.ne-node--material-output .ne-port-row--has-ctrl .color-field .value-input {
+  width: 64px;
+}
+
+/* Connected port controls are greyed out — the wire input overrides the manual value */
+.ne-ctrl--connected {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
+}
+
+/* ── Image node drop zone ── */
+.ne-image-drop {
+  display: flex;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+}
+.ne-image-drop.drag-over {
+  box-shadow: inset 0 0 0 1px #5a9eff;
+  background: linear-gradient(to bottom, rgba(90,158,255,0.12) 0%, rgba(0,0,0,0.18) 100%), #1e1e1e;
+}
+.ne-image-drop.has-image {
+  border-color: #2d6e50;
+}
+.ne-image-drop-label {
+  pointer-events: none;
+}
+
+/* ── Implemented items in left panel ── */
+.ne-item--live { color: #b0b0b0; }
+.ne-item--live:hover { color: #fff; background: #1c1c1c; }
+.ne-item--live::before {
+  content: '';
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #4a8cff;
+  margin-right: 6px;
+  vertical-align: middle;
+  position: relative; top: -1px;
+  opacity: 0.7;
+}
+
+/* ── Shader Graph watermark ── */
+.ne-graph-label {
+  position: absolute;
+  bottom: 10px; right: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.055);
+  pointer-events: none;
+  user-select: none;
+  z-index: 1;
+}
+
+/* ── Zoom controls ── */
+.ne-zoom-btn {
+  width: 22px; padding: 0;
+  font-size: 14px; font-weight: 400; line-height: 1;
+  flex-shrink: 0;
+}
+.ne-zoom-slider {
+  width: 80px;
+  accent-color: #4a8cff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ne-zoom-label {
+  font-size: 10px; color: #555;
+  min-width: 32px; text-align: center;
+  flex-shrink: 0;
+  font-family: 'Inter', monospace, sans-serif;
+  user-select: none;
 }

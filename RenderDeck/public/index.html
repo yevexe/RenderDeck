@@ -125,6 +125,7 @@
 
             <!-- Grid settings popup — shown/hidden by tf-grid-settings button -->
             <div id="grid-settings-popup" class="grid-settings-popup toolbar-popup" style="display:none;">
+              <button class="popup-close-btn" aria-label="Close">&times;</button>
               <!-- Unit toggle at top -->
               <p class="popup-section-label">Units</p>
               <div class="unit-toggle">
@@ -150,6 +151,7 @@
             </div>
             <!-- Dimension label settings popup -->
             <div id="dim-settings-popup" class="grid-settings-popup toolbar-popup" style="display:none;">
+              <button class="popup-close-btn" aria-label="Close">&times;</button>
               <p class="popup-section-label">Label Style</p>
               <div class="unit-toggle">
                 <button id="dim-style-default" class="unit-btn unit-btn--active">Default</button>
@@ -159,6 +161,7 @@
 
             <!-- Snap options popup -->
             <div id="snap-settings-popup" class="grid-settings-popup toolbar-popup" style="display:none;">
+              <button class="popup-close-btn" aria-label="Close">&times;</button>
               <p class="popup-section-label">Snap To</p>
               <div class="snap-toggle-list">
                 <button id="snap-grid-btn" class="unit-btn unit-btn--active">Grid</button>
@@ -168,6 +171,7 @@
 
             <!-- Transform sensitivity panel -->
             <div id="transform-sensitivity-panel" class="transform-sensitivity-panel toolbar-popup" style="display:none;">
+              <button class="popup-close-btn" aria-label="Close">&times;</button>
               <div class="ts-mode" id="ts-translate" style="display:none;">
                 <p class="popup-section-label">Move</p>
                 <div class="ts-row">
@@ -1006,6 +1010,27 @@
                   </div>
                 </div>
               </div>
+
+              <!-- ===== Expert section ===== -->
+              <div class="material-section" data-material-section="expert">
+                <button type="button" class="material-section-toggle" id="material-expert-toggle"
+                  aria-expanded="false" aria-controls="material-expert-content">
+                  <span class="material-section-title">Expert</span>
+                  <span class="material-section-chevron" aria-hidden="true"></span>
+                </button>
+                <div class="material-section-content" id="material-expert-content">
+
+                  <h4>Node Graph</h4>
+                  <p class="expert-tab-desc">Generate and combine channel map textures procedurally. Connect noise generators, normal map converters, image inputs, and blend operations, then apply the results directly to the active material.</p>
+
+                  <div class="expert-launch-block">
+                    <button class="button-medium" id="open-node-graph-btn">Open Node Graph</button>
+                    <p class="expert-launch-sub">Opens a floating panel — stays visible across all tabs.</p>
+                  </div>
+
+                </div>
+              </div>
+
             </div>
 
             </div>
