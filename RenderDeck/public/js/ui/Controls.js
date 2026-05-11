@@ -1809,13 +1809,16 @@ export class CompactColorPicker {
     const rect = anchorEl.getBoundingClientRect();
     const panelWidth = this.panelEl.offsetWidth || 252;
     const panelHeight = this.panelEl.offsetHeight || 362;
-    let left = rect.right - panelWidth;
-    let top = rect.bottom + 8;
 
+    // Prefer opening to the left of the anchor; fall back to the right if too close to edge.
+    let left = rect.left - panelWidth - 8;
+    if (left < 8) left = rect.right + 8;
     if (left + panelWidth > window.innerWidth - 8) left = window.innerWidth - panelWidth - 8;
-    if (top + panelHeight > window.innerHeight - 8) top = rect.top - panelHeight - 8;
+
+    // Vertically align top with anchor; push up if it clips the bottom.
+    let top = rect.top;
+    if (top + panelHeight > window.innerHeight - 8) top = window.innerHeight - panelHeight - 8;
     if (top < 8) top = 8;
-    if (left < 8) left = 8;
 
     this.panelEl.style.left = `${Math.round(left)}px`;
     this.panelEl.style.top = `${Math.round(top)}px`;
@@ -2759,6 +2762,8 @@ export class ControlsManager {
       materialBasicContent: document.getElementById('material-basic-content'),
       materialAdvancedSection: document.getElementById('material-advanced-toggle'),
       materialAdvancedContent: document.getElementById('material-advanced-content'),
+      materialExpertSection: document.getElementById('material-expert-toggle'),
+      materialExpertContent: document.getElementById('material-expert-content'),
 
       // Base
       basecolorPicker: document.getElementById('basecolor-picker'),
@@ -2921,6 +2926,7 @@ export class ControlsManager {
   initMaterialSections() {
     this._bindMaterialSection(this.elements.materialBasicSection, this.elements.materialBasicContent, true);
     this._bindMaterialSection(this.elements.materialAdvancedSection, this.elements.materialAdvancedContent, false);
+    this._bindMaterialSection(this.elements.materialExpertSection, this.elements.materialExpertContent, false);
   }
 
   // ─── Grid settings popup ──────────────────────────────────────
@@ -2932,6 +2938,7 @@ export class ControlsManager {
       document.querySelectorAll('.toolbar-popup').forEach(p => { p.style.display = 'none'; });
       document.getElementById('tf-grid-settings')?.classList.remove('tf-btn--active');
       document.getElementById('tf-dim-settings')?.classList.remove('tf-btn--active');
+      document.getElementById('tf-snap-settings')?.classList.remove('tf-btn--active');
     }
 
     // Popup open / close
@@ -3678,6 +3685,61 @@ export class ControlsManager {
         this._drawChannelThumb(thumb, material[ch] ?? null);
       }
     });
+  }
+
+  /** Sync a single material property's UI controls without touching any other elements.
+   *  Used by the Node Editor to push changes without the overhead of syncMaterialUI. */
+  syncOneMaterialProp(matProp, value) {
+    const el = this.elements;
+    const set = (slider, input, val) => {
+      if (slider) slider.value = val;
+      if (input)  input.value  = val;
+    };
+    const setHex = (picker, hexInput, hexStr) => {
+      if (!hexStr || !/^#[0-9a-fA-F]{6}$/i.test(hexStr)) return;
+      if (picker?._compactColorPicker) {
+        picker._compactColorPicker.setColor(hexStr, { emit: false });
+      } else {
+        if (picker)   picker.value   = hexStr;
+        if (hexInput) hexInput.value = hexStr;
+      }
+    };
+    switch (matProp) {
+      case 'color':             return setHex(el.basecolorPicker, el.basecolorHex, value);
+      case 'metalness':         return set(el.metalnessSlider, el.metalnessInput, value);
+      case 'roughness':         return set(el.roughnessSlider, el.roughnessInput, value);
+      case 'specularColor':     return setHex(el.speccolorPicker, el.speccolorHex, value);
+      case 'specularIntensity': return set(el.specintSlider, el.specintInput, value);
+      case 'clearcoat':         return set(el.clearcoatSlider, el.clearcoatInput, value);
+      case 'clearcoatRoughness':return set(el.clearcoatroughSlider, el.clearcoatroughInput, value);
+      case 'opacity':           return set(el.opacitySlider, el.opacityInput, value);
+      case 'transmission':      return set(el.transmissionSlider, el.transmissionInput, value);
+      case 'ior':               return set(el.iorSlider, el.iorInput, value);
+      case 'thickness':         return set(el.thicknessSlider, el.thicknessInput, value);
+      case 'attenuationDistance': return set(el.attdistSlider, el.attdistInput, value === Infinity ? 0 : value);
+      case 'attenuationColor':  return setHex(el.attcolorPicker, el.attcolorHex, value);
+      case 'sheenColor':        return setHex(el.sheencolorPicker, el.sheencolorHex, value);
+      case 'sheenRoughness':    return set(el.sheenroughSlider, el.sheenroughInput, value);
+      case 'emissive':          return setHex(el.emissivecolorPicker, el.emissiveHex, value);
+      case 'emissiveIntensity': return set(el.emissiveintSlider, el.emissiveintInput, value);
+      case 'envMapIntensity':   return set(el.envintSlider, el.envintInput, value);
+      case 'anisotropy':        return set(el.anisotropySlider, el.anisotropyInput, value);
+      case 'anisotropyRotation':return set(el.anisotropyRotationSlider, el.anisotropyRotationInput, value);
+      case 'iridescence':       return set(el.iridescenceSlider, el.iridescenceInput, value);
+      case 'iridescenceIOR':    return set(el.iridescenceIorSlider, el.iridescenceIorInput, value);
+      case 'iridescenceThicknessRange_min': return set(el.iridescenceThicknessMinSlider, el.iridescenceThicknessMinInput, value);
+      case 'iridescenceThicknessRange_max': return set(el.iridescenceThicknessMaxSlider, el.iridescenceThicknessMaxInput, value);
+      case 'iridescenceThicknessRange':
+        if (Array.isArray(value)) {
+          set(el.iridescenceThicknessMinSlider, el.iridescenceThicknessMinInput, value[0]);
+          set(el.iridescenceThicknessMaxSlider, el.iridescenceThicknessMaxInput, value[1]);
+        }
+        return;
+      case 'dispersion':        return set(el.dispersionSlider, el.dispersionInput, value);
+      case 'reflectivity':      return set(el.reflectivitySlider, el.reflectivityInput, value);
+      case 'sheen':             return set(el.sheenSlider, el.sheenInput, value);
+      case 'normalScale':       return set(el.normalScaleSlider, el.normalScaleInput, value);
+    }
   }
 
   /** Sync the custom material dropdown to show a preset without firing onChange. */

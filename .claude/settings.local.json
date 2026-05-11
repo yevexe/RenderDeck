@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node --input-type=module)"
+      "Bash(node --input-type=module)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

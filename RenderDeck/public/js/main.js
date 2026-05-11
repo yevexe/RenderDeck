@@ -18,6 +18,7 @@ import { ModelManager } from './models/ModelManager.js';
 
 import { UVEditor } from './ui/UVEditor.js';
 import { ControlsManager, initDebugPanelWidth, initObjectPropsTabs } from './ui/Controls.js';
+import { NodeEditorManager } from './ui/NodeEditorManager.js';
 import { SceneStateManager }    from './stateEditor/SceneState.js';
 import { DesignStateManager }   from './stateEditor/DesignState.js';
 import { MaterialStateManager } from './stateEditor/MaterialState.js';
@@ -57,6 +58,31 @@ cameraManager.setupControls(rendererManager.getDomElement());
 
 const materialManager = new MaterialManager();
 const modelManager = new ModelManager(log);
+
+const nodeEditorManager = new NodeEditorManager();
+nodeEditorManager.setMaterialOutputHandler((prop, val) => {
+  if (prop.endsWith('Map')) {
+    // Texture property — load dataUrl as a Three.js texture
+    applyNodeEditorTexture(prop, val);
+    return; // applyNodeEditorTexture calls markNeedsRender internally
+  }
+  if (prop === 'attenuationDistance') {
+    updateMaterialProperty('attenuationDistance', val === 0 ? Infinity : val);
+  } else if (prop === 'iridescenceThicknessRange_min') {
+    if (activeMesh?.material?.iridescenceThicknessRange)
+      activeMesh.material.iridescenceThicknessRange[0] = val;
+  } else if (prop === 'iridescenceThicknessRange_max') {
+    if (activeMesh?.material?.iridescenceThicknessRange)
+      activeMesh.material.iridescenceThicknessRange[1] = val;
+  } else {
+    updateMaterialProperty(prop, val);
+  }
+  controls.syncOneMaterialProp(prop, val);
+  markNeedsRender();
+});
+document.getElementById('open-node-graph-btn')?.addEventListener('click', () => {
+  nodeEditorManager.open();
+});
 const uvEditor = new UVEditor(rendererManager, log, modelManager, materialManager);
 // Wire channel map serialization so uvEditor can include them in custom model saves
 uvEditor.getChannelMaps = () => serializeChannelMaps();
@@ -614,6 +640,7 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
   activeModel = object;
   propManager.setMainModel(activeModel);
   activeMesh = meshList[0] || null;
+  nodeEditorManager.setSelection(name, activeMesh?.name || '—');
 
   const names = meshList.map(m => m.name);
   controls.updatePartSelect(names);
@@ -730,6 +757,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
         meshMap[child.name] = child;
       });
       activeMesh = meshList[0] || null;
+      nodeEditorManager.setSelection(name, activeMesh?.name || '—');
       {
         const names = meshList.map(m => m.name);
         controls.updatePartSelect(names);
@@ -788,6 +816,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
         meshMap[child.name] = child;
       });
       activeMesh = meshList[0] || null;
+      nodeEditorManager.setSelection(name, activeMesh?.name || '—');
       {
         const names = meshList.map(m => m.name);
         controls.updatePartSelect(names);
@@ -1298,6 +1327,32 @@ function extractPropertiesForPreset(mat) {
 }
 
 
+// Called by the node editor when an Image node is wired to a texture port.
+// Loads the dataUrl as a Three.js texture, applies it to the material slot,
+// then refreshes the Material Editor thumbnails.
+function applyNodeEditorTexture(channel, dataUrl) {
+  if (!activeMesh?.material) return;
+  const mat = activeMesh.material;
+  if (!dataUrl) {
+    const old = mat[channel];
+    if (old?.isTexture) old.dispose();
+    mat[channel] = null;
+    mat.needsUpdate = true;
+    controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+    markNeedsRender();
+    return;
+  }
+  new THREE.TextureLoader().load(dataUrl, tex => {
+    tex.colorSpace = THREE.LinearSRGBColorSpace;
+    const old = mat[channel];
+    if (old?.isTexture) old.dispose();
+    mat[channel] = tex;
+    mat.needsUpdate = true;
+    controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+    markNeedsRender();
+  });
+}
+
 function updateMaterialProperty(property, value) {
   if (!activeMesh?.material) return;
   const mat = activeMesh.material;
@@ -1625,6 +1680,7 @@ const controls = new ControlsManager({
 
   onMaterialPropertyChange: (property, value) => {
     updateMaterialProperty(property, value);
+    nodeEditorManager.syncMaterialProp(property, value);
   },
 
   onMaterialPropertyCommit: () => {
@@ -1861,6 +1917,7 @@ async function selectPart(mesh) {
   if (sel) sel.value = mesh.name;
   const designSel = document.getElementById('design-part-select');
   if (designSel) designSel.value = mesh.name;
+  nodeEditorManager.setSelection(getCurrentModelName(), mesh.name);
 }
 
 
@@ -1936,6 +1993,7 @@ function saveSessionState() {
       uvEditor: uvEditor.getSessionState?.() || null,
       props: propManager.getSceneData(),
       rendererState: rendererManager.getState(),
+      nodeGraph: nodeEditorManager.getGraphData(),
     };
     // Fast startup hint (sync read/write, tiny payload)
     try {
@@ -2013,6 +2071,9 @@ async function restoreSessionState() {
     const bgSelect = document.getElementById('background-select');
     if (bgSelect && currentGradientBg) { bgSelect.value = currentGradientBg; syncBgCards(currentGradientBg); }
     applyBackground();
+
+    // Restore node graph (must happen before model load so setSelection finds the saved graphs)
+    if (state.nodeGraph) nodeEditorManager.loadGraphData(state.nodeGraph);
 
     // Restore model
     const name = state.modelName;
@@ -3132,7 +3193,12 @@ function setupTransformToolbar() {
     document.querySelectorAll('.toolbar-popup').forEach(p => { p.style.display = 'none'; });
     document.getElementById('tf-grid-settings')?.classList.remove('tf-btn--active');
     document.getElementById('tf-dim-settings')?.classList.remove('tf-btn--active');
+    document.getElementById('tf-snap-settings')?.classList.remove('tf-btn--active');
   }
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.popup-close-btn')) closeToolbarPopups();
+  });
 
   function activateMode(mode, btn) {
     modeBtns.forEach(b => b?.classList.remove('tf-btn--active'));
