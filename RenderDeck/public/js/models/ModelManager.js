@@ -4,25 +4,140 @@
 
 import { ModelVerifier } from './ModelVerifier.js';
 import { CustomModelStorage } from '../storage/CustomModelStorage.js';
+import * as IDBStorage from '../storage/indexedDBStorage.js';
+import { getActiveProjectId } from '../storage/ProjectStorage.js';
 
 export class ModelManager {
   constructor(log) {
     this.models = new Map(); // Store models: name -> {objPath, mtlPath, files, ...}
     this.verifier = new ModelVerifier();
     this.storage = new CustomModelStorage(log);
+    this.log = log;
     this.nextModelId = 1;
-    
-    // Load custom models from localStorage on init
-    this.loadCustomModelsFromStorage();
+    this.ready = this._init();
   }
 
-  // ─────────────────────────────────────────────
-  // Load custom models from localStorage
-  // ─────────────────────────────────────────────
+  async _init() {
+    await this._loadPersistedUploadedModels();
+  }
+
   async loadCustomModelsFromStorage() {
-    const storedModels = await this.storage.loadAllCustomModels();
-    // Custom models are accessed via storage, not stored in this.models
-    // This keeps them separate and persistent
+    // Custom models are accessed lazily via storage — no eager load needed.
+  }
+
+  async _persistUploadedModel(projectId, name, type, verificationFiles) {
+    try {
+      const prefix = `uploaded:${projectId}:${name}`;
+      if (type === 'uploaded-glb') {
+        await IDBStorage.put('blobs', `${prefix}:glb`, verificationFiles.glb);
+        await IDBStorage.put('uploaded-models', `${projectId}:${name}`, {
+          name, type, uploadDate: new Date().toISOString()
+        });
+      } else {
+        await IDBStorage.put('blobs', `${prefix}:obj`, verificationFiles.obj);
+        if (verificationFiles.mtl) {
+          await IDBStorage.put('blobs', `${prefix}:mtl`, verificationFiles.mtl);
+        }
+        for (const tex of (verificationFiles.textures || [])) {
+          await IDBStorage.put('blobs', `${prefix}:tex:${tex.name}`, tex);
+        }
+        await IDBStorage.put('uploaded-models', `${projectId}:${name}`, {
+          name,
+          type,
+          uploadDate:   new Date().toISOString(),
+          hasMtl:       !!verificationFiles.mtl,
+          textureNames: (verificationFiles.textures || []).map(t => t.name),
+          metadata:     verificationFiles.metadata || {},
+        });
+      }
+    } catch (err) {
+      console.error(`[ModelManager] Failed to persist uploaded model "${name}":`, err);
+      if (typeof this.log === 'function') this.log(`Failed to persist model "${name}": ${err.message}`, true);
+    }
+  }
+
+  async _deletePersistedUploadedModel(projectId, name) {
+    try {
+      const prefix = `uploaded:${projectId}:${name}`;
+      const meta = await IDBStorage.get('uploaded-models', `${projectId}:${name}`);
+      if (!meta) return;
+      if (meta.type === 'uploaded-glb') {
+        await IDBStorage.del('blobs', `${prefix}:glb`);
+      } else {
+        await IDBStorage.del('blobs', `${prefix}:obj`);
+        if (meta.hasMtl) await IDBStorage.del('blobs', `${prefix}:mtl`);
+        for (const texName of (meta.textureNames || [])) {
+          await IDBStorage.del('blobs', `${prefix}:tex:${texName}`);
+        }
+      }
+      await IDBStorage.del('uploaded-models', `${projectId}:${name}`);
+    } catch (err) {
+      console.error(`[ModelManager] Failed to delete persisted model "${name}":`, err);
+      if (typeof this.log === 'function') this.log(`Failed to delete model "${name}": ${err.message}`, true);
+    }
+  }
+
+  async _loadPersistedUploadedModels() {
+    if (!IDBStorage.isIndexedDBAvailable()) return;
+    try {
+      const projectId = await getActiveProjectId();
+      const allKeys = await IDBStorage.getAllKeys('uploaded-models');
+      const prefix = `${projectId}:`;
+      for (const key of allKeys) {
+        if (!key.startsWith(prefix)) continue;
+        const name = key.slice(prefix.length);
+        const meta = await IDBStorage.get('uploaded-models', key);
+        if (!meta) continue;
+        const blobPrefix = `uploaded:${projectId}:${name}`;
+        try {
+          if (meta.type === 'uploaded-glb') {
+            const glbBlob = await IDBStorage.get('blobs', `${blobPrefix}:glb`);
+            if (!glbBlob) continue;
+            this.models.set(name, {
+              type: 'uploaded-glb',
+              name,
+              objectURLs: { glb: URL.createObjectURL(glbBlob) },
+              source: 'user-uploaded',
+              uploadDate: meta.uploadDate,
+            });
+          } else {
+            const objBlob = await IDBStorage.get('blobs', `${blobPrefix}:obj`);
+            if (!objBlob) continue;
+            const textureFiles = [];
+            for (const texName of (meta.textureNames || [])) {
+              const texBlob = await IDBStorage.get('blobs', `${blobPrefix}:tex:${texName}`);
+              if (texBlob) textureFiles.push(new File([texBlob], texName, { type: texBlob.type }));
+            }
+            let mtlURL = null;
+            if (meta.hasMtl) {
+              const mtlBlob = await IDBStorage.get('blobs', `${blobPrefix}:mtl`);
+              if (mtlBlob) {
+                const mtlFile = new File([mtlBlob], `${name}.mtl`, { type: 'text/plain' });
+                mtlURL = await this.createMTLWithBlobURLs(mtlFile, textureFiles);
+              }
+            }
+            const textureURLs = {};
+            for (const f of textureFiles) {
+              textureURLs[f.name] = URL.createObjectURL(f);
+            }
+            this.models.set(name, {
+              type: 'uploaded',
+              name,
+              objectURLs: { obj: URL.createObjectURL(objBlob), mtl: mtlURL, textures: textureURLs },
+              source: 'user-uploaded',
+              uploadDate: meta.uploadDate,
+              metadata: meta.metadata || {},
+            });
+          }
+        } catch (err) {
+          console.error(`[ModelManager] Failed to restore uploaded model "${name}":`, err);
+          if (typeof this.log === 'function') this.log(`Failed to restore model "${name}": ${err.message}`, true);
+        }
+      }
+    } catch (err) {
+      console.error('[ModelManager] Failed to load persisted uploaded models:', err);
+      if (typeof this.log === 'function') this.log(`Failed to load persisted models: ${err.message}`, true);
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -76,6 +191,8 @@ export class ModelManager {
         source: 'user-uploaded',
         uploadDate: new Date()
       });
+      const projectId = await getActiveProjectId();
+      await this._persistUploadedModel(projectId, modelName, 'uploaded-glb', { glb: glbFile });
       result.success = true;
       result.name = modelName;
       result.warnings = verification.warnings;
@@ -125,6 +242,9 @@ export class ModelManager {
 
     // Store the model
     this.models.set(modelName, modelData);
+
+    const projectId = await getActiveProjectId();
+    await this._persistUploadedModel(projectId, modelName, 'uploaded', verification.files);
 
     result.success = true;
     result.name = modelName;
@@ -220,13 +340,17 @@ export class ModelManager {
     const model = this.models.get(name);
     if (!model) return false;
 
-    // Cleanup blob URLs
+    // Cleanup blob URLs and IDB persistence
     if (model.type === 'uploaded' && model.objectURLs) {
       if (model.objectURLs.obj) URL.revokeObjectURL(model.objectURLs.obj);
       if (model.objectURLs.mtl) URL.revokeObjectURL(model.objectURLs.mtl);
       Object.values(model.objectURLs.textures || {}).forEach(url => URL.revokeObjectURL(url));
     } else if (model.type === 'uploaded-glb' && model.objectURLs?.glb) {
       URL.revokeObjectURL(model.objectURLs.glb);
+    }
+    if (model.type === 'uploaded' || model.type === 'uploaded-glb') {
+      const projectId = await getActiveProjectId();
+      await this._deletePersistedUploadedModel(projectId, name);
     }
 
     this.models.delete(name);
@@ -293,7 +417,7 @@ export class ModelManager {
   // ─────────────────────────────────────────────
   generateModelName(objFilename) {
     // Remove extension and clean up
-    let baseName = objFilename.replace(/\.obj$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    let baseName = objFilename.replace(/\.(obj|glb|gltf)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
     
     // Ensure uniqueness
     let name = baseName;

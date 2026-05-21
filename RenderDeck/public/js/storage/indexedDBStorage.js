@@ -3,7 +3,7 @@
 // Provides Promise-based interface for storing models and blobs
 
 const DB_NAME = 'renderdeck_db';
-const DB_VERSION = 5;
+const DB_VERSION = 7;
 
 let dbInstance = null;
 
@@ -43,6 +43,13 @@ export function openDB() {
       // value: { id, projectId, name, materialData: { ...params, channelMaps: { ch: dataUrl } }, thumbnailData }
       if (!db.objectStoreNames.contains('materials')) {
         db.createObjectStore('materials');
+      }
+      // Uploaded model file persistence — survives page reload.
+      // key: `${projectId}:${modelName}`
+      // value: { name, type, uploadDate, hasMtl, textureNames, metadata }
+      // blobs stored in 'blobs' store under key `uploaded:${projectId}:${name}:*`
+      if (!db.objectStoreNames.contains('uploaded-models')) {
+        db.createObjectStore('uploaded-models');
       }
     };
 

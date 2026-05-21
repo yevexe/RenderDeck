@@ -243,6 +243,7 @@ export class CompactColorPicker {
     };
 
     this._build();
+    this._buildArrow();
     this.setMode('circle');
     this._bindLauncher();
     this.setColor(this.hexEl?.value || this.pickerEl?.value || '#ffffff', { emit: false });
@@ -322,17 +323,17 @@ export class CompactColorPicker {
     this.swatchesHeaderEl.className = 'compact-color-picker__header-row';
     this.swatchesMenuBtn = document.createElement('button');
     this.swatchesMenuBtn.type = 'button';
-    this.swatchesMenuBtn.className = 'compact-color-picker__menu-btn';
+    this.swatchesMenuBtn.className = 'burger-btn';
     this.swatchesMenuBtn.setAttribute('aria-label', 'Swatches menu');
     this.swatchesMenuBtn.title = 'Swatches menu';
     this.swatchesMenuBtn.innerHTML = '<span></span><span></span><span></span>';
     this.swatchesMenuEl = document.createElement('div');
-    this.swatchesMenuEl.className = 'compact-color-picker__menu';
+    this.swatchesMenuEl.className = 'dropdown-menu';
     this.swatchesMenuEl.hidden = true;
 
     this.loadStandardSwatchesBtn = document.createElement('button');
     this.loadStandardSwatchesBtn.type = 'button';
-    this.loadStandardSwatchesBtn.className = 'compact-color-picker__menu-item';
+    this.loadStandardSwatchesBtn.className = 'dropdown-menu-item';
     this.loadStandardSwatchesBtn.textContent = 'Load Standard Swatches';
     this.loadStandardSwatchesBtn.setAttribute('aria-label', 'Load Standard Swatches');
     this.loadStandardSwatchesBtn.title = 'Load Standard Swatches';
@@ -1713,6 +1714,41 @@ export class CompactColorPicker {
     return /^#[0-9a-fA-F]{6}$/.test(withHash) ? withHash.toLowerCase() : null;
   }
 
+  _buildArrow() {
+    this._arrowWrap = document.createElement('div');
+    this._arrowWrap.className = 'picker-arrow-wrap';
+    const inner = document.createElement('div');
+    inner.className = 'picker-arrow';
+    this._arrowWrap.appendChild(inner);
+    document.body.appendChild(this._arrowWrap);
+  }
+
+  _positionArrow() {
+    if (!this.isOpen || !this._arrowWrap) return;
+    const anchorEl   = this.swatchEl || this.pickerEl;
+    const swatchRect = anchorEl.getBoundingClientRect();
+    const panelRect  = this.panelEl.getBoundingClientRect();
+    const WRAP_W = 12, WRAP_H = 22;
+    const swatchCenterY = swatchRect.top + swatchRect.height / 2;
+
+    let wrapLeft, side;
+    if (panelRect.right <= swatchRect.left + 4) {
+      wrapLeft = panelRect.right - 1;
+      side = 'arrow-right';
+    } else {
+      wrapLeft = panelRect.left - WRAP_W + 1;
+      side = 'arrow-left';
+    }
+    const wrapTop = Math.min(
+      Math.max(swatchCenterY - WRAP_H / 2, panelRect.top + 12),
+      panelRect.bottom - 12 - WRAP_H
+    );
+    this._arrowWrap.className     = `picker-arrow-wrap ${side}`;
+    this._arrowWrap.style.left    = `${Math.round(wrapLeft)}px`;
+    this._arrowWrap.style.top     = `${Math.round(wrapTop)}px`;
+    this._arrowWrap.style.display = 'block';
+  }
+
   open() {
     if (CompactColorPicker.active && CompactColorPicker.active !== this) CompactColorPicker.active.close();
     CompactColorPicker.active = this;
@@ -1721,12 +1757,14 @@ export class CompactColorPicker {
     this._configureCanvasResolution();
     this._positionPanel();
     this.render();
+    this._positionArrow();
   }
 
   close() {
     if (CompactColorPicker.active === this) CompactColorPicker.active = null;
     this.isOpen = false;
     this.panelEl.hidden = true;
+    if (this._arrowWrap) this._arrowWrap.style.display = 'none';
   }
 
   setMode(mode) {
@@ -1811,8 +1849,8 @@ export class CompactColorPicker {
     const panelHeight = this.panelEl.offsetHeight || 362;
 
     // Prefer opening to the left of the anchor; fall back to the right if too close to edge.
-    let left = rect.left - panelWidth - 8;
-    if (left < 8) left = rect.right + 8;
+    let left = rect.left - panelWidth - 10;
+    if (left < 8) left = rect.right + 10;
     if (left + panelWidth > window.innerWidth - 8) left = window.innerWidth - panelWidth - 8;
 
     // Vertically align top with anchor; push up if it clips the bottom.
@@ -1822,6 +1860,7 @@ export class CompactColorPicker {
 
     this.panelEl.style.left = `${Math.round(left)}px`;
     this.panelEl.style.top = `${Math.round(top)}px`;
+    this._positionArrow();
   }
 
   render() {
@@ -2681,10 +2720,26 @@ export class CustomSelect {
           }
         }
 
+        const labelRow = document.createElement('span');
+        labelRow.className = 'custom-select__option-label-row';
+
         const label = document.createElement('span');
         label.className = 'custom-select__option-label';
         label.textContent = name;
-        opt.appendChild(label);
+
+        const renameBtn = document.createElement('button');
+        renameBtn.type = 'button';
+        renameBtn.className = 'custom-select__option-rename';
+        renameBtn.tabIndex = -1;
+        renameBtn.setAttribute('aria-label', 'Rename');
+        renameBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5a1.414 1.414 0 012 2L4.5 9.5 2 10.5l1-2.5L8.5 1.5z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        renameBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._startInlineRename(opt, name);
+        });
+
+        labelRow.append(label, renameBtn);
+        opt.appendChild(labelRow);
 
         opt.addEventListener('click', () => this._select(name));
         this._dropdown.appendChild(opt);
@@ -2722,8 +2777,104 @@ export class CustomSelect {
     );
   }
 
+  // Select without closing — used by the inline rename so the dropdown stays open
+  _selectNoClose(value) {
+    this._value = value;
+    this._label.textContent = value;
+    this._setTriggerThumb(value);
+    this._dropdown.querySelectorAll('.custom-select__option').forEach(o =>
+      o.classList.toggle('is-active', o.dataset.value === value)
+    );
+    this._handlers.forEach(cb => cb(value));
+  }
+
+  _startInlineRename(opt, name) {
+    if (opt.querySelector('.custom-select__option-rename-form')) return;
+
+    const label     = opt.querySelector('.custom-select__option-label');
+    const renameBtn = opt.querySelector('.custom-select__option-rename');
+    const thumb     = opt.querySelector('.custom-select__thumb');
+    if (label)     label.style.visibility = 'hidden';
+    if (renameBtn) renameBtn.style.visibility = 'hidden';
+
+    const form = document.createElement('div');
+    form.className = 'custom-select__option-rename-form';
+
+    const field = document.createElement('div');
+    field.className = 'custom-select__option-rename-field';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = name;
+    input.className = 'custom-select__option-rename-input';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'custom-select__option-rename-clear';
+    clearBtn.tabIndex = -1;
+    clearBtn.setAttribute('aria-label', 'Clear');
+    clearBtn.innerHTML = '<svg width="6" height="6" viewBox="0 0 8 8" fill="none"><line x1="1" y1="1" x2="7" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="1" x2="1" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'custom-select__option-rename-confirm';
+    confirmBtn.setAttribute('aria-label', 'Confirm rename');
+    confirmBtn.innerHTML = '<svg width="11" height="8" viewBox="0 0 13 10" fill="none"><polyline points="1,5 5,9 12,1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    field.append(input, clearBtn);
+    form.append(field, confirmBtn);
+    form.addEventListener('click', (e) => e.stopPropagation());
+    opt.appendChild(form);
+
+    // Offset the form past the thumbnail so it stays visible
+    if (thumb) form.style.left = `${thumb.offsetWidth + 13}px`; // gap + left-border nudge
+
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+
+    const restore = () => {
+      if (label)     label.style.visibility = '';
+      if (renameBtn) renameBtn.style.visibility = '';
+      form.remove();
+    };
+
+    let committed = false;
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      const newName = input.value.trim();
+      restore();
+      if (newName && newName !== name) {
+        if (this._renameHandlers) this._renameHandlers.forEach(cb => cb(name, newName));
+      }
+    };
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      restore();
+    };
+
+    input.addEventListener('blur', () => setTimeout(commit, 120));
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation(); // prevent Space/Enter/Escape from bubbling to the dropdown toggle
+      if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    clearBtn.addEventListener('mousedown',  (e) => e.preventDefault());
+    clearBtn.addEventListener('click', () => { input.value = ''; input.focus(); });
+    confirmBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    confirmBtn.addEventListener('click', () => commit());
+  }
+
   /** Register a value-change handler. */
   onChange(cb) { this._handlers.push(cb); }
+
+  /** Register a rename handler — cb(oldName, newName) fires on inline rename commit. */
+  onRenameRequest(cb) {
+    if (!this._renameHandlers) this._renameHandlers = [];
+    this._renameHandlers.push(cb);
+  }
 }
 
 export class ControlsManager {
@@ -2848,6 +2999,10 @@ export class ControlsManager {
       // Normal scale
       normalScaleSlider: document.getElementById('normal-scale-slider'),
       normalScaleInput: document.getElementById('normal-scale-input'),
+      displacementScaleSlider: document.getElementById('displacement-scale-slider'),
+      displacementScaleInput: document.getElementById('displacement-scale-input'),
+      displacementBiasSlider: document.getElementById('displacement-bias-slider'),
+      displacementBiasInput: document.getElementById('displacement-bias-input'),
 
       // Old model management buttons (kept for compatibility)
       uploadModelBtn: document.getElementById('upload-model-btn'),
@@ -2856,6 +3011,7 @@ export class ControlsManager {
       importBtn: document.getElementById('import-btn'),
       fileInput: document.getElementById('file-input'),
       clearCustomBtn: document.getElementById('clear-custom-btn'),
+      restoreStandardBtn: document.getElementById('restore-standard-btn'),
       modelSelect: document.getElementById('model-select'),
 
       // Grid settings popup
@@ -2889,6 +3045,21 @@ export class ControlsManager {
       this._matSelect.onChange(value => {
         this.callbacks.onMaterialChange?.(value);
         this.callbacks.onMaterialPropertyCommit?.();
+      });
+    }
+
+    // Custom object selector dropdown
+    if (this.elements.objectSelect) {
+      this._objSelect = new CustomSelect(this.elements.objectSelect);
+      this._objSelect._label.textContent = '— Select object —';
+      this._objSelect.onChange(value => this.callbacks.onModelChange?.(value));
+      // Forward element.value ↔ CustomSelect.value so main.js sel.value = name keeps working
+      const _el = this.elements.objectSelect;
+      const _cs = this._objSelect;
+      Object.defineProperty(_el, 'value', {
+        get: ()  => _cs.value,
+        set: (v) => { _cs.value = v; },
+        configurable: true,
       });
     }
   }
@@ -3122,10 +3293,7 @@ export class ControlsManager {
     if (el.modelSelect) {
       el.modelSelect.addEventListener('change', e => cb.onModelChange?.(e.target.value));
     }
-    // Setting 1 object select mirrors model select
-    if (el.objectSelect) {
-      el.objectSelect.addEventListener('change', e => cb.onModelChange?.(e.target.value));
-    }
+    // Setting 1 object select — wired via _objSelect.onChange() in initialize()
 
     // ── Material preset — handled by CustomSelect (see initialize()) ─
 
@@ -3261,6 +3429,13 @@ export class ControlsManager {
       v => cb.onMaterialPropertyChange?.('normalScale', v));
 
     // ──────────────────────────────────────────────────────────────
+    // DISPLACEMENT SCALE / BIAS
+    this.linkSliderInput(el.displacementScaleSlider, el.displacementScaleInput,
+      v => cb.onMaterialPropertyChange?.('displacementScale', v));
+    this.linkSliderInput(el.displacementBiasSlider, el.displacementBiasInput,
+      v => cb.onMaterialPropertyChange?.('displacementBias', v));
+
+    // ──────────────────────────────────────────────────────────────
     // MATERIAL PROPERTY COMMIT — fires onMaterialPropertyCommit after slider release
     // or color picker commit. Used for history snapshots (no live-preview impact).
     {
@@ -3273,6 +3448,7 @@ export class ControlsManager {
         el.iridescenceSlider, el.iridescenceIorSlider,
         el.iridescenceThicknessMinSlider, el.iridescenceThicknessMaxSlider,
         el.dispersionSlider, el.reflectivitySlider, el.sheenSlider,
+        el.displacementScaleSlider, el.displacementBiasSlider,
       ];
       const matInputs = [
         el.metalnessInput, el.roughnessInput, el.specintInput,
@@ -3283,6 +3459,7 @@ export class ControlsManager {
         el.iridescenceInput, el.iridescenceIorInput,
         el.iridescenceThicknessMinInput, el.iridescenceThicknessMaxInput,
         el.dispersionInput, el.reflectivityInput, el.sheenInput,
+        el.displacementScaleInput, el.displacementBiasInput,
       ];
       const matColors = [
         el.basecolorPicker, el.speccolorPicker, el.attcolorPicker,
@@ -3330,6 +3507,33 @@ export class ControlsManager {
     }
     if (el.clearCustomBtn) {
       el.clearCustomBtn.addEventListener('click', () => cb.onClearCustom?.());
+    }
+    if (el.restoreStandardBtn) {
+      el.restoreStandardBtn.addEventListener('click', () => cb.onRestoreStandard?.());
+    }
+
+    // Object-tab burger menu toggle
+    const objMenuBtn = document.getElementById('object-select-menu-btn');
+    const objMenuEl  = document.getElementById('object-select-menu');
+    if (objMenuBtn && objMenuEl) {
+      objMenuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = !objMenuEl.hidden;
+        objMenuEl.hidden = open;
+        objMenuBtn.classList.toggle('is-open', !open);
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (objMenuEl.hidden) return;
+        if (objMenuBtn.contains(e.target) || objMenuEl.contains(e.target)) return;
+        objMenuEl.hidden = true;
+        objMenuBtn.classList.remove('is-open');
+      });
+      objMenuEl.querySelectorAll('.dropdown-menu-item').forEach(item => {
+        item.addEventListener('click', () => {
+          objMenuEl.hidden = true;
+          objMenuBtn.classList.remove('is-open');
+        });
+      });
     }
   }
 
@@ -3387,9 +3591,17 @@ export class ControlsManager {
       clearBtn.title = 'Remove texture';
       clearBtn.innerHTML = '<svg width="6" height="6" viewBox="0 0 6 6" fill="none"><line x1="1" y1="1" x2="5" y2="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="5" y1="1" x2="1" y2="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 
-      thumb.addEventListener('click', () => fileInput.click());
+      thumb.addEventListener('click', () => {
+        if (wrapper.classList.contains('has-texture') && thumb._previewImg) {
+          this._showChannelTexPreview(thumb, mapKey);
+        } else {
+          fileInput.click();
+        }
+      });
       clearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (this._texPreviewPopup) this._texPreviewPopup.hidden = true;
+        if (this._texPreviewArrow) this._texPreviewArrow.style.display = 'none';
         this.callbacks.onChannelTextureClear?.(mapKey);
       });
       fileInput.addEventListener('change', e => {
@@ -3397,9 +3609,46 @@ export class ControlsManager {
         e.target.value = '';
       });
 
+      // ── Drag-and-drop between channel slots ──────────────────────
+      thumb.draggable = true;
+      thumb.addEventListener('dragstart', (e) => {
+        if (!wrapper.classList.contains('has-texture')) { e.preventDefault(); return; }
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('application/rd-channel', mapKey);
+        // setTimeout so the browser captures the drag image before opacity kicks in
+        setTimeout(() => wrapper.classList.add('drag-source'), 0);
+      });
+      thumb.addEventListener('dragend', () => {
+        wrapper.classList.remove('drag-source');
+        document.querySelectorAll('.channel-tex-wrapper.drag-over')
+          .forEach(el => el.classList.remove('drag-over'));
+      });
+
+      wrapper.addEventListener('dragover', (e) => {
+        if (!e.dataTransfer.types.includes('application/rd-channel')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        wrapper.classList.add('drag-over');
+      });
+      wrapper.addEventListener('dragleave', (e) => {
+        if (!wrapper.contains(e.relatedTarget)) wrapper.classList.remove('drag-over');
+      });
+      wrapper.addEventListener('drop', (e) => {
+        e.preventDefault();
+        wrapper.classList.remove('drag-over');
+        const fromChannel = e.dataTransfer.getData('application/rd-channel');
+        if (!fromChannel || fromChannel === mapKey) return;
+        this.callbacks.onChannelTextureMove?.(fromChannel, mapKey);
+      });
+
       wrapper.append(thumb, clearBtn);
       refEl.parentElement.insertBefore(wrapper, refEl);
       this.elements[`texThumb_${mapKey}`] = thumb;
+
+      // GLTF packs roughness (G), metalness (B), and AO (R) into one ORM texture.
+      // Store which channel to extract so thumbnails show greyscale instead of the raw color.
+      const PACKED = { roughnessMap: 'g', metalnessMap: 'b', aoMap: 'r' };
+      if (PACKED[mapKey]) thumb.dataset.channelHint = PACKED[mapKey];
 
       // Initial empty state
       this._drawChannelThumb(thumb, null);
@@ -3413,33 +3662,197 @@ export class ControlsManager {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const wrapper = canvas.parentElement?.classList.contains('channel-tex-wrapper')
       ? canvas.parentElement : null;
+    const W = canvas.width, H = canvas.height;
 
-    if (typeof source === 'string') {
-      // Data URL — draw via an Image element
-      const img = new Image();
-      img.onload = () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        wrapper?.classList.add('has-texture');
-      };
-      img.src = source;
-      return; // async — wrapper state set on load
-    }
-
-    if (source?.image) {
-      ctx.drawImage(source.image, 0, 0, canvas.width, canvas.height);
-      wrapper?.classList.add('has-texture');
-    } else {
+    const drawEmpty = () => {
+      canvas._previewImg = null;
       ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, W, H);
       ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
-      const m = canvas.width / 2;
+      const m = W / 2;
       ctx.beginPath();
-      ctx.moveTo(m, 4); ctx.lineTo(m, canvas.height - 4);
-      ctx.moveTo(4, m); ctx.lineTo(canvas.width - 4, m);
+      ctx.moveTo(m, 4); ctx.lineTo(m, H - 4);
+      ctx.moveTo(4, m); ctx.lineTo(W - 4, m);
       ctx.stroke();
       wrapper?.classList.remove('has-texture');
+    };
+
+    // Draw an image element (HTMLImageElement, ImageBitmap, HTMLCanvasElement, etc.).
+    // If canvas.dataset.channelHint is set ('r'|'g'|'b'), extract that channel as greyscale
+    // so GLTF packed ORM textures show the correct single-channel preview.
+    const drawImg = (img) => {
+      canvas._previewImg = img; // stored so preview popup can display full-size
+      const channelHint = canvas.dataset?.channelHint;
+      try {
+        if (channelHint) {
+          const tmp = document.createElement('canvas');
+          tmp.width = W; tmp.height = H;
+          const tc = tmp.getContext('2d');
+          tc.drawImage(img, 0, 0, W, H);
+          const id = tc.getImageData(0, 0, W, H);
+          const d = id.data;
+          const ci = { r: 0, g: 1, b: 2 }[channelHint] ?? 0;
+          for (let i = 0; i < d.length; i += 4) {
+            const v = d[i + ci];
+            d[i] = d[i + 1] = d[i + 2] = v;
+            d[i + 3] = 255;
+          }
+          ctx.putImageData(id, 0, 0);
+        } else {
+          ctx.drawImage(img, 0, 0, W, H);
+        }
+        wrapper?.classList.add('has-texture');
+      } catch {
+        // image not drawable (CompressedTexture, DataTexture, etc.) — show empty
+        drawEmpty();
+      }
+    };
+
+    if (typeof source === 'string') {
+      // Data URL — async load
+      const img = new Image();
+      img.onload = () => { ctx.clearRect(0, 0, W, H); drawImg(img); };
+      img.onerror = () => drawEmpty();
+      img.src = source;
+      return;
     }
+
+    const img = source?.image ?? null;
+    if (img) drawImg(img); else drawEmpty();
+  }
+
+  /** Show a floating preview popup for a channel texture thumbnail. */
+  _showChannelTexPreview(thumbEl, mapKey) {
+    const NAMES = {
+      map: 'Base Color', normalMap: 'Normal', roughnessMap: 'Roughness',
+      metalnessMap: 'Metalness', aoMap: 'Ambient Occlusion', bumpMap: 'Bump',
+      displacementMap: 'Displacement', specularColorMap: 'Specular Color',
+      specularIntensityMap: 'Specular Intensity', clearcoatMap: 'Clearcoat',
+      clearcoatRoughnessMap: 'Clearcoat Roughness', clearcoatNormalMap: 'Clearcoat Normal',
+      alphaMap: 'Alpha', transmissionMap: 'Transmission', thicknessMap: 'Thickness',
+      sheenColorMap: 'Sheen Color', sheenRoughnessMap: 'Sheen Roughness',
+      emissiveMap: 'Emissive', anisotropyMap: 'Anisotropy',
+      iridescenceMap: 'Iridescence', iridescenceThicknessMap: 'Iridescence Thickness',
+    };
+
+    // Build popup once, reuse for all channels
+    if (!this._texPreviewPopup) {
+      const popup = document.createElement('div');
+      popup.className = 'channel-tex-preview-popup';
+      popup.hidden = true;
+
+      const title = document.createElement('div');
+      title.className = 'channel-tex-preview-popup__title';
+
+      const previewCanvas = document.createElement('canvas');
+      previewCanvas.className = 'channel-tex-preview-popup__canvas';
+      previewCanvas.width = 160;
+      previewCanvas.height = 160;
+
+      popup.append(title, previewCanvas);
+      document.body.appendChild(popup);
+
+      this._texPreviewPopup       = popup;
+      this._texPreviewPopupTitle  = title;
+      this._texPreviewPopupCanvas = previewCanvas;
+
+      // Arrow connector (same style as color picker arrow)
+      const arrowWrap = document.createElement('div');
+      arrowWrap.className = 'picker-arrow-wrap';
+      arrowWrap.style.display = 'none';
+      const arrowInner = document.createElement('div');
+      arrowInner.className = 'picker-arrow';
+      arrowWrap.appendChild(arrowInner);
+      document.body.appendChild(arrowWrap);
+      this._texPreviewArrow = arrowWrap;
+
+      // Close on outside click or Escape
+      document.addEventListener('mousedown', (e) => {
+        if (!this._texPreviewPopup.hidden &&
+            !this._texPreviewPopup.contains(e.target) &&
+            e.target !== this._texPreviewAnchor) {
+          this._texPreviewPopup.hidden = true;
+          this._texPreviewArrow.style.display = 'none';
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          this._texPreviewPopup.hidden = true;
+          this._texPreviewArrow.style.display = 'none';
+        }
+      });
+    }
+
+    this._texPreviewAnchor = thumbEl;
+    this._texPreviewPopupTitle.textContent = NAMES[mapKey] ?? mapKey;
+
+    // Draw the image into the preview canvas, applying channel extraction if needed.
+    // Uses object-fit:contain logic so the image is never squished.
+    const previewCanvas = this._texPreviewPopupCanvas;
+    const ctx = previewCanvas.getContext('2d');
+    const CW = previewCanvas.width, CH = previewCanvas.height;
+    ctx.clearRect(0, 0, CW, CH);
+    const img = thumbEl._previewImg;
+    if (img) {
+      const channelHint = thumbEl.dataset?.channelHint;
+      // Compute contain-fit dimensions
+      const iw = img.naturalWidth || img.width || CW;
+      const ih = img.naturalHeight || img.height || CH;
+      const scale = Math.min(CW / iw, CH / ih);
+      const dw = iw * scale, dh = ih * scale;
+      const dx = (CW - dw) / 2,  dy = (CH - dh) / 2;
+      try {
+        if (channelHint) {
+          ctx.drawImage(img, dx, dy, dw, dh);
+          const id = ctx.getImageData(0, 0, CW, CH);
+          const d = id.data;
+          const ci = { r: 0, g: 1, b: 2 }[channelHint] ?? 0;
+          for (let i = 0; i < d.length; i += 4) {
+            const v = d[i + ci]; d[i] = d[i+1] = d[i+2] = v; d[i+3] = d[i+3] > 0 ? 255 : 0;
+          }
+          ctx.putImageData(id, 0, 0);
+        } else {
+          ctx.drawImage(img, dx, dy, dw, dh);
+        }
+      } catch { /* non-drawable — canvas stays blank */ }
+    }
+
+    // Position popup: prefer left of thumb, fall back to right, clamp to viewport
+    this._texPreviewPopup.hidden = false;
+    const rect   = thumbEl.getBoundingClientRect();
+    const popupW = this._texPreviewPopup.offsetWidth  || 196;
+    const popupH = this._texPreviewPopup.offsetHeight || 210;
+
+    let left = rect.left - popupW - 8;
+    const openLeft = left >= 8;
+    if (!openLeft) left = rect.right + 8;
+    if (left + popupW > window.innerWidth - 8) left = window.innerWidth - popupW - 8;
+
+    // Center popup vertically on the thumb so the arrow always hits it cleanly.
+    const thumbCenterY = rect.top + rect.height / 2;
+    let top = thumbCenterY - popupH / 2;
+    if (top + popupH > window.innerHeight - 8) top = window.innerHeight - popupH - 8;
+    if (top < 8) top = 8;
+
+    this._texPreviewPopup.style.left = `${Math.round(left)}px`;
+    this._texPreviewPopup.style.top  = `${Math.round(top)}px`;
+
+    // Arrow connector: positioned at thumb center, clamped within popup margins
+    const ARROW_H = 22;
+    const arrowWrap = this._texPreviewArrow;
+    if (openLeft) {
+      arrowWrap.className = 'picker-arrow-wrap arrow-right';
+      arrowWrap.style.left = `${Math.round(left + popupW - 1)}px`;
+    } else {
+      arrowWrap.className = 'picker-arrow-wrap arrow-left';
+      arrowWrap.style.left = `${Math.round(left - 12 + 1)}px`;
+    }
+    const arrowTop = Math.min(
+      Math.max(thumbCenterY - ARROW_H / 2, top + 12),
+      top + popupH - 12 - ARROW_H
+    );
+    arrowWrap.style.top     = `${Math.round(arrowTop)}px`;
+    arrowWrap.style.display = 'block';
   }
 
   // ─── Public methods ───────────────────────────────────────────
@@ -3447,53 +3860,85 @@ export class ControlsManager {
   /**
    * Populate the model/object dropdown (Setting 1 + legacy panel)
    */
-  updateModelSelect(categories) {
-    [this.elements.objectSelect, this.elements.modelSelect,
-     this.elements.objectSelectMaterialTab].forEach(sel => {
-      if (!sel) return;
-      sel.innerHTML = ''; // always rebuild from scratch
+  updateModelSelect(categories, designThumbs = {}, matThumbs = {}) {
+    // CustomSelect dropdown for the main object selector
+    if (this._objSelect) {
+      const deletable = new Set([...(categories.custom || []), ...(categories.uploaded || [])]);
+      const groups = [];
+      if (categories.builtin?.length)  groups.push({ label: 'Built-in Models', items: categories.builtin });
+      if (categories.custom?.length)   groups.push({ label: 'Custom Models',   items: categories.custom });
+      if (categories.uploaded?.length) groups.push({ label: 'Uploaded Models', items: categories.uploaded });
+      this._objSelect.populate(groups.length ? { groups } : []);
 
-      // if there are no models at all, show a single placeholder option
+      this._objSelect._dropdown.querySelectorAll('.custom-select__option').forEach(opt => {
+        const name = opt.dataset.value;
+        const labelRow = opt.querySelector('.custom-select__option-label-row');
+
+        // Material thumbnails — one circle per part, shown before the design thumb
+        const parts = matThumbs[name];
+        if (parts?.length && labelRow) {
+          const container = document.createElement('span');
+          container.className = 'custom-select__option-mat-thumbs';
+          parts.forEach(({ partName, dataUrl }) => {
+            const img = document.createElement('img');
+            img.className = 'custom-select__option-mat-thumb';
+            img.dataset.part = partName;
+            img.src = dataUrl;
+            img.alt = '';
+            container.appendChild(img);
+          });
+          labelRow.appendChild(container);
+        }
+
+        // Design thumbnail — shown after the material thumbnails
+        const thumbUrl = designThumbs[name];
+        if (thumbUrl) {
+          const img = document.createElement('img');
+          img.className = 'custom-select__option-design-thumb';
+          img.src = thumbUrl;
+          img.alt = '';
+          if (labelRow) labelRow.appendChild(img);
+        }
+
+        // Trash button — only for deletable (custom/uploaded) options
+        if (!deletable.has(name)) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'custom-select__option-delete';
+        btn.tabIndex = -1;
+        btn.setAttribute('aria-label', 'Delete');
+        btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2 3h8M5 3V2h2v1M4.5 3v6m3-6v6M3 3l.5 7h5L9 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          this.callbacks.onDeleteModel?.(name);
+        });
+        opt.appendChild(btn);
+      });
+    }
+
+    // Traditional <select> elements for the other selectors
+    [this.elements.modelSelect, this.elements.objectSelectMaterialTab].forEach(sel => {
+      if (!sel) return;
+      sel.innerHTML = '';
       if (!categories.builtin?.length && !categories.custom?.length && !categories.uploaded?.length) {
         const o = document.createElement('option');
-        o.value = '';
-        o.textContent = '-- no models available --';
-        o.disabled = true;
-        o.selected = true;
+        o.value = ''; o.textContent = '-- no models available --';
+        o.disabled = true; o.selected = true;
         sel.appendChild(o);
         return;
       }
-
-      if (categories.builtin?.length) {
-        const g = document.createElement('optgroup');
-        g.label = 'Built-in Models';
-        categories.builtin.forEach(name => {
-          const o = document.createElement('option');
-          o.value = name; o.textContent = name;
-          g.appendChild(o);
+      [['Built-in Models', categories.builtin], ['Custom Models', categories.custom], ['Uploaded Models', categories.uploaded]]
+        .forEach(([label, names]) => {
+          if (!names?.length) return;
+          const g = document.createElement('optgroup');
+          g.label = label;
+          names.forEach(name => {
+            const o = document.createElement('option');
+            o.value = name; o.textContent = name;
+            g.appendChild(o);
+          });
+          sel.appendChild(g);
         });
-        sel.appendChild(g);
-      }
-      if (categories.custom?.length) {
-        const g = document.createElement('optgroup');
-        g.label = 'Custom Models';
-        categories.custom.forEach(name => {
-          const o = document.createElement('option');
-          o.value = name; o.textContent = name;
-          g.appendChild(o);
-        });
-        sel.appendChild(g);
-      }
-      if (categories.uploaded?.length) {
-        const g = document.createElement('optgroup');
-        g.label = 'Uploaded Models';
-        categories.uploaded.forEach(name => {
-          const o = document.createElement('option');
-          o.value = name; o.textContent = name;
-          g.appendChild(o);
-        });
-        sel.appendChild(g);
-      }
     });
   }
 
@@ -3663,6 +4108,10 @@ export class ControlsManager {
     // Normal scale (Vector2 — use x component)
     set(el.normalScaleSlider, el.normalScaleInput, material.normalScale?.x ?? 1);
 
+    // Displacement scale / bias
+    set(el.displacementScaleSlider, el.displacementScaleInput, material.displacementScale ?? 1);
+    set(el.displacementBiasSlider, el.displacementBiasInput, material.displacementBias ?? 0);
+
     // Update channel texture thumbnails.
     // uploadedMaps (channel → data URL) takes priority so sticker PBR composites
     // and the live decal canvas don't appear in the channel slots.
@@ -3738,7 +4187,9 @@ export class ControlsManager {
       case 'dispersion':        return set(el.dispersionSlider, el.dispersionInput, value);
       case 'reflectivity':      return set(el.reflectivitySlider, el.reflectivityInput, value);
       case 'sheen':             return set(el.sheenSlider, el.sheenInput, value);
-      case 'normalScale':       return set(el.normalScaleSlider, el.normalScaleInput, value);
+      case 'normalScale':        return set(el.normalScaleSlider, el.normalScaleInput, value);
+      case 'displacementScale':  return set(el.displacementScaleSlider, el.displacementScaleInput, value);
+      case 'displacementBias':   return set(el.displacementBiasSlider, el.displacementBiasInput, value);
     }
   }
 
@@ -3750,6 +4201,11 @@ export class ControlsManager {
   /** Read the currently selected material preset name from the dropdown. */
   getMaterialPresetValue() {
     return this._matSelect ? this._matSelect.value : 'Default — White';
+  }
+
+  /** Register a handler for when the user clicks the rename icon on a preset. */
+  onMaterialRenameRequest(cb) {
+    this._matSelect?.onRenameRequest(cb);
   }
 
   setEnabled(elementName, enabled) {

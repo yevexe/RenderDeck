@@ -86,6 +86,8 @@ document.getElementById('open-node-graph-btn')?.addEventListener('click', () => 
 const uvEditor = new UVEditor(rendererManager, log, modelManager, materialManager);
 // Wire channel map serialization so uvEditor can include them in custom model saves
 uvEditor.getChannelMaps = () => serializeChannelMaps();
+// Eagerly persist design layers to IDB on every change so reload never loses quality
+uvEditor.onLayersSaved((layers) => { saveDesignLayersToCache(layers).catch(() => {}); });
 
 const objLoader = new OBJLoader();
 const mtlLoader = new MTLLoader();
@@ -109,9 +111,14 @@ let meshMap = {}; // name → mesh reference for multi‑part models
 // Shape: { [partName]: { channelMaps: { ch: dataUrl }, overlayImages: [...] } }
 let _partCache = {};
 
+// Original material state captured at model load time — used by "Restore Original Materials".
+// Shape: { [partName]: { materialProperties: {…}, channelMaps: { ch: dataUrl } } }
+let _originalMaterialPerPart = {};
+
 // ── Performance mode ──────────────────────────────────────────
 const HIGH_POLY_THRESHOLD = 100_000; // faces
 let performanceModeEnabled = false;  // auto-set on high-poly load; user can override
+let _backfaceCullingOn = true;
 let _activeModelFaceCount  = 0;
 let _isOrbiting = false; // true while OrbitControls drag is active
 
@@ -268,14 +275,26 @@ const designState = new DesignStateManager({ uvEditor });
 
 const materialState = new MaterialStateManager({
   materialManager,
-  getControls:     () => controls,
-  getActiveMesh:   () => activeMesh,
-  markNeedsRender: (n) => markNeedsRender(n),
-  getUVEditor:     () => uvEditor,
-  getPresetName:   () => getCurrentMaterialPreset(),
+  getControls:      () => controls,
+  getActiveMesh:    () => activeMesh,
+  markNeedsRender:  (n) => markNeedsRender(n),
+  getUVEditor:      () => uvEditor,
+  getPresetName:    () => getCurrentMaterialPreset(),
+  getChannelMaps:   () => Object.fromEntries(_channelMapData),
+  applyChannelMaps: (maps) => applyChannelMaps(maps),
 });
 
 function pushSceneHistory(label)  { sceneState.push(label); }
+
+// Update both thumbnails whenever material state changes
+materialState.onChanged = () => {
+  const mn = getCurrentModelName();
+  const pn = activeMesh?.name;
+  if (mn && pn) scheduleMatThumbUpdate(mn, pn);
+
+  const preset = getCurrentMaterialPreset();
+  if (preset) scheduleThumbnailUpdate(preset, uvEditor.getCleanMaterialForThumbnail(), true);
+};
 
 function setupHistoryUI() {
   sceneState.setupUI();
@@ -350,6 +369,206 @@ function sessionStorageKey(projectId) {
 }
 function sessionBootKey(projectId) {
   return projectId ? `${SESSION_BOOT_BASE}:${projectId}` : SESSION_BOOT_BASE;
+}
+function designMetaKey(pid, partName) {
+  return `design-meta:${pid}:${partName}`;
+}
+function designBlobKey(pid, partName, id) {
+  return `design-blob:${pid}:${partName}:${id}`;
+}
+
+function _setObjectSelectThumb(modelName, dataUrl) {
+  const opt = controls?._objSelect?._dropdown?.querySelector(`[data-value="${CSS.escape(modelName)}"]`);
+  if (!opt) return;
+  const labelRow = opt.querySelector('.custom-select__option-label-row');
+  if (!labelRow) return;
+  let img = opt.querySelector('.custom-select__option-design-thumb');
+  if (!img) {
+    img = document.createElement('img');
+    img.className = 'custom-select__option-design-thumb';
+    img.alt = '';
+    labelRow.appendChild(img);
+  }
+  img.src = dataUrl;
+}
+
+// ─── Per-part material thumbnails in the object dropdown ─────────────────────
+
+function _matThumbIdbKey(pid, modelName, partName) {
+  return `mat-thumb:${pid}:${modelName}:${partName}`;
+}
+
+function _setObjectSelectMatThumb(modelName, partName, dataUrl) {
+  const opt = controls?._objSelect?._dropdown?.querySelector(`[data-value="${CSS.escape(modelName)}"]`);
+  if (!opt) return;
+  let container = opt.querySelector('.custom-select__option-mat-thumbs');
+  if (!container) {
+    container = document.createElement('span');
+    container.className = 'custom-select__option-mat-thumbs';
+    const labelRow = opt.querySelector('.custom-select__option-label-row');
+    if (labelRow) labelRow.appendChild(container);
+  }
+  let img = container.querySelector(`[data-part="${CSS.escape(partName)}"]`);
+  if (!img) {
+    img = document.createElement('img');
+    img.className = 'custom-select__option-mat-thumb';
+    img.dataset.part = partName;
+    img.alt = '';
+    container.appendChild(img);
+  }
+  img.src = dataUrl;
+}
+
+const _pendingMatThumbUpdates = new Map();
+
+function scheduleMatThumbUpdate(modelName, partName) {
+  if (!modelName || !partName) return;
+  const key = `${modelName}\x00${partName}`;
+  const pending = _pendingMatThumbUpdates.get(key);
+  if (pending != null) {
+    if (typeof cancelIdleCallback === 'function') cancelIdleCallback(pending);
+    else clearTimeout(pending);
+  }
+
+  const render = () => {
+    _pendingMatThumbUpdates.delete(key);
+    const pid = getActiveProjectIdSync();
+    if (!pid) return;
+    _ensureThumbRenderer();
+
+    let mat, disposeAfter = true;
+    if (partName === activeMesh?.name) {
+      mat = uvEditor.getCleanMaterialForThumbnail();
+    } else {
+      const mesh = meshMap[partName];
+      if (!mesh?.material) return;
+      mat = mesh.material.clone();
+    }
+    if (!mat) return;
+
+    _thumbSphereMesh.material = mat;
+    _thumbRenderer.render(_thumbScene, _thumbCamera);
+    const dataUrl = _thumbRenderer.domElement.toDataURL();
+    mat.dispose();
+
+    IDBStorage.put('blobs', _matThumbIdbKey(pid, modelName, partName), dataUrl).catch(() => {});
+    _setObjectSelectMatThumb(modelName, partName, dataUrl);
+  };
+
+  let id;
+  if (typeof requestIdleCallback === 'function') {
+    id = requestIdleCallback(render, { timeout: 2000 });
+  } else {
+    id = setTimeout(render, 600);
+  }
+  _pendingMatThumbUpdates.set(key, id);
+}
+
+async function saveDesignLayersToCache(layers) {
+  const pid = getActiveProjectIdSync();
+  const partName = activeMesh?.name;
+  if (!pid || !partName) return;
+
+  const meta = layers.map(l => ({
+    id:          l.id,
+    name:        l.name,
+    type:        l.type,
+    textData:    l.textData,
+    position:    l.position,
+    size:        l.size,
+    rotation:    l.rotation,
+    aspectRatio: l.aspectRatio,
+    flipH:       l.flipH,
+    flipV:       l.flipV,
+  }));
+
+  // Purge old blob keys for this part before writing new ones
+  const prefix = designBlobKey(pid, partName, '');
+  const allKeys = await IDBStorage.getAllKeys('blobs').catch(() => []);
+  const stale = allKeys.filter(k => k.startsWith(prefix));
+  await Promise.all(stale.map(k => IDBStorage.del('blobs', k).catch(() => {})));
+
+  // Write each blob independently (so a large layer doesn't block the rest)
+  await Promise.all(layers.map(async (l) => {
+    if (!l.dataURL) return;
+    try {
+      const blob = await IDBStorage.dataURLToBlob(l.dataURL);
+      await IDBStorage.put('blobs', designBlobKey(pid, partName, l.id), blob);
+    } catch (err) {
+      console.warn('Design layer blob save failed:', err);
+    }
+  }));
+
+  await IDBStorage.put('metadata', designMetaKey(pid, partName), meta).catch((err) => {
+    console.warn('Design layer meta save failed:', err);
+  });
+
+  // Update the model-level design thumbnail used by the object selector
+  const modelName = getCurrentModelName();
+  if (modelName) {
+    const firstImgLayer = layers.find(l => l.dataURL);
+    if (firstImgLayer) {
+      IDBStorage.dataURLToBlob(firstImgLayer.dataURL)
+        .then(b => IDBStorage.put('blobs', `design-thumb:${pid}:${modelName}`, b))
+        .catch(() => {});
+      // Update the dropdown option's thumbnail immediately without a full repopulate
+      _setObjectSelectThumb(modelName, firstImgLayer.dataURL);
+    } else {
+      // This part is now empty — check if any other part of this model still has image blobs
+      const otherParts = Object.keys(meshMap).filter(p => p !== partName);
+      let fallbackBlob = null;
+      for (const p of otherParts) {
+        const meta = await IDBStorage.get('metadata', designMetaKey(pid, p)).catch(() => null);
+        if (!Array.isArray(meta) || meta.length === 0) continue;
+        const firstEntry = meta.find(e => e.id);
+        if (!firstEntry) continue;
+        const blob = await IDBStorage.get('blobs', designBlobKey(pid, p, firstEntry.id)).catch(() => null);
+        if (blob) { fallbackBlob = blob; break; }
+      }
+      if (fallbackBlob) {
+        await IDBStorage.put('blobs', `design-thumb:${pid}:${modelName}`, fallbackBlob).catch(() => {});
+      } else {
+        await IDBStorage.del('blobs', `design-thumb:${pid}:${modelName}`).catch(() => {});
+        // Remove thumbnail element immediately from the dropdown option
+        const opt = controls?._objSelect?._dropdown?.querySelector(`[data-value="${CSS.escape(modelName)}"]`);
+        opt?.querySelector('.custom-select__option-design-thumb')?.remove();
+      }
+    }
+  }
+}
+
+async function loadDesignLayersFromCache(pid, partName) {
+  try {
+    const meta = await IDBStorage.get('metadata', designMetaKey(pid, partName));
+    if (!Array.isArray(meta) || meta.length === 0) return null;
+
+    const results = await Promise.all(meta.map(async (entry) => {
+      try {
+        const blob = await IDBStorage.get('blobs', designBlobKey(pid, partName, entry.id));
+        if (!blob) return null;
+        const dataURL = await IDBStorage.blobToDataURL(blob);
+        return { ...entry, imageData: dataURL };
+      } catch (_) {
+        return null;
+      }
+    }));
+
+    const valid = results.filter(Boolean);
+    return valid.length > 0 ? valid : null;
+  } catch (err) {
+    console.warn('Design layer cache load failed:', err);
+    return null;
+  }
+}
+
+async function clearDesignLayersCache(pid, partName) {
+  try {
+    const prefix = designBlobKey(pid, partName, '');
+    const allKeys = await IDBStorage.getAllKeys('blobs').catch(() => []);
+    const stale = allKeys.filter(k => k.startsWith(prefix));
+    await Promise.all(stale.map(k => IDBStorage.del('blobs', k).catch(() => {})));
+    await IDBStorage.del('metadata', designMetaKey(pid, partName)).catch(() => {});
+  } catch (_) {}
 }
 
 function applyBackground() {
@@ -479,21 +698,15 @@ async function loadModel(name, onLoaded = null) {
 
   cleanupActiveModel();
 
-  // Show a warning for user-uploaded files (not persisted on refresh)
-  const _uploadWarn = document.getElementById('uploaded-model-warning');
-  if (_uploadWarn) {
-    const isUploaded = modelData.type === 'uploaded' || modelData.type === 'uploaded-glb';
-    _uploadWarn.style.display = isUploaded ? 'flex' : 'none';
-  }
-
   if (modelData.type === 'custom') {
     await loadCustomModel(name, modelData, onLoaded);
   } else {
     await loadRegularModel(name, modelData, onLoaded);
   }
 
-  // Re-init history with the new model's state
+  // Re-init history and capture original material state for "Restore Original Materials".
   setTimeout(() => {
+    captureOriginalMaterials();
     materialState.init('Initial state');
     designState.init('Initial state');
   }, 100);
@@ -720,7 +933,85 @@ async function loadCustomModel(name, modelData, onLoaded = null) {
   if (!_customBootLoad) cameraManager.reframeObject(object);
   checkAndApplyPolyPerf(object);
   markNeedsRender(60);
+
+  // Capture initial mat-thumbs for all parts so the dropdown shows them immediately
+  const _loadedModelName = name;
+  Object.keys(meshMap).forEach(pn => scheduleMatThumbUpdate(_loadedModelName, pn));
+
   if (onLoaded) onLoaded(object);
+}
+
+// ─── Eager channel map IDB cache ─────────────────────────────────────────────
+// Channel maps are large (data URLs, 1-3 MB each). saveSessionState() writes them
+// inside a big async IDB blob on beforeunload, which may not complete before the
+// browser kills the page. This eager cache writes on every change so reloads are safe.
+//
+// Key: channelmap:<pid>:<modelName>:<partName>  Store: 'metadata'
+
+function _channelMapIdbKey(pid, modelName, partName) {
+  return `channelmap:${pid}:${modelName}:${partName}`;
+}
+
+let _channelMapSaveTimer = null;
+function _scheduleChannelMapSave() {
+  clearTimeout(_channelMapSaveTimer);
+  _channelMapSaveTimer = setTimeout(_saveChannelMapsToIDB, 400);
+}
+
+function _saveChannelMapsToIDB() {
+  const pid = getActiveProjectIdSync();
+  const modelName = getCurrentModelName();
+  const partName = activeMesh?.name;
+  if (!pid || !modelName || !partName) return;
+  const maps = serializeChannelMaps();
+  const key = _channelMapIdbKey(pid, modelName, partName);
+  if (maps) {
+    IDBStorage.put('metadata', key, maps).catch(() => {});
+  } else {
+    IDBStorage.del('metadata', key).catch(() => {});
+  }
+}
+
+async function _loadChannelMapsFromIDB(pid, modelName, partName) {
+  if (!pid || !modelName || !partName) return null;
+  try {
+    const maps = await IDBStorage.get('metadata', _channelMapIdbKey(pid, modelName, partName));
+    return (maps && typeof maps === 'object' && Object.keys(maps).length > 0) ? maps : null;
+  } catch { return null; }
+}
+
+// ─── Eager last-preset IDB cache ─────────────────────────────────────────────
+// Written immediately on every applyMaterialPreset call (not deferred to beforeunload).
+// Key: lastpreset:<pid>:<modelName>:<partName>  Store: 'metadata'
+
+function _lastPresetKey(pid, modelName, partName) {
+  return `lastpreset:${pid}:${modelName}:${partName}`;
+}
+
+function _saveLastPreset(modelName, partName, presetName) {
+  const pid = getActiveProjectIdSync();
+  if (!pid || !modelName || !partName || !presetName) return;
+  IDBStorage.put('metadata', _lastPresetKey(pid, modelName, partName), { presetName }).catch(() => {});
+}
+
+async function _loadLastPreset(pid, modelName, partName) {
+  if (!pid || !modelName || !partName) return null;
+  try {
+    const entry = await IDBStorage.get('metadata', _lastPresetKey(pid, modelName, partName));
+    return entry?.presetName ?? null;
+  } catch { return null; }
+}
+
+async function _restoreDesignLayersForPart(partName) {
+  const pid = getActiveProjectIdSync();
+  if (!pid || !partName) return;
+  const layers = await loadDesignLayersFromCache(pid, partName);
+  if (!layers) return;
+  await uvEditor.restoreSessionState({
+    overlayImages: layers,
+    selectedImageId: null,
+    nextImageId: layers.reduce((m, l) => Math.max(m, l.id + 1), 0),
+  });
 }
 
 async function loadRegularModel(name, _modelData, onLoaded = null) {
@@ -730,7 +1021,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
 
   // ── GLB/GLTF branch ───────────────────────────────────────────
   if (loadingPaths.type === 'glb-path' || loadingPaths.type === 'glb-blob') {
-    gltfLoader.load(loadingPaths.obj, (gltf) => {
+    gltfLoader.load(loadingPaths.obj, async (gltf) => {
       const object = gltf.scene;
       const meshList = [];
 
@@ -783,7 +1074,10 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       rendererManager.getRenderer()?.compile(sceneManager.getScene(), cameraManager.getCamera());
       log(`${name} loaded.`);
       checkAndApplyPolyPerf(object);
-      if (activeMesh) uvEditor.open(activeMesh, name, materialManager.getPresetNames().includes(activeMesh.material?.name) ? activeMesh.material.name : 'Default — White');
+      if (activeMesh) {
+        await uvEditor.open(activeMesh, name, materialManager.getPresetNames().includes(activeMesh.material?.name) ? activeMesh.material.name : 'Default — White');
+        await _restoreDesignLayersForPart(activeMesh.name);
+      }
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
     },
@@ -797,7 +1091,7 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
     const objPath = loadingPaths.obj;
     const hasMtl = !!materials; // track whether MTL materials were provided
 
-    objLoader.load(objPath, (object) => {
+    objLoader.load(objPath, async (object) => {
       const meshList = [];
       object.traverse((child) => {
         if (!child.isMesh) return;
@@ -855,7 +1149,8 @@ async function loadRegularModel(name, _modelData, onLoaded = null) {
       checkAndApplyPolyPerf(object);
       // Initialize UV editor for this model
       if (activeMesh) {
-        uvEditor.open(activeMesh, name, materialManager.getPresetNames().includes(activeMesh.material?.name) ? activeMesh.material.name : 'Default — White');
+        await uvEditor.open(activeMesh, name, materialManager.getPresetNames().includes(activeMesh.material?.name) ? activeMesh.material.name : 'Default — White');
+        await _restoreDesignLayersForPart(activeMesh.name);
       }
       markNeedsRender(60);
       if (onLoaded) onLoaded(object);
@@ -1195,20 +1490,45 @@ async function applyMaterialPreset(presetName) {
   // correct restored map, and baseTexture is already set for the composite render.
   if (activeMesh) uvEditor.onMaterialPresetApplied(activeMesh);
 
-  if (activeMesh?.material) controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+  // Step 5: Sync UI with the preset's real values, not the sticker PBR overrides.
+  // onMaterialPresetApplied may have called _applyStickerPBRMaps which forces
+  // metalness/roughness/color to 1/1/white — read the stored originals instead.
+  if (activeMesh?.material) {
+    const uv = uvEditor;
+    const stickerActive = uv._origMetalness !== null;
+    if (stickerActive) {
+      activeMesh.material.metalness = uv._origMetalness;
+      activeMesh.material.roughness = uv._origRoughness;
+      if (uv._origTransmission !== null) activeMesh.material.transmission = uv._origTransmission;
+      if (uv._origColor && activeMesh.material.color) activeMesh.material.color.set(uv._origColor);
+    }
+    controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+    if (stickerActive) {
+      activeMesh.material.metalness = 1.0;
+      activeMesh.material.roughness = 1.0;
+      if (uv._liveTransmissionTexture) activeMesh.material.transmission = 1.0;
+      if (activeMesh.material.color)   activeMesh.material.color.set(0xffffff);
+    }
+  }
 
   uvEditor.currentMaterialPreset = presetName;
   uvEditor._renderPreview();
 
-  // Sync the custom material dropdown and name field to reflect the applied preset
+  // Sync the custom material dropdown to reflect the applied preset
   controls.setMaterialPresetValue(presetName);
-  setMaterialNameField(presetName);
 
   // Render immediately so transmission materials create their internal
   // render target on the first frame (compile() alone doesn't do this).
   rendererManager.render(sceneManager.getScene(), cameraManager.getCamera());
   markNeedsRender(8);
   log(`Preset: ${presetName}`);
+
+  const _mn = getCurrentModelName();
+  const _pn = activeMesh?.name;
+  if (_mn && _pn) {
+    scheduleMatThumbUpdate(_mn, _pn);
+    _saveLastPreset(_mn, _pn, presetName);
+  }
 }
 
 
@@ -1232,6 +1552,175 @@ function getChannelThumbnailOverrides() {
   // The live decal composite must never show as the base color map slot.
   if (uvEditor.liveCanvasTexture && !('map' in overrides)) overrides.map = null;
   return overrides;
+}
+
+// Converts a THREE.Texture's image to a data URL (for undo capture of embedded textures).
+function textureToDataURL(tex) {
+  const img = tex?.image;
+  if (!img) return null;
+  if (!(img instanceof HTMLImageElement || img instanceof HTMLCanvasElement || img instanceof ImageBitmap)) return null;
+  const w = img.naturalWidth || img.width || 256;
+  const h = img.naturalHeight || img.height || 256;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  try {
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return c.toDataURL('image/png');
+  } catch { return null; }
+}
+
+// Applies a channelMaps snapshot (channel → data URL) to the active mesh material.
+// Used by materialState.restore() for channel texture undo/redo.
+function applyChannelMaps(maps) {
+  if (!activeMesh?.material) return;
+  const COLOR_CHANNELS = new Set(['map', 'emissiveMap', 'sheenColorMap', 'specularColorMap', 'attenuationColorMap']);
+  const MANAGED = [
+    'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'bumpMap', 'displacementMap',
+    'specularColorMap', 'specularIntensityMap', 'clearcoatMap', 'clearcoatRoughnessMap',
+    'clearcoatNormalMap', 'alphaMap', 'transmissionMap', 'thicknessMap',
+    'sheenColorMap', 'sheenRoughnessMap', 'emissiveMap',
+    'anisotropyMap', 'iridescenceMap', 'iridescenceThicknessMap',
+  ];
+  let anyChange = false;
+  for (const ch of MANAGED) {
+    const snapshotUrl = maps[ch] ?? null;
+    const currentUrl  = _channelMapData.get(ch) ?? null;
+    if (snapshotUrl === currentUrl) continue;
+    anyChange = true;
+    if (snapshotUrl) {
+      _channelMapData.set(ch, snapshotUrl);
+      const loader = new THREE.TextureLoader();
+      loader.load(snapshotUrl, (tex) => {
+        if (!activeMesh?.material) return;
+        tex.colorSpace = COLOR_CHANNELS.has(ch) ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+        applyTexQuality(tex);
+        const old = activeMesh.material[ch];
+        if (old?.isTexture) old.dispose();
+        activeMesh.material[ch] = tex;
+        activeMesh.material.needsUpdate = true;
+        if (ch === 'map' && uvEditor.overlayImages?.length > 0) uvEditor.notifyBaseMapChanged(tex);
+        else if ((ch === 'roughnessMap' || ch === 'metalnessMap' || ch === 'transmissionMap') && uvEditor._liveRoughnessTexture) uvEditor.notifyPBRMapChanged(ch, tex);
+        controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+        markNeedsRender(4);
+      });
+    } else {
+      _channelMapData.delete(ch);
+      const old = activeMesh.material[ch];
+      if (old?.isTexture) old.dispose();
+      activeMesh.material[ch] = null;
+      activeMesh.material.needsUpdate = true;
+      if (ch === 'map' && uvEditor.overlayImages?.length > 0) uvEditor.notifyBaseMapChanged(null);
+      else if ((ch === 'roughnessMap' || ch === 'metalnessMap' || ch === 'transmissionMap') && uvEditor._liveRoughnessTexture) uvEditor.notifyPBRMapChanged(ch, null);
+    }
+  }
+  if (anyChange) {
+    controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+    markNeedsRender(4);
+    _scheduleChannelMapSave();
+  }
+}
+
+// ─── Original material capture / restore ─────────────────────────────────────
+
+const _CAPTURE_CHANNELS = [
+  'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'bumpMap', 'displacementMap',
+  'specularColorMap', 'specularIntensityMap', 'clearcoatMap', 'clearcoatRoughnessMap',
+  'clearcoatNormalMap', 'alphaMap', 'transmissionMap', 'thicknessMap',
+  'sheenColorMap', 'sheenRoughnessMap', 'emissiveMap',
+  'anisotropyMap', 'iridescenceMap', 'iridescenceThicknessMap',
+];
+
+// Snapshots the material state of every loaded mesh right after model load.
+// Called once per loadModel cycle from inside the post-load setTimeout.
+function captureOriginalMaterials() {
+  _originalMaterialPerPart = {};
+  for (const [partName, mesh] of Object.entries(meshMap)) {
+    if (!mesh?.material) continue;
+    const materialProperties = materialManager.extractProperties(mesh.material);
+    const channelMaps = {};
+    for (const ch of _CAPTURE_CHANNELS) {
+      // 1. Part cache covers all parts in a custom (RenderDeck-saved) model.
+      const cachedUrl = _partCache[partName]?.channelMaps?.[ch];
+      if (cachedUrl) { channelMaps[ch] = cachedUrl; continue; }
+      // 2. _channelMapData covers the currently active part's user-uploaded textures.
+      if (partName === activeMesh?.name && _channelMapData.has(ch)) {
+        channelMaps[ch] = _channelMapData.get(ch); continue;
+      }
+      // 3. GLB/OBJ embedded texture — extract to data URL.
+      if (mesh.material[ch]?.isTexture) {
+        const url = textureToDataURL(mesh.material[ch]);
+        if (url) channelMaps[ch] = url;
+      }
+    }
+    _originalMaterialPerPart[partName] = { materialProperties, channelMaps };
+  }
+}
+
+// Restores the active part's material to the state captured at load time.
+// Pushes undo history so the user can revert the restore with Ctrl+Z.
+function restoreOriginalMaterial() {
+  const partName = activeMesh?.name;
+  if (!partName) return;
+  const orig = _originalMaterialPerPart[partName];
+  if (!orig) { log('No original material snapshot for this part.', true); return; }
+
+  const uv = uvEditor;
+
+  // Save current state so Ctrl+Z can undo the restore.
+  materialState.push('Before restore original');
+
+  // Reapply original PBR scalars.
+  if (orig.materialProperties) {
+    materialManager.applySavedProperties(activeMesh.material, orig.materialProperties);
+
+    // When sticker PBR maps are active, update the stored originals and re-render
+    // composites — mirrors the same logic in MaterialState.restore().
+    if (uv?._origMetalness !== null) {
+      const p = orig.materialProperties;
+      if (p.metalness    !== undefined) uv._origMetalness    = p.metalness;
+      if (p.roughness    !== undefined) uv._origRoughness    = p.roughness;
+      if (p.transmission !== undefined) uv._origTransmission = p.transmission;
+      if (p.color !== undefined) { uv._origColor = p.color; uv._materialBaseColor = p.color; }
+
+      activeMesh.material.metalness = 1.0;
+      activeMesh.material.roughness = 1.0;
+      if (uv._liveTransmissionTexture) activeMesh.material.transmission = 1.0;
+      if (activeMesh.material.color)   activeMesh.material.color.set(0xffffff);
+
+      uv._renderStickerPBRMaps();
+      uv._renderComposite();
+      if (uv._liveMetalnessTexture)    uv._liveMetalnessTexture.needsUpdate    = true;
+      if (uv._liveRoughnessTexture)    uv._liveRoughnessTexture.needsUpdate    = true;
+      if (uv._liveTransmissionTexture) uv._liveTransmissionTexture.needsUpdate = true;
+    }
+
+    activeMesh.material.needsUpdate = true;
+  }
+
+  // Restore original channel maps — applyChannelMaps diffs against _channelMapData,
+  // so it correctly removes user-uploaded textures that weren't in the original.
+  applyChannelMaps(orig.channelMaps);
+
+  // Sync UI with real values, not sticker PBR overrides (metalness/roughness/color are
+  // forced to 1/1/white while the live composite textures are in effect).
+  const stickerActive = uv?._origMetalness !== null;
+  if (stickerActive) {
+    activeMesh.material.metalness = uv._origMetalness;
+    activeMesh.material.roughness = uv._origRoughness;
+    if (uv._origTransmission !== null) activeMesh.material.transmission = uv._origTransmission;
+    if (uv._origColor && activeMesh.material.color) activeMesh.material.color.set(uv._origColor);
+  }
+  controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+  if (stickerActive) {
+    activeMesh.material.metalness = 1.0;
+    activeMesh.material.roughness = 1.0;
+    if (uv._liveTransmissionTexture) activeMesh.material.transmission = 1.0;
+    if (activeMesh.material.color)   activeMesh.material.color.set(0xffffff);
+  }
+
+  materialState.push('Restored original material');
+  markNeedsRender(4);
+  log('Original material restored.');
 }
 
 // ─── Preset channel map IDB persistence ──────────────────────────────────────
@@ -1266,6 +1755,43 @@ async function savePresetChannelMapsToIDB() {
       }
     }
   } catch (e) { log(`Failed to save preset channel maps: ${e.message}`, true); }
+}
+
+// Saves channel maps for a single user preset to IDB (lighter than savePresetChannelMapsToIDB).
+async function _saveOnePresetToIDB(presetName) {
+  try {
+    const projectId = await getActiveProjectId();
+    const uuid = materialManager.getPresetId(presetName);
+    if (!uuid || !projectId) return;
+    const key = `${projectId}:${uuid}`;
+    const channelMaps = materialManager.getPresetChannelMaps(presetName);
+    if (channelMaps) {
+      await IDBStorage.put('materials', key, { id: uuid, projectId, name: presetName, materialData: { channelMaps } });
+    } else {
+      await IDBStorage.del('materials', key).catch(() => {});
+    }
+  } catch { }
+}
+
+// Persists the current material editor state back to the active user preset so that
+// switching away and returning restores all slider/color/channel values.
+// Pass includeChannelMaps=true when a channel texture was just added/removed/moved.
+function _autoSaveCurrentPreset(includeChannelMaps = false) {
+  const presetName = getCurrentMaterialPreset();
+  if (!presetName || !materialManager.isUserPreset(presetName)) return;
+
+  // Extract real PBR values (bypassing sticker overrides if a decal session is active).
+  const clone = uvEditor.getCleanMaterialForThumbnail();
+  if (!clone) return;
+  const props = materialManager.extractProperties(clone);
+  clone.dispose();
+  materialManager.updateUserPresetParams(presetName, props);
+
+  if (includeChannelMaps) {
+    const channelMaps = _channelMapData.size > 0 ? Object.fromEntries(_channelMapData) : null;
+    materialManager.setPresetChannelMaps(presetName, channelMaps);
+    _saveOnePresetToIDB(presetName);
+  }
 }
 
 async function loadPresetChannelMapsFromIDB(projectId) {
@@ -1320,7 +1846,7 @@ function extractPropertiesForPreset(mat) {
   if (stickerActive) {
     mat.metalness = 1.0;
     mat.roughness = 1.0;
-    if (uvEditor._origTransmission > 0) mat.transmission = 1.0;
+    if (uvEditor._liveTransmissionTexture) mat.transmission = 1.0;
     if (mat.color) mat.color.set(0xffffff);
   }
   return props;
@@ -1686,6 +2212,7 @@ const controls = new ControlsManager({
   onMaterialPropertyCommit: () => {
     uvEditor.commitMaterialChange();
     materialState.push('Material change');
+    _autoSaveCurrentPreset();
   },
 
   onResetTexture: () => {
@@ -1756,7 +2283,10 @@ const controls = new ControlsManager({
         } else if ((channel === 'roughnessMap' || channel === 'metalnessMap' || channel === 'transmissionMap') && uvEditor._liveRoughnessTexture) {
           uvEditor.notifyPBRMapChanged(channel, tex);
         }
+        materialState.push('Channel uploaded');
         controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+        _saveChannelMapsToIDB();
+        _autoSaveCurrentPreset(true);
         log(`Channel "${channel}" texture set: ${file.name}`);
       }, undefined, () => logError(`Failed to load texture: ${file.name}`));
     };
@@ -1765,6 +2295,16 @@ const controls = new ControlsManager({
 
   onChannelTextureClear: (channel) => {
     if (!activeMesh?.material) return;
+    // For GLB-embedded textures not in _channelMapData, extract to data URL and push a
+    // pre-clear save point so undo can reconstruct the texture from the snapshot.
+    if (!_channelMapData.has(channel) && activeMesh.material[channel]?.isTexture) {
+      const url = textureToDataURL(activeMesh.material[channel]);
+      if (url) {
+        _channelMapData.set(channel, url);
+        materialState.push('Pre-clear save point');
+        _channelMapData.delete(channel); // not a user upload — don't persist in map
+      }
+    }
     _channelMapData.delete(channel);
     const old = activeMesh.material[channel];
     if (old && old.isTexture) old.dispose();
@@ -1776,8 +2316,52 @@ const controls = new ControlsManager({
     } else if ((channel === 'roughnessMap' || channel === 'metalnessMap' || channel === 'transmissionMap') && uvEditor._liveRoughnessTexture) {
       uvEditor.notifyPBRMapChanged(channel, null);
     }
+    materialState.push('Channel cleared');
     controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+    _saveChannelMapsToIDB();
+    _autoSaveCurrentPreset(true);
+    markNeedsRender(4);
     log(`Channel "${channel}" texture cleared`);
+  },
+
+  onChannelTextureMove: (fromChannel, toChannel) => {
+    if (!activeMesh?.material) return;
+    const COLOR_CHANNELS = new Set(['map', 'emissiveMap', 'sheenColorMap', 'specularColorMap', 'attenuationColorMap']);
+    // Prefer user-uploaded data URL; fall back to extracting from the material texture (GLB-embedded etc.)
+    let dataUrl = _channelMapData.get(fromChannel);
+    if (!dataUrl && activeMesh.material[fromChannel]?.isTexture) {
+      dataUrl = textureToDataURL(activeMesh.material[fromChannel]);
+    }
+    if (!dataUrl) return;
+    materialState.push(`Before move: ${fromChannel} → ${toChannel}`);
+    // Apply to destination
+    _channelMapData.set(toChannel, dataUrl);
+    const loader = new THREE.TextureLoader();
+    loader.load(dataUrl, (tex) => {
+      if (!activeMesh?.material) return;
+      tex.colorSpace = COLOR_CHANNELS.has(toChannel) ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+      applyTexQuality(tex);
+      const oldDest = activeMesh.material[toChannel];
+      if (oldDest?.isTexture) oldDest.dispose();
+      activeMesh.material[toChannel] = tex;
+      // Clear source
+      _channelMapData.delete(fromChannel);
+      const oldSrc = activeMesh.material[fromChannel];
+      if (oldSrc?.isTexture) oldSrc.dispose();
+      activeMesh.material[fromChannel] = null;
+      activeMesh.material.needsUpdate = true;
+      // UV editor sync for both slots
+      if (toChannel === 'map' && uvEditor.overlayImages?.length > 0) uvEditor.notifyBaseMapChanged(tex);
+      else if ((toChannel === 'roughnessMap' || toChannel === 'metalnessMap' || toChannel === 'transmissionMap') && uvEditor._liveRoughnessTexture) uvEditor.notifyPBRMapChanged(toChannel, tex);
+      if (fromChannel === 'map' && uvEditor.overlayImages?.length > 0) uvEditor.notifyBaseMapChanged(null);
+      else if ((fromChannel === 'roughnessMap' || fromChannel === 'metalnessMap' || fromChannel === 'transmissionMap') && uvEditor._liveRoughnessTexture) uvEditor.notifyPBRMapChanged(fromChannel, null);
+      materialState.push(`Channel moved: ${fromChannel} → ${toChannel}`);
+      controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+      _saveChannelMapsToIDB();
+      _autoSaveCurrentPreset(true);
+      markNeedsRender(4);
+      log(`Channel "${fromChannel}" moved to "${toChannel}"`);
+    });
   },
 
   onClearCustom: async () => {
@@ -1794,6 +2378,25 @@ const controls = new ControlsManager({
         loadModel(STANDARD_OBJECTS[0].label);
       }
     }
+  },
+
+  onDeleteModel: async (name) => {
+    const ok = await modelManager.removeModel(name);
+    if (ok) {
+      logSuccess(`Deleted: ${name}`);
+      await updateModelList();
+      if (getCurrentModelName() === name && STANDARD_OBJECTS.length > 0) {
+        loadModel(STANDARD_OBJECTS[0].label);
+      }
+    } else {
+      logError(`Could not delete: ${name}`);
+    }
+  },
+
+  onRestoreStandard: async () => {
+    registerBuiltInModels();
+    await updateModelList();
+    logSuccess('Standard objects restored');
   },
 });
 
@@ -1882,6 +2485,31 @@ function _snapshotCurrentPart() {
   };
 }
 
+function _applyFrontBackShader(mat) {
+  const baseMap = uvEditor.baseTexture;
+  if (!baseMap || !uvEditor.overlayImages?.length) return;
+  mat._rdFrontBack = true;
+  // customProgramCacheKey defaults to onBeforeCompile.toString() in r183 —
+  // setting a new onBeforeCompile automatically busts the shader cache.
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.u_baseMap = { value: baseMap };
+    shader.fragmentShader = 'uniform sampler2D u_baseMap;\n' + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'texture2D( map, vMapUv )',
+      'texture2D( gl_FrontFacing ? map : u_baseMap, vMapUv )'
+    );
+  };
+  mat.needsUpdate = true;
+}
+
+function _clearFrontBackShader(mat) {
+  if (mat._rdFrontBack) {
+    delete mat.onBeforeCompile; // restores prototype default, auto-busts cache via customProgramCacheKey
+    delete mat._rdFrontBack;
+    mat.needsUpdate = true;
+  }
+}
+
 async function selectPart(mesh) {
   if (!mesh) return;
   _snapshotCurrentPart();
@@ -1896,7 +2524,6 @@ async function selectPart(mesh) {
         ? activeMesh.material.name
         : 'Default — White';
       controls.setMaterialPresetValue(presetToShow);
-      setMaterialNameField(presetToShow);
     }
   }
 
@@ -1911,13 +2538,18 @@ async function selectPart(mesh) {
   // Pass cached overlays (already-decoded Image objects) — skips IDB read
   const preloadedOverlays = cached ? cached.overlayImages : null;
   await uvEditor.open(activeMesh, getCurrentModelName(), getCurrentMaterialPreset(), preloadedOverlays);
+  // If this part hasn't been visited this session, restore its design layers from IDB
+  if (!cached) await _restoreDesignLayersForPart(mesh.name);
 
-  cameraManager.reframeObject(activeMesh);
   const sel = controls.elements.objectPartSelect;
   if (sel) sel.value = mesh.name;
   const designSel = document.getElementById('design-part-select');
   if (designSel) designSel.value = mesh.name;
   nodeEditorManager.setSelection(getCurrentModelName(), mesh.name);
+
+  if (!_backfaceCullingOn && activeMesh?.material) {
+    _applyFrontBackShader(activeMesh.material);
+  }
 }
 
 
@@ -1960,6 +2592,12 @@ function saveSessionState() {
       activeCustomScene: document.getElementById('scene-select')?.value || null,
       materialPreset: uvEditor.currentMaterialPreset || getCurrentMaterialPreset() || null,
       isCustomMaterial: materialManager.isUserPreset(uvEditor.currentMaterialPreset || getCurrentMaterialPreset()),
+      // True only when a RenderDeck preset was explicitly applied to the mesh (replaces
+      // its original material). False when the dropdown just shows "Default — White" as
+      // a fallback because the mesh's loaded material name isn't a known preset name.
+      presetExplicitlyApplied: activeMesh?.material?.name
+        ? materialManager.getPresetNames().includes(activeMesh.material.name)
+        : false,
       materialProperties: (() => {
         if (!activeMesh?.material) return null;
         const mat = activeMesh.material;
@@ -1975,7 +2613,7 @@ function saveSessionState() {
         if (stickerActive) {
           mat.metalness = 1.0;
           mat.roughness = 1.0;
-          if (uvEditor._origTransmission > 0) mat.transmission = 1.0;
+          if (uvEditor._liveTransmissionTexture) mat.transmission = 1.0;
           if (mat.color) mat.color.set(0xffffff);
         }
         return props;
@@ -1996,6 +2634,9 @@ function saveSessionState() {
       nodeGraph: nodeEditorManager.getGraphData(),
     };
     // Fast startup hint (sync read/write, tiny payload)
+    // materialPropertiesBase: PBR scalars + color without channel map data URLs
+    // (those can be several MB each — channel maps stay IDB-only).
+    const { channelMaps: _cm, ...materialPropsBase } = state.materialProperties || {};
     try {
       localStorage.setItem(sessionBootKey(getActiveProjectIdSync()), JSON.stringify({
         version: 1,
@@ -2004,6 +2645,8 @@ function saveSessionState() {
         partName: state.partName,
         sceneName: state.sceneName,
         materialPreset: state.materialPreset,
+        presetExplicitlyApplied: state.presetExplicitlyApplied,
+        materialPropertiesBase: Object.keys(materialPropsBase).length > 0 ? materialPropsBase : null,
         camera: state.camera,
         rendererState: state.rendererState,
       }));
@@ -2021,10 +2664,33 @@ function saveSessionState() {
 
 async function restoreSessionState() {
   let state = null;
+  let pid = null;
   try {
-    const pid = await getActiveProjectId();
+    pid = await getActiveProjectId();
     state = await IDBStorage.get('metadata', sessionStorageKey(pid));
-    if (!state || state.version !== 1) return false;
+    if (!state || state.version !== 1) {
+      // IDB state missing or stale — reconstruct minimal state from the synchronous
+      // localStorage boot key (always written on beforeunload, survives fast reloads).
+      try {
+        const bootRaw = localStorage.getItem(sessionBootKey(getActiveProjectIdSync()));
+        if (bootRaw) {
+          const boot = JSON.parse(bootRaw);
+          if (boot?.version === 1 && boot?.modelName) {
+            state = {
+              version: 1,
+              modelName: boot.modelName,
+              partName: boot.partName ?? null,
+              sceneName: boot.sceneName ?? null,
+              materialPreset: boot.materialPreset ?? null,
+              presetExplicitlyApplied: boot.presetExplicitlyApplied ?? false,
+              materialProperties: null,
+              rendererState: boot.rendererState ?? null,
+            };
+          }
+        }
+      } catch (_) { /* ignore */ }
+      if (!state) return false;
+    }
   } catch (err) {
     console.warn('Session parse failed:', err);
     return false;
@@ -2096,60 +2762,146 @@ async function restoreSessionState() {
     }
 
     // Restore part selection if available
+    // Must be awaited — selectPart calls uvEditor.open() which captures baseTexture
+    // from material.map; running it concurrently with applyMaterialPreset below
+    // causes a race where uvEditor.open() overwrites baseTexture with null.
     if (state.partName && meshMap[state.partName]) {
-      selectPart(meshMap[state.partName]);
+      await selectPart(meshMap[state.partName]);
     }
 
     // Restore material preset + properties
     // Prefer the localStorage boot key's preset (sync write, always up-to-date)
     // over IDB state which may be stale if the async write didn't finish before unload.
     let restoredPreset = state.materialPreset;
+    let restoredPresetExplicit = state.presetExplicitlyApplied ?? false;
+    let bootMaterialPropertiesBase = null;
+    let bootCamera = null; // prefer localStorage camera — IDB write on beforeunload may not complete
     try {
       const bootRaw = localStorage.getItem(sessionBootKey(getActiveProjectIdSync()));
       if (bootRaw) {
         const boot = JSON.parse(bootRaw);
         if (boot?.materialPreset) restoredPreset = boot.materialPreset;
+        if (typeof boot?.presetExplicitlyApplied === 'boolean') restoredPresetExplicit = boot.presetExplicitlyApplied;
+        if (boot?.materialPropertiesBase) bootMaterialPropertiesBase = boot.materialPropertiesBase;
+        if (boot?.camera) bootCamera = boot.camera;
       }
     } catch (_) { /* ignore */ }
-    if (restoredPreset) {
+    // The dedicated last-preset IDB key is written immediately on every applyMaterialPreset call
+    // (not deferred to beforeunload), so it is the most authoritative source for preset restoration.
+    const lastPreset = await _loadLastPreset(pid, state.modelName, state.partName);
+    if (lastPreset) {
+      restoredPreset = lastPreset;
+      restoredPresetExplicit = true;
+    }
+    if (restoredPreset && restoredPresetExplicit) {
+      // User previously replaced the mesh's loaded material with a RenderDeck preset —
+      // re-apply it so the mesh has the correct base material before properties restore.
       const alreadyCorrect = activeMesh?.material?.name === restoredPreset;
       if (!alreadyCorrect) {
         await applyMaterialPreset(restoredPreset);
       } else {
         controls.setMaterialPresetValue(restoredPreset);
       }
+    } else if (restoredPreset) {
+      // Preset is just the display fallback (e.g. mesh is a GLB with its own material).
+      // Don't replace the loaded material — just sync the dropdown label and uvEditor name.
+      controls.setMaterialPresetValue(restoredPreset);
+      uvEditor.currentMaterialPreset = restoredPreset;
     }
-    if (state.materialProperties && activeMesh?.material) {
-      materialManager.applySavedProperties(activeMesh.material, state.materialProperties);
+    // Use IDB materialProperties when available (has channel maps); fall back to
+    // localStorage materialPropertiesBase (PBR scalars only, always written sync).
+    const matPropsToApply = state.materialProperties ?? bootMaterialPropertiesBase ?? null;
+    // Prefer the eager channel map cache (written immediately on upload/clear/undo)
+    // over the session state blob (async write that may not complete before unload).
+    const eagerChannelMaps = await _loadChannelMapsFromIDB(pid, state.modelName, state.partName);
+    const channelMapsToApply = eagerChannelMaps || matPropsToApply?.channelMaps || null;
+    if (matPropsToApply && activeMesh?.material) {
+      materialManager.applySavedProperties(activeMesh.material, matPropsToApply);
       // Use the saved color rather than material.color — sticker mode sets material.color
       // to white, so reading it here would overwrite _origColor with white.
-      const savedColor = state.materialProperties.color;
+      const savedColor = matPropsToApply.color;
       if (savedColor) uvEditor.updateMaterialColor(savedColor);
-      if (state.materialProperties.channelMaps) {
-        await restoreChannelMaps(activeMesh.material, state.materialProperties.channelMaps);
+      // If sticker PBR maps were already activated (by _restoreDesignLayersForPart inside
+      // selectPart), they captured _origMetalness/_origRoughness from the pre-restore material
+      // (preset defaults). applySavedProperties just wrote correct values to material, but
+      // _applyStickerPBRMaps won't re-capture (it only runs on the first call when _origMetalness
+      // is null). Sync the originals now so the PBR maps encode the correct saved scalars.
+      if (uvEditor._origMetalness !== null) {
+        if (matPropsToApply.metalness   !== undefined) uvEditor._origMetalness   = matPropsToApply.metalness;
+        if (matPropsToApply.roughness   !== undefined) uvEditor._origRoughness   = matPropsToApply.roughness;
+        if (matPropsToApply.transmission !== undefined) uvEditor._origTransmission = matPropsToApply.transmission;
+        uvEditor._renderStickerPBRMaps();
+        if (uvEditor._liveMetalnessTexture)   uvEditor._liveMetalnessTexture.needsUpdate   = true;
+        if (uvEditor._liveRoughnessTexture)   uvEditor._liveRoughnessTexture.needsUpdate   = true;
+        if (uvEditor._liveTransmissionTexture) uvEditor._liveTransmissionTexture.needsUpdate = true;
+      }
+      if (channelMapsToApply) {
+        await restoreChannelMaps(activeMesh.material, channelMapsToApply);
         // Re-sync UV editor — restoreChannelMaps may overwrite material slots that
         // openWithPreloadedData already composited (channel map over decals bug).
-        const cm = state.materialProperties.channelMaps;
-        if ('map' in cm && uvEditor.overlayImages?.length > 0) {
+        // Always notify baseMap change when 'map' was restored so uvEditor.baseTexture
+        // is correct before uvEditor.restoreSessionState composites overlays onto it.
+        if ('map' in channelMapsToApply) {
           uvEditor.notifyBaseMapChanged(activeMesh.material.map ?? null);
         }
-        if ('roughnessMap' in cm && uvEditor._liveRoughnessTexture) {
+        if ('roughnessMap' in channelMapsToApply && uvEditor._liveRoughnessTexture) {
           uvEditor.notifyPBRMapChanged('roughnessMap', activeMesh.material.roughnessMap ?? null);
         }
-        if ('metalnessMap' in cm && uvEditor._liveMetalnessTexture) {
+        if ('metalnessMap' in channelMapsToApply && uvEditor._liveMetalnessTexture) {
           uvEditor.notifyPBRMapChanged('metalnessMap', activeMesh.material.metalnessMap ?? null);
         }
-        if ('transmissionMap' in cm && uvEditor._liveTransmissionTexture) {
+        if ('transmissionMap' in channelMapsToApply && uvEditor._liveTransmissionTexture) {
           uvEditor.notifyPBRMapChanged('transmissionMap', activeMesh.material.transmissionMap ?? null);
         }
       }
       activeMesh.material.needsUpdate = true;
+      // applySavedProperties restored real PBR values (color, metalness, roughness) which
+      // breaks the sticker map multipliers that require metalness=1 / roughness=1 / color=white.
+      // syncMaterialUI here reads the real values (correct — shows the true color in the picker).
+      // After the sync, re-apply sticker scalar overrides so the canvas map renders correctly.
       controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+      if (uvEditor._origMetalness !== null) {
+        activeMesh.material.metalness = 1.0;
+        activeMesh.material.roughness = 1.0;
+        if (uvEditor._liveTransmissionTexture) activeMesh.material.transmission = 1.0;
+        if (activeMesh.material.color) activeMesh.material.color.set(0xffffff);
+      }
+      markNeedsRender(4);
+      // Schedule a thumbnail update so the object-list thumb reflects the restored material.
+      // applyMaterialPreset already schedules one when the preset changed; this covers the
+      // case where the preset was already correct and applyMaterialPreset was skipped.
+      scheduleMatThumbUpdate(state.modelName, activeMesh.name);
+    } else if (channelMapsToApply && activeMesh?.material) {
+      // matPropsToApply was null (no saved session) but eager channel maps exist
+      await restoreChannelMaps(activeMesh.material, channelMapsToApply);
+      if ('map' in channelMapsToApply) uvEditor.notifyBaseMapChanged(activeMesh.material.map ?? null);
+      if ('roughnessMap' in channelMapsToApply && uvEditor._liveRoughnessTexture) uvEditor.notifyPBRMapChanged('roughnessMap', activeMesh.material.roughnessMap ?? null);
+      if ('metalnessMap' in channelMapsToApply && uvEditor._liveMetalnessTexture) uvEditor.notifyPBRMapChanged('metalnessMap', activeMesh.material.metalnessMap ?? null);
+      if ('transmissionMap' in channelMapsToApply && uvEditor._liveTransmissionTexture) uvEditor.notifyPBRMapChanged('transmissionMap', activeMesh.material.transmissionMap ?? null);
+      activeMesh.material.needsUpdate = true;
+      controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
+      if (uvEditor._origMetalness !== null) {
+        activeMesh.material.metalness = 1.0;
+        activeMesh.material.roughness = 1.0;
+        if (uvEditor._liveTransmissionTexture) activeMesh.material.transmission = 1.0;
+        if (activeMesh.material.color) activeMesh.material.color.set(0xffffff);
+      }
       markNeedsRender(4);
     }
 
-    // Restore unsaved design editor overlays
-    if (state.uvEditor) {
+    // Restore unsaved design editor overlays.
+    // Prefer the eager design layer cache (blobs saved immediately on change)
+    // over session state overlays which are written async on beforeunload.
+    const cachedLayers = await loadDesignLayersFromCache(pid, state.partName);
+    if (cachedLayers) {
+      const uvState = {
+        ...(state.uvEditor || {}),
+        overlayImages: cachedLayers,
+        selectedImageId: state.uvEditor?.selectedImageId ?? null,
+        nextImageId: state.uvEditor?.nextImageId ?? cachedLayers.reduce((m, l) => Math.max(m, l.id + 1), 0),
+      };
+      await uvEditor.restoreSessionState(uvState);
+    } else if (state.uvEditor) {
       await uvEditor.restoreSessionState(state.uvEditor);
     }
 
@@ -2174,12 +2926,13 @@ async function restoreSessionState() {
       Object.assign(camState, state.camState);
       applyCameraSettings();
     }
-    if (state.camera?.position) {
-      const p = state.camera.position;
+    const cameraToRestore = bootCamera ?? state.camera;
+    if (cameraToRestore?.position) {
+      const p = cameraToRestore.position;
       cameraManager.setPosition(p.x, p.y, p.z);
     }
-    if (state.camera?.target) {
-      const t = state.camera.target;
+    if (cameraToRestore?.target) {
+      const t = cameraToRestore.target;
       cameraManager.setTarget(t.x, t.y, t.z);
     }
 
@@ -2193,7 +2946,37 @@ async function restoreSessionState() {
 
 async function updateModelList() {
   const categories = await modelManager.getModelNamesByCategory();
-  controls.updateModelSelect(categories);
+  const pid = getActiveProjectIdSync();
+  const designThumbs = {};
+  const matThumbs = {}; // modelName → [{ partName, dataUrl }]
+  if (pid) {
+    const allNames = [
+      ...(categories.builtin  || []),
+      ...(categories.custom   || []),
+      ...(categories.uploaded || []),
+    ];
+    const allBlobKeys = await IDBStorage.getAllKeys('blobs').catch(() => []);
+    await Promise.all(allNames.map(async name => {
+      try {
+        const blob = await IDBStorage.get('blobs', `design-thumb:${pid}:${name}`);
+        if (blob) designThumbs[name] = await IDBStorage.blobToDataURL(blob);
+      } catch (_) {}
+
+      // Load all per-part mat-thumbs for this model
+      const prefix = _matThumbIdbKey(pid, name, '');
+      const keys = allBlobKeys.filter(k => k.startsWith(prefix));
+      if (keys.length) {
+        const entries = (await Promise.all(keys.map(async k => {
+          try {
+            const dataUrl = await IDBStorage.get('blobs', k);
+            return dataUrl ? { partName: k.slice(prefix.length), dataUrl } : null;
+          } catch (_) { return null; }
+        }))).filter(Boolean);
+        if (entries.length) matThumbs[name] = entries;
+      }
+    }));
+  }
+  controls.updateModelSelect(categories, designThumbs, matThumbs);
 }
 
 function updateSceneList() {
@@ -2283,79 +3066,40 @@ document.getElementById('add-new-material')?.addEventListener('click', () => {
   savePresetChannelMapsToIDB();
   updateMaterialPresetList();
   controls.setMaterialPresetValue(newName);
-  setMaterialNameField(newName);
   controls.syncMaterialUI(activeMesh.material, getChannelThumbnailOverrides());
   // Clone with channel map but no decal for thumbnail; dispose the clone after render
   scheduleThumbnailUpdate(newName, uvEditor.getCleanMaterialForThumbnail(), true);
   log(`New material: "${newName}"`);
 });
 
-// ── Inline rename form ────────────────────────────────────────────────────────
-// The form is always visible. setMaterialNameField() is called from
-// applyMaterialPreset() and selectPart() to keep the input in sync.
-const _renameInput   = document.getElementById('rename-material-input');
-const _renameConfirm = document.getElementById('rename-material-confirm');
-const _renameClear   = document.getElementById('rename-material-clear');
+// ── Inline material rename (triggered by pencil icon in the preset dropdown) ──
+controls.onMaterialRenameRequest((oldName, newName) => {
+  if (materialManager.getPresetNames().includes(newName)) return; // name already taken
 
-function setMaterialNameField(name) {
-  if (_renameInput) _renameInput.value = name ?? '';
-}
-
-function _resetRenameField() {
-  setMaterialNameField(activeMesh?.material?.name ?? '');
-}
-
-function _commitRename() {
-  const current = controls.getMaterialPresetValue();
-  const newName = _renameInput.value.trim();
-  if (!newName || !current || newName === current) { _resetRenameField(); return; }
-  if (materialManager.getPresetNames().includes(newName)) {
-    _renameInput.style.borderColor = '#c06060';
-    _renameInput.select();
-    setTimeout(() => { _renameInput.style.borderColor = ''; }, 1000);
-    return;
-  }
-
-  if (materialManager.isStandardPreset(current)) {
-    // Fork the standard preset under the chosen name
-    const forked = materialManager.forkMaterial(activeMesh.material, newName);
+  if (materialManager.isStandardPreset(oldName)) {
+    // Fork directly from the preset store — no need to have it applied to the mesh
+    const source = materialManager.getPreset(oldName);
+    const forked = materialManager.forkMaterial(source, newName);
     materialManager.applyEnvironment(forked, sceneManager.getScene().environment);
-    activeMesh.material = forked;
-    materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked), _channelMaps: serializeChannelMaps() || undefined });
-    savePresetChannelMapsToIDB();
-    scheduleThumbnailUpdate(newName, uvEditor.getCleanMaterialForThumbnail(), true);
-    log(`Forked "${current}" → "${newName}"`);
+    materialManager.addUserPreset(newName, { ...extractPropertiesForPreset(forked) });
+    scheduleThumbnailUpdate(newName, forked, true);
+    log(`Forked "${oldName}" → "${newName}"`);
   } else {
     // User preset — rename in place
-    materialManager.renamePreset(current, newName);
-    if (_matThumbCache.has(current)) {
-      const dataUrl = _matThumbCache.get(current);
+    materialManager.renamePreset(oldName, newName);
+    if (_matThumbCache.has(oldName)) {
+      const dataUrl = _matThumbCache.get(oldName);
       _matThumbCache.set(newName, dataUrl);
-      _matThumbCache.delete(current);
+      _matThumbCache.delete(oldName);
       IDBStorage.put('blobs', THUMB_IDB_PREFIX + newName, dataUrl).catch(() => {});
-      IDBStorage.del('blobs', THUMB_IDB_PREFIX + current).catch(() => {});
+      IDBStorage.del('blobs', THUMB_IDB_PREFIX + oldName).catch(() => {});
     }
-    log(`Renamed "${current}" → "${newName}"`);
+    log(`Renamed "${oldName}" → "${newName}"`);
   }
 
   updateMaterialPresetList();
   controls.setMaterialPresetValue(newName);
-  setMaterialNameField(newName);
   uvEditor.currentMaterialPreset = newName;
-}
-
-// Rename button → focus + select so the user can start typing immediately
-document.getElementById('rename-material')?.addEventListener('click', () => {
-  _renameInput?.focus();
-  _renameInput?.select();
-});
-
-_renameConfirm?.addEventListener('click', _commitRename);
-_renameClear  ?.addEventListener('click', () => { _renameInput.value = ''; _renameInput.focus(); });
-
-_renameInput?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter')  { e.preventDefault(); _commitRename(); }
-  if (e.key === 'Escape') { e.preventDefault(); _resetRenameField(); _renameInput.blur(); }
 });
 
 document.getElementById('delete-current-material')?.addEventListener('click', () => {
@@ -2383,6 +3127,11 @@ document.getElementById('load-standard-materials')?.addEventListener('click', ()
   updateMaterialPresetList();
   scheduleAllMissingThumbnails();
   log('Standard materials restored');
+});
+
+document.getElementById('restore-original-material-btn')?.addEventListener('click', () => {
+  if (!activeMesh) { log('No active part selected.', true); return; }
+  restoreOriginalMaterial();
 });
 
 document.getElementById('reset-cache-btn')?.addEventListener('click', () => {
@@ -2445,7 +3194,7 @@ window.saveCustomModelHandler = async function() {
     const matProps = materialManager.extractProperties(mat);
     if (stickerActive) {
       mat.metalness = 1.0; mat.roughness = 1.0;
-      if (uvEditor._origTransmission > 0) mat.transmission = 1.0;
+      if (uvEditor._liveTransmissionTexture) mat.transmission = 1.0;
       if (mat.color) mat.color.set(0xffffff);
     }
 
@@ -2526,14 +3275,30 @@ container.addEventListener('drop', async (e) => {
   container.classList.remove('drag-over');
   const files = Array.from(e.dataTransfer.files);
   if (!files.length) return;
-  const result = await modelManager.addModelFromFiles(files);
-  if (result.success) {
-    logSuccess(`Model added: ${result.name}`);
-    result.warnings.forEach(w => logWarn(w));
-    await updateModelList();
-    loadModel(result.name);
-  } else {
-    result.errors.forEach(e => logError(e));
+
+  const imageFiles = files.filter(f => f.type.startsWith('image/'));
+  const modelFiles = files.filter(f => !f.type.startsWith('image/'));
+
+  if (imageFiles.length > 0) {
+    if (!activeMesh) {
+      logWarn('Select an object part first to apply a design.');
+    } else {
+      for (const file of imageFiles) {
+        await uvEditor.handleImageUpload(file);
+      }
+    }
+  }
+
+  if (modelFiles.length > 0) {
+    const result = await modelManager.addModelFromFiles(modelFiles);
+    if (result.success) {
+      logSuccess(`Model added: ${result.name}`);
+      result.warnings.forEach(w => logWarn(w));
+      await updateModelList();
+      loadModel(result.name);
+    } else {
+      result.errors.forEach(e => logError(e));
+    }
   }
 });
 
@@ -2860,6 +3625,28 @@ function setupPreviewQualityUI() {
     });
   }
 
+  // ── Back-face Culling toggle ──
+  const cullingToggle = document.getElementById('preview-toggle-culling');
+  if (cullingToggle) {
+    cullingToggle.addEventListener('change', (e) => {
+      _backfaceCullingOn = e.target.checked;
+      if (activeModel) {
+        activeModel.traverse((child) => {
+          if (!child.isMesh || !child.material) return;
+          if (_backfaceCullingOn) {
+            _clearFrontBackShader(child.material);
+            child.material.side = THREE.FrontSide;
+          } else {
+            child.material.side = THREE.DoubleSide;
+            if (child === activeMesh) _applyFrontBackShader(child.material);
+          }
+          child.material.needsUpdate = true;
+        });
+      }
+      log(`Back-face culling: ${e.target.checked ? 'on' : 'off'}`);
+    });
+  }
+
   // ── Render Scale ──
   setupButtonRow('render-scale-buttons', (v) => {
     const scale = parseFloat(v);
@@ -2969,8 +3756,10 @@ function setupDesignShortcuts() {
     setTimeout(() => btn.classList.remove('sc-active'), 200);
   };
 
-  // Keyboard handler — skip when focus is inside a text field
+  // Keyboard handler — only active in design mode, skip when focus is inside a text field
   document.addEventListener('keydown', (e) => {
+    const toolbar = document.querySelector('.editor-stage-toolbar');
+    if (!toolbar?.classList.contains('editor-stage-toolbar-design')) return;
     const tag = e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     switch (e.key) {
@@ -3255,7 +4044,7 @@ function setupTransformToolbar() {
   // ── Edit-mode lock ──────────────────────────────────────────────
   const btnEditMode   = document.getElementById('tf-editmode');
   const toolbar       = document.getElementById('transform-toolbar');
-  let editModeOn = true; // starts enabled (matches current default)
+  let editModeOn = false;
 
   function applyEditMode(on) {
     editModeOn = on;
@@ -3265,7 +4054,7 @@ function setupTransformToolbar() {
   }
 
   btnEditMode?.addEventListener('click', () => applyEditMode(!editModeOn));
-  applyEditMode(true); // sync PropManager state with the button's default active state
+  applyEditMode(false);
 
   // ── Measure unit (cm / in) ───────────────────────────────────
   function applyMeasureUnit(unit) {
@@ -3296,7 +4085,9 @@ function setupTransformToolbar() {
   const btnDimensions  = document.getElementById('tf-dimensions');
   const btnDimSettings = document.getElementById('tf-dim-settings');
   const dimPopup       = document.getElementById('dim-settings-popup');
-  let dimLabelsOn = true;
+  let dimLabelsOn = false;
+
+  propManager.setShowLabels(false);
 
   btnDimensions?.addEventListener('click', () => {
     dimLabelsOn = !dimLabelsOn;
@@ -3574,6 +4365,7 @@ function markNeedsRender(frames = 4) {
   if (frames > _renderBurst) _renderBurst = frames;
 }
 window.markNeedsRender = markNeedsRender; // expose for UVEditor + other modules
+window.applyTexQuality = applyTexQuality;  // expose for UVEditor canvas textures
 
 // Any slider or dropdown change triggers a render burst (covers all material/bg/env changes)
 document.addEventListener('input',  () => markNeedsRender(4), { passive: true, capture: true });
@@ -3957,6 +4749,7 @@ async function initializeApp() {
   await loadCachedThumbnails();
 
   await materialPresetsReady;
+  await modelManager.ready;
   warmupAndGenerateThumbnails();
   await updateModelList();
   updateSceneList();
