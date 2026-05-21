@@ -118,6 +118,10 @@ export class UVEditor {
     // Channel maps hook — set by main.js; returns serialized channel map data for saving
     this.getChannelMaps = null;
 
+    // Design layer persistence hooks
+    this._layersSavedHandlers = [];
+    this._layersSavedTimer = null;
+
     // Text tool state
     this._editingTextId = null;
 
@@ -164,11 +168,11 @@ export class UVEditor {
       this.uvCanvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
       this.uvCanvas.addEventListener('mouseup', () => {
         if (this.isDragging) {
-          
           this._restoreFullResTexture();
           this._renderComposite();
           this._updateStickerPBRIfActive();
           this.onCommit?.(`${this._dragMode === 'rotate' ? 'Rotated' : this._dragMode.startsWith('resize') ? 'Resized' : 'Moved'} overlay`);
+          this._notifyLayersSaved();
         }
         this.isDragging = false; this._dragMode = 'translate';
       });
@@ -178,6 +182,7 @@ export class UVEditor {
           this._renderComposite();
           this._updateStickerPBRIfActive();
           this.onCommit?.('Moved overlay');
+          this._notifyLayersSaved();
         }
         this.isDragging = false; this._dragMode = 'translate';
         if (this.uvCanvas) this.uvCanvas.style.cursor = 'crosshair';
@@ -277,9 +282,9 @@ export class UVEditor {
       const v = parseFloat(input.value);
       if (!isNaN(v)) { slider.value = v; callback(v); }
     });
-    // Commit to history when user releases the slider or commits the number input
-    slider.addEventListener('change', () => this.onCommit?.(historyLabel));
-    input.addEventListener('change', () => this.onCommit?.(historyLabel));
+    // Commit to history and persist when user releases the slider or commits the number input
+    slider.addEventListener('change', () => { this.onCommit?.(historyLabel); this._notifyLayersSaved(); });
+    input.addEventListener('change', () => { this.onCommit?.(historyLabel); this._notifyLayersSaved(); });
   }
 
   // ─── Apply transformation to selected image ───────────────────
@@ -512,15 +517,18 @@ export class UVEditor {
           rotation: 0,
           aspectRatio,
           flipH: false,
-          flipV: false
+          flipV: false,
+          _originalDataURL: img._originalDataURL,
         };
         this.overlayImages.push(imageData);
+        this._notifyLayersSaved();
         this._updateLayersList();
         this._renderPreview();
         this.applyTextureToModel();
         this.selectImage(imageData.id);
         this.log(`Image added: ${file.name}`);
       };
+      img._originalDataURL = e.target.result;
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
@@ -540,6 +548,7 @@ export class UVEditor {
     if (!this.selectedImageId) return;
     this.overlayImages = this.overlayImages.filter(i => i.id !== this.selectedImageId);
     this.selectedImageId = null;
+    this._notifyLayersSaved();
     this._updateLayersList();
     this._renderPreview();
     this._renderComposite();
@@ -565,6 +574,7 @@ export class UVEditor {
       }
     }
 
+    this._notifyLayersSaved();
     this.onCommit?.('Deleted overlay');
     this.log('Image deleted');
   }
@@ -623,6 +633,7 @@ export class UVEditor {
         this.overlayImages.splice(before ? insertAt : insertAt + 1, 0, moved);
 
         this._dragLayerId = null;
+        this._notifyLayersSaved();
         this._updateLayersList();
         this._renderPreview();
         this._renderComposite();
@@ -785,7 +796,9 @@ export class UVEditor {
   }
 
   // ─── Composite render (shared logic) ─────────────────────────
-  _renderCompositeToCanvas(ctx, w, h, useWrap) {
+  _renderCompositeToCanvas(ctx, w, h, useWrap, quality = 'high') {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = quality;
     ctx.clearRect(0, 0, w, h);
 
     ctx.fillStyle = this._materialBaseColor || '#ffffff';
@@ -840,7 +853,7 @@ export class UVEditor {
   // Renders to 512x512 canvas during drag — 16x less GPU upload per frame.
   // Full-res texture is restored on mouseup/mouseleave.
   _renderCompositeDrag() {
-    this._renderCompositeToCanvas(this._dragCtx, 512, 512, true);
+    this._renderCompositeToCanvas(this._dragCtx, 512, 512, true, 'low');
 
     if (!this._dragTexture) {
       this._dragTexture = new THREE.CanvasTexture(this._dragCanvas);
@@ -921,6 +934,9 @@ export class UVEditor {
       }
       if (this._liveTransmissionTexture) {
         this.activeMesh.material.transmissionMap = this._liveTransmissionTexture;
+      } else if (this._origTransmissionMap !== undefined) {
+        // Drag replaced transmissionMap with a flat canvas; restore the original
+        this.activeMesh.material.transmissionMap = this._origTransmissionMap ?? null;
       }
       this.activeMesh.material.needsUpdate = true;
     }
@@ -1114,6 +1130,9 @@ export class UVEditor {
       texture.minFilter = this.baseTexture.minFilter;
       texture.anisotropy = this.baseTexture.anisotropy;
     }
+    // Always apply renderer-aware quality settings (anisotropy, mipmap filtering)
+    // regardless of whether baseTexture exists. Keeps the composite sharp at angles.
+    window.applyTexQuality?.(texture);
     texture.needsUpdate = true;
 
     this.liveCanvasTexture = texture;
@@ -1253,6 +1272,7 @@ export class UVEditor {
     img.position.y = this._wrapPercent(img.position.y + dy);
     this._syncSlidersFromImage(img);
     this._renderPreview();
+    this._restoreFullResTexture();
     this._renderComposite();
     this._updateStickerPBRIfActive();
   }
@@ -1264,6 +1284,7 @@ export class UVEditor {
     img.rotation = ((img.rotation + deltaDeg) % 360 + 360) % 360;
     this._syncSlidersFromImage(img);
     this._renderPreview();
+    this._restoreFullResTexture();
     this._renderComposite();
     this._updateStickerPBRIfActive();
   }
@@ -1277,6 +1298,7 @@ export class UVEditor {
     img.size = { w: 30, h: 30 / (img.aspectRatio || 1) };
     this._syncSlidersFromImage(img);
     this._renderPreview();
+    this._restoreFullResTexture();
     this._renderComposite();
     this._updateStickerPBRIfActive();
   }
@@ -1322,9 +1344,19 @@ export class UVEditor {
     }
     if (property === 'transmission' && this._origTransmission !== null) {
       this._origTransmission = value;
-      if (hasDecals) { this._renderStickerPBRMapsDrag(); } else {
+      if (!this._liveTransmissionTexture) {
+        // No sticker composite for transmission — update scalar directly so the
+        // original transmissionMap keeps working in real-time without being
+        // replaced by a flat drag canvas
+        if (this.activeMesh?.material) {
+          this.activeMesh.material.transmission = value;
+          this.activeMesh.material.needsUpdate = true;
+        }
+      } else if (hasDecals) {
+        this._renderStickerPBRMapsDrag();
+      } else {
         this._renderStickerPBRMaps();
-        if (this._liveTransmissionTexture) this._liveTransmissionTexture.needsUpdate = true;
+        this._liveTransmissionTexture.needsUpdate = true;
       }
       return true;
     }
@@ -1415,15 +1447,20 @@ export class UVEditor {
       if (stickerActive) {
         mat.metalness = 1.0;
         mat.roughness = 1.0;
-        if (this._origTransmission > 0) mat.transmission = 1.0;
+        if (this._liveTransmissionTexture) mat.transmission = 1.0;
         if (mat.color) mat.color.set(0xffffff);
       }
     }
 
     const serializedImages = await Promise.all(this.overlayImages.map(async img => {
       const c = document.createElement('canvas');
-      c.width = img.image.width; c.height = img.image.height;
-      c.getContext('2d').drawImage(img.image, 0, 0);
+      const iw = img.image.naturalWidth  || img.image.width  || 1;
+      const ih = img.image.naturalHeight || img.image.height || 1;
+      c.width = iw; c.height = ih;
+      const sc = c.getContext('2d');
+      sc.imageSmoothingEnabled = true;
+      sc.imageSmoothingQuality = 'high';
+      sc.drawImage(img.image, 0, 0, iw, ih);
       return {
         name:        img.name,
         type:        img.type     || 'image',
@@ -1457,9 +1494,7 @@ export class UVEditor {
 
     this._renderComposite();
     const texture = new THREE.CanvasTexture(this.textureCanvas);
-    
     texture.colorSpace = THREE.SRGBColorSpace;
-    
     if (this.baseTexture) {
       texture.flipY = this.baseTexture.flipY;
       texture.wrapS = this.baseTexture.wrapS;
@@ -1468,6 +1503,7 @@ export class UVEditor {
       texture.minFilter = this.baseTexture.minFilter;
       texture.anisotropy = this.baseTexture.anisotropy;
     }
+    window.applyTexQuality?.(texture);
     texture.needsUpdate = true;
     if (this.activeMesh?.material) {
       if (this.activeMesh.material.map && this.activeMesh.material.map !== this.baseTexture) {
@@ -1680,8 +1716,9 @@ export class UVEditor {
       requestAnimationFrame(() => {
         this._rafPending = false;
         this._renderPreview();
-        // Live 3D preview during drag
-        if (this.liveCanvasTexture) this._renderCompositeDrag();
+        // Only use drag-quality composite if still dragging — mouseup may have
+        // fired between the queued rAF and its execution, restoring full-res texture.
+        if (this.liveCanvasTexture && this.isDragging) this._renderCompositeDrag();
       });
     }
   }
@@ -1715,6 +1752,7 @@ export class UVEditor {
     this._renderComposite();
     this._updateStickerPBRIfActive();
     window.markNeedsRender?.(4);
+    this._notifyLayersSaved();
     this.onCommit?.(`Flipped ${axis === 'h' ? 'horizontal' : 'vertical'}`);
   }
 
@@ -1847,6 +1885,7 @@ export class UVEditor {
         flipV:       false,
       };
       this.overlayImages.push(entry);
+      this._notifyLayersSaved();
       this.selectImage(entry.id);
       this.log('Text layer added — drag to position, click layer to edit');
       this.onCommit?.('Added text layer');
@@ -1941,15 +1980,21 @@ export class UVEditor {
       const uvs   = uvAttr.array;
       const index = geo.index;
 
+      // GLB/GLTF textures have flipY=false (V=0 at top); OBJ uses flipY=true (V=0 at bottom).
+      // The canvas Y-axis has 0 at top, so OBJ needs (1-v)*h but GLB needs v*h.
+      const meshTex = this.activeMesh.material?.map;
+      const flipV   = meshTex ? meshTex.flipY !== false : true;
+      const toY = (v) => flipV ? (1 - v) * h : v * h;
+
       oc.strokeStyle = 'rgba(120, 210, 255, 0.65)';
       oc.lineWidth   = 1.5;
       oc.lineJoin    = 'round';
 
       const drawTri = (i0, i1, i2) => {
         oc.beginPath();
-        oc.moveTo(uvs[i0 * 2] * w,     (1 - uvs[i0 * 2 + 1]) * h);
-        oc.lineTo(uvs[i1 * 2] * w,     (1 - uvs[i1 * 2 + 1]) * h);
-        oc.lineTo(uvs[i2 * 2] * w,     (1 - uvs[i2 * 2 + 1]) * h);
+        oc.moveTo(uvs[i0 * 2] * w, toY(uvs[i0 * 2 + 1]));
+        oc.lineTo(uvs[i1 * 2] * w, toY(uvs[i1 * 2 + 1]));
+        oc.lineTo(uvs[i2 * 2] * w, toY(uvs[i2 * 2 + 1]));
         oc.closePath();
         oc.stroke();
       };
@@ -1978,6 +2023,7 @@ export class UVEditor {
       textData: s.textData ? { ...s.textData } : null,
     }));
     this.selectedImageId = state.selectedImageId ?? null;
+    this._notifyLayersSaved();
     this._updateLayersList();
     const sel = this.overlayImages.find(i => i.id === this.selectedImageId);
     if (sel) this._syncSlidersFromImage(sel);
@@ -2016,11 +2062,15 @@ export class UVEditor {
 
   _imageToDataURL(img) {
     if (!img) return null;
+    const w = img.naturalWidth  || img.width  || 1;
+    const h = img.naturalHeight || img.height || 1;
     const c = document.createElement('canvas');
-    c.width = img.width;
-    c.height = img.height;
+    c.width = w;
+    c.height = h;
     const cx = c.getContext('2d');
-    cx.drawImage(img, 0, 0);
+    cx.imageSmoothingEnabled = true;
+    cx.imageSmoothingQuality = 'high';
+    cx.drawImage(img, 0, 0, w, h);
     return c.toDataURL('image/png');
   }
 
@@ -2042,7 +2092,7 @@ export class UVEditor {
         aspectRatio: img.aspectRatio,
         flipH:       !!img.flipH,
         flipV:       !!img.flipV,
-        imageData:   this._imageToDataURL(img.image),
+        imageData:   img._originalDataURL ?? this._imageToDataURL(img.image),
       })),
     };
   }
@@ -2061,6 +2111,7 @@ export class UVEditor {
       if (!saved?.imageData) { resolve(); return; }
       const img = new Image();
       img.onload = () => {
+        img._originalDataURL = saved.imageData;
         loaded.push({
           id:          Number.isFinite(saved.id) ? saved.id : this.nextImageId++,
           image:       img,
@@ -2073,6 +2124,7 @@ export class UVEditor {
           aspectRatio: saved.aspectRatio || (img.width / img.height),
           flipH:       !!saved.flipH,
           flipV:       !!saved.flipV,
+          _originalDataURL: saved.imageData,
         });
         resolve();
       };
@@ -2104,6 +2156,31 @@ export class UVEditor {
       this._renderComposite();
       this.applyTextureToModel();
     }
+  }
+
+  // ─── Design layer persistence hooks ──────────────────────────
+  onLayersSaved(cb) {
+    this._layersSavedHandlers.push(cb);
+  }
+
+  _notifyLayersSaved() {
+    clearTimeout(this._layersSavedTimer);
+    this._layersSavedTimer = setTimeout(() => {
+      const snapshot = this.overlayImages.map(img => ({
+        id:          img.id,
+        name:        img.name,
+        type:        img.type     || 'image',
+        textData:    img.textData ? { ...img.textData } : null,
+        position:    { ...img.position },
+        size:        { ...img.size },
+        rotation:    img.rotation,
+        aspectRatio: img.aspectRatio,
+        flipH:       !!img.flipH,
+        flipV:       !!img.flipV,
+        dataURL:     img._originalDataURL ?? this._imageToDataURL(img.image),
+      }));
+      this._layersSavedHandlers.forEach(cb => cb(snapshot));
+    }, 400);
   }
 
   // ─── Build a clean material for thumbnail rendering ───────────

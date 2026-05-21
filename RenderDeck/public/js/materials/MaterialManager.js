@@ -506,6 +506,8 @@ export class MaterialManager {
     if (properties.dispersion !== undefined) material.dispersion = properties.dispersion;
     if (properties.reflectivity !== undefined) material.reflectivity = properties.reflectivity;
     if (properties.normalScale !== undefined && material.normalScale) material.normalScale.set(properties.normalScale, properties.normalScale);
+    if (properties.displacementScale !== undefined) material.displacementScale = properties.displacementScale;
+    if (properties.displacementBias  !== undefined) material.displacementBias  = properties.displacementBias;
 
     material.needsUpdate = true;
   }
@@ -544,6 +546,8 @@ export class MaterialManager {
       dispersion: material.dispersion,
       reflectivity: material.reflectivity,
       normalScale: material.normalScale?.x ?? 1,
+      displacementScale: material.displacementScale ?? 1,
+      displacementBias:  material.displacementBias  ?? 0,
     };
   }
 

@@ -45,7 +45,7 @@
           <div class="editor-stage-toolbar">
             <div id="transform-toolbar" class="transform-toolbar">
               <!-- Edit-mode lock: when active (green) transform gizmo is live; when grey gizmo is hidden -->
-              <button id="tf-editmode" class="tf-btn tf-btn--active" title="Toggle Transform Edit Mode">
+              <button id="tf-editmode" class="tf-btn" title="Toggle Transform Edit Mode">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -101,7 +101,7 @@
                 </svg>
               </button>
               <div class="tf-sep"></div>
-              <button id="tf-dimensions" class="tf-btn tf-btn--active" title="Toggle Dimension Labels">
+              <button id="tf-dimensions" class="tf-btn" title="Toggle Dimension Labels">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                   <line x1="3" y1="21" x2="21" y2="21"/>
@@ -211,7 +211,7 @@
             </div>
           </div>
         </div>
-        <div class="design-shortcuts">
+        <div class="shortcuts-pane">
           <span class="sc-label">Design:</span>
           <div class="sc-row">
             <div class="sc-item"><button id="sc-up" class="sc-btn sc-arrow sc-arrow-up" title="Move Up (↑)">➔</button><span class="sc-item-label">Up</span></div>
@@ -330,10 +330,21 @@
             </div>
 
             <div class="folder-panel" id="obj-panel">
-              <h5>Select an Object</h5>
-              <select id="object-select" class="dropdown">
-                <!-- populated by JS with optgroups; no static placeholders needed -->
-              </select>
+              <div class="object-select-header">
+                <h5>Select an Object</h5>
+                <div class="object-select-menu-wrap">
+                  <button class="burger-btn" id="object-select-menu-btn" aria-label="Object options" title="Object options">
+                    <span></span><span></span><span></span>
+                  </button>
+                  <div class="dropdown-menu" id="object-select-menu" hidden>
+                    <button class="dropdown-menu-item" id="export-btn">Export</button>
+                    <button class="dropdown-menu-item" id="import-btn">Import</button>
+                    <button class="dropdown-menu-item" id="clear-custom-btn">Clear</button>
+                    <button class="dropdown-menu-item" id="restore-standard-btn">Restore Standard Objects</button>
+                  </div>
+                </div>
+              </div>
+              <div id="object-select" tabindex="0"></div>
 
               <!-- High-poly performance warning -->
               <div id="high-poly-warning" class="high-poly-warning" style="display:none;">
@@ -345,14 +356,6 @@
               <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj or .glb)</label>
               <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg,.glb" multiple style="display:none;">
               <p class="hint">.glb (standalone), or .obj + optional .mtl and textures — drag &amp; drop onto preview</p>
-              <div id="uploaded-model-warning" style="display:none;" class="uploaded-model-warning">
-                <span>&#9888;&#65039;</span>
-                <span>Uploaded files aren't saved on refresh. Custom models built from this file will need the file re-uploaded to load correctly.</span>
-              </div>
-
-              <button class="button-medium" id="export-btn">&#128190; Export</button>
-              <button class="button-medium" id="import-btn">&#128229; Import</button>
-              <button class="button-medium" id="clear-custom-btn">&#128465;&#65039; Clear</button>
               <input type="file" id="file-input" accept=".json,.renderdeck.json" style="display:none;">
               <!-- hidden legacy select for JS compat -->
               <select id="model-select" style="display:none;"></select>
@@ -634,7 +637,6 @@
                 <p class="empty-message">No history yet</p>
               </div>
             </div>
-
             <h5>Select an Object</h5>
             <select id="object-select-materialtab" class="dropdown">
               <option value="" disabled selected>--- Standard Objects ---</option>
@@ -653,21 +655,9 @@
 
             <div style="display:flex;gap:4px;flex-wrap:wrap;">
               <button class="button-medium" id="add-new-material">New Material</button>
-              <button class="button-medium" id="rename-material">Rename</button>
               <button class="button-medium" id="delete-current-material">Delete</button>
               <button class="button-medium" id="load-standard-materials">Load Standard</button>
-            </div>
-
-            <div id="rename-material-form" class="rename-inline-form">
-              <div class="rename-inline-field">
-                <input id="rename-material-input" class="rename-inline-input" type="text" autocomplete="off" spellcheck="false" placeholder="Material name…">
-                <button class="rename-inline-clear" id="rename-material-clear" tabindex="-1" aria-label="Clear">
-                  <svg width="7" height="7" viewBox="0 0 8 8" fill="none"><line x1="1" y1="1" x2="7" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="7" y1="1" x2="1" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                </button>
-              </div>
-              <button class="rename-inline-confirm" id="rename-material-confirm" aria-label="Confirm rename">
-                <svg width="13" height="10" viewBox="0 0 13 10" fill="none"><polyline points="1,5 5,9 12,1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
+              <button class="button-medium" id="restore-original-material-btn" title="Reset this part's material and channel textures to how they were when the model was first imported">Restore Original</button>
             </div>
 
             <div class="material-sections">
@@ -953,6 +943,16 @@
                     <p class="control-label">Displacement</p>
                     <span id="displacementMap-channel-anchor" class="channel-anchor"></span>
                   </div>
+                  <div class="control-row">
+                    <p class="control-label">Disp Scale</p>
+                    <input id="displacement-scale-slider" class="slider" type="range" min="0" max="2" step="0.001" value="1">
+                    <input id="displacement-scale-input" class="value-input" type="number" inputmode="decimal" step="0.001" min="0" max="2" value="1">
+                  </div>
+                  <div class="control-row">
+                    <p class="control-label">Disp Bias</p>
+                    <input id="displacement-bias-slider" class="slider" type="range" min="-1" max="1" step="0.001" value="0">
+                    <input id="displacement-bias-input" class="value-input" type="number" inputmode="decimal" step="0.001" min="-1" max="1" value="0">
+                  </div>
 
                   <div class="control-row material-map-row">
                     <p class="control-label">Specular Color</p>
@@ -1234,6 +1234,10 @@
               <label class="toggle-row">
                 <input type="checkbox" id="preview-toggle-vertexcolors">
                 <span>Vertex Colors</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="preview-toggle-culling" checked>
+                <span>Back-face Culling</span>
               </label>
               <label class="toggle-row">
                 <input type="checkbox" id="perf-mode-toggle">
@@ -1624,6 +1628,9 @@
         else if (settingName === 'Setting2') toolbar.classList.add('editor-stage-toolbar-design');
         else if (settingName === 'Setting3') toolbar.classList.add('editor-stage-toolbar-material');
       }
+
+      const shortcutsPane = document.querySelector('.shortcuts-pane');
+      if (shortcutsPane) shortcutsPane.style.display = settingName === 'Setting2' ? 'flex' : 'none';
     }
 
     (function () {
@@ -1647,6 +1654,15 @@
   </script>
 
   <script type="module" src="js/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+    // Hold a shared Web Lock to discourage the browser from discarding this tab
+    if (navigator.locks) {
+      navigator.locks.request('renderdeck-alive', { mode: 'shared' }, () => new Promise(() => {}));
+    }
+  </script>
 </body>
 
 </html>

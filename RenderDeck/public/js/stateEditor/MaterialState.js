@@ -11,16 +11,20 @@ export class MaterialStateManager {
    * @param {function} deps.getActiveMesh    - () => activeMesh
    * @param {function} deps.markNeedsRender  - markNeedsRender(frames)
    */
-  constructor({ materialManager, getControls, getActiveMesh, markNeedsRender, getUVEditor, getPresetName }) {
+  constructor({ materialManager, getControls, getActiveMesh, markNeedsRender, getUVEditor, getPresetName, getChannelMaps, applyChannelMaps }) {
     this.materialManager  = materialManager;
     this.getControls      = getControls;
     this.getActiveMesh    = getActiveMesh;
     this.markNeedsRender  = markNeedsRender;
     this.getUVEditor      = getUVEditor || (() => null);
     this.getPresetName    = getPresetName || (() => null);
+    this.getChannelMaps   = getChannelMaps   || null;
+    this.applyChannelMaps = applyChannelMaps || null;
 
     this.history = new HistoryManager(50);
     this.history.onChange(() => this.updateUI());
+
+    this.onChanged = null; // optional callback — fired after every push or restore
   }
 
   // ── Snapshot ────────────────────────────────────────────────────
@@ -46,11 +50,18 @@ export class MaterialStateManager {
     if (stickerActive) {
       mat.metalness = 1.0;
       mat.roughness = 1.0;
-      if (uv._origTransmission > 0) mat.transmission = 1.0;
+      // Use _liveTransmissionTexture (not _origTransmission > 0) — the user may have
+      // slid transmission to 0 which sets _origTransmission = 0, but the sticker override
+      // is still 1.0 as long as the live texture exists.
+      if (uv._liveTransmissionTexture) mat.transmission = 1.0;
       if (mat.color) mat.color.set(0xffffff);
     }
 
-    return { materialProperties: props, presetName: this.getPresetName() };
+    return {
+      materialProperties: props,
+      presetName:   this.getPresetName(),
+      channelMaps:  this.getChannelMaps?.() ?? undefined,
+    };
   }
 
   // ── History operations ──────────────────────────────────────────
@@ -60,6 +71,7 @@ export class MaterialStateManager {
 
   push(label) {
     this.history.push(this.snapshot(), label);
+    this.onChanged?.();
   }
 
   // ── Restore ─────────────────────────────────────────────────────
@@ -87,7 +99,7 @@ export class MaterialStateManager {
         // Re-override material for sticker PBR
         mesh.material.metalness = 1.0;
         mesh.material.roughness = 1.0;
-        if (uv._origTransmission > 0) mesh.material.transmission = 1.0;
+        if (uv._liveTransmissionTexture) mesh.material.transmission = 1.0;
         if (mesh.material.color) mesh.material.color.set(0xffffff);
 
         // Re-render PBR maps and composite with new base values
@@ -111,7 +123,7 @@ export class MaterialStateManager {
       if (stickerActive) {
         mesh.material.metalness = 1.0;
         mesh.material.roughness = 1.0;
-        if (uv._origTransmission > 0) mesh.material.transmission = 1.0;
+        if (uv._liveTransmissionTexture) mesh.material.transmission = 1.0;
         if (mesh.material.color) mesh.material.color.set(0xffffff);
       }
 
@@ -120,7 +132,13 @@ export class MaterialStateManager {
         this.getControls()?.setMaterialPresetValue(state.presetName);
       }
 
+      // Restore channel textures if captured in this snapshot (async — UI syncs in callback)
+      if (state.channelMaps !== undefined) {
+        this.applyChannelMaps?.(state.channelMaps);
+      }
+
       this.markNeedsRender(4);
+      this.onChanged?.();
     }
   }
 

@@ -137,6 +137,11 @@ h4 {
 }
 
 .tabcontent h4 {
+  margin-top: 14px;
+}
+.tab-panel > h4:first-of-type,
+.material-section-content > h4:first-of-type,
+.folder-panel > h4:first-of-type {
   margin-top: 0;
 }
 
@@ -459,7 +464,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   display: flex;
   align-items: flex-end;
   gap: 0;
-  margin-top: 10px;
+  margin-top: 0;
   margin-bottom: -1px;
   position: relative;
   z-index: 1;
@@ -1791,7 +1796,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   flex: 1;
 }
 
-.compact-color-picker__menu-btn{
+.burger-btn{
   width: 22px;
   height: 22px;
   margin-top: 2px;
@@ -1808,14 +1813,14 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   cursor: pointer;
 }
 
-.compact-color-picker__menu-btn span{
+.burger-btn span{
   width: 10px;
   height: 1px;
   background: currentColor;
   display: block;
 }
 
-.compact-color-picker__menu{
+.dropdown-menu{
   position: absolute;
   top: 100%;
   right: 0;
@@ -1828,7 +1833,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   z-index: 9999;
 }
 
-.compact-color-picker__menu-item{
+.dropdown-menu-item{
   width: 100%;
   min-height: 20px;
   padding: 2px 8px;
@@ -1842,8 +1847,47 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   cursor: pointer;
 }
 
-.compact-color-picker__menu-item:hover{
+.dropdown-menu-item:hover{
   background: #222;
+}
+
+.object-select-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.object-select-header h5{ margin: 0; }
+.object-select-menu-wrap{ position: relative; }
+
+#object-select .custom-select__option-rename-form {
+  left: 6px;
+  right: 38px;
+  height: 22px;
+}
+#object-select .custom-select__option-rename-input {
+  font-size: 14px;
+}
+
+#object-select .custom-select__option-delete {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #555;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+}
+#object-select .custom-select__option-delete:hover {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
 }
 
 .compact-color-picker__preview-swatch{
@@ -2464,94 +2508,104 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 }
 
 
-/* ── Inline rename form (material) ────────────────────────────── */
-.rename-inline-form {
+/* ── Compact color picker arrow ── */
+.picker-arrow-wrap {
+  position: fixed;
+  overflow: hidden;
+  width: 12px;
+  height: 22px;
+  z-index: 2147483647;
+  pointer-events: none;
+  display: none;
+}
+.picker-arrow {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #141414;
+  border: 1px solid #555;
+  border-radius: 3px;
+  transform: rotate(45deg);
+  top: 4px;
+}
+.picker-arrow-wrap.arrow-right .picker-arrow { left: -7px; }
+.picker-arrow-wrap.arrow-left  .picker-arrow { left:  5px; }
+
+/* ── Inline rename form inside custom-select option row ── */
+.custom-select__option-rename-form {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 18px;
+  right: 0;
   display: flex;
   align-items: stretch;
-  gap: 0;          /* field + confirm share a border — zero gap */
-  margin-top: 5px;
+  gap: 0;
+  border: 1px solid #5a5a5a;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #2a2a2a;
+  z-index: 2;
 }
+.custom-select__option-rename-form:focus-within { border-color: #888; }
 
-.rename-inline-field {
+.custom-select__option-rename-field {
   position: relative;
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
-.rename-inline-input {
+.custom-select__option-rename-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 2px 20px 2px 6px;
-  background: #141414;
-  color: #e8e8e8;
-  border: 1px solid #555;
-  border-right: none;            /* merges visually with the confirm button */
-  border-radius: 4px 0 0 4px;
-  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  font-size: 12px;
-  line-height: 1.4;
+  padding: 0 18px 0 3px;
+  background: transparent;
+  color: #d0d0d0;
+  border: none;
   outline: none;
-  transition: border-color 0.15s ease;
+  font-size: 12px;
+  font-family: inherit;
+  caret-color: #c8c8c8;
 }
 
-.rename-inline-input:focus {
-  border-color: #888;
-}
-
-.rename-inline-clear {
+.custom-select__option-rename-clear {
   position: absolute;
-  right: 4px;
+  right: 3px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   padding: 0;
   background: #3a3a3a;
   border: none;
   border-radius: 50%;
   color: #999;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
+.custom-select__option-rename-clear:hover { background: #505050; color: #e0e0e0; }
 
-.rename-inline-clear:hover {
-  background: #505050;
-  color: #e0e0e0;
-}
-
-/* Confirm (✓) — flush right edge of field, shares left border */
-.rename-inline-confirm {
+.custom-select__option-rename-confirm {
   flex-shrink: 0;
+  align-self: stretch;
+  aspect-ratio: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
   padding: 0;
-  background:
-    linear-gradient(to bottom, rgba(255,255,255,0.14) 0%, rgba(0,0,0,0.15) 120%),
-    #1a1a1a;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.22) 100%), #1e1e1e;
   color: #c8c8c8;
-  border: 1px solid #555;
-  border-radius: 0 4px 4px 0;
+  border: none;
+  border-left: 1px solid #4a4a4a;
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px transparent;
-  transition: box-shadow 0.15s ease, background 0.15s ease;
 }
-
-.rename-inline-confirm:hover {
-  box-shadow: inset 0 0 0 1px #666;
-  background:
-    linear-gradient(to bottom, rgba(255,255,255,0.16) 0%, rgba(0,0,0,0.18) 100%),
-    #2a2a2a;
-}
-
-.rename-inline-confirm:active {
-  transition: none;
-  background:
-    linear-gradient(to bottom, rgba(0,0,0,0.18) 0%, rgba(255,255,255,0.10) 100%),
-    #1a1a1a;
+.custom-select__option-rename-confirm:hover {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.16) 0%, rgba(0,0,0,0.22) 100%), #2a2a2a;
+  color: #fff;
 }
 
 .material-sections {
@@ -2728,6 +2782,36 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 }
 .channel-tex-wrapper.has-texture .channel-tex-clear { display: flex; }
 .channel-tex-clear:hover { background: #555; border-color: #aaa; color: #fff; }
+.channel-tex-wrapper.drag-source .channel-tex-thumb { opacity: 0.4; cursor: grabbing; }
+.channel-tex-wrapper.drag-over .channel-tex-thumb { border-color: #4a8fff; box-shadow: 0 0 0 2px rgba(74,143,255,0.35); }
+
+/* Channel texture preview popup */
+.channel-tex-preview-popup {
+  position: fixed;
+  z-index: 10000;
+  padding: 10px;
+  box-sizing: border-box;
+  border: 1px solid #555;
+  border-radius: 10px;
+  background: #141414;
+  box-shadow: 0 30px 56px rgba(0,0,0,0.68), 0 12px 24px rgba(0,0,0,0.36);
+}
+.channel-tex-preview-popup__title {
+  color: #d7d7d7;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.channel-tex-preview-popup__canvas {
+  display: block;
+  width: 160px;
+  height: 160px;
+  border-radius: 5px;
+  border: 1px solid #333;
+  image-rendering: auto;
+}
 
 #design-preview-canvas.drag-over {
   outline: 3px dashed #4CAF50;
@@ -2735,8 +2819,8 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 }
 
 /* Design shortcut buttons (Scene Controls panel) */
-.design-shortcuts {
-  display: flex;
+.shortcuts-pane {
+  display: none;
   align-items: center;
   gap: 6px;
   padding: 4px 0;
@@ -3404,6 +3488,19 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 .custom-select__trigger:hover        { border-color: #666; }
 .custom-select.is-open .custom-select__trigger { border-color: #888; }
 
+#object-select .custom-select__trigger {
+  padding: 3px 10px;
+  min-height: 24px;
+}
+#object-select .custom-select__value {
+  font-size: 14px;
+  color: #fff;
+}
+#object-select .custom-select__option-label {
+  font-size: 14px;
+  color: #fff;
+}
+
 .custom-select__value {
   flex: 1;
   white-space: nowrap;
@@ -3439,6 +3536,7 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 .custom-select.is-open .custom-select__dropdown { display: block; }
 
 .custom-select__option {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -3450,13 +3548,70 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
 .custom-select__option:hover             { background: #2a2a2a; color: #fff; }
 .custom-select__option.is-active         { background: #313131; color: #fff; }
 
-.custom-select__option-label {
+.custom-select__option-label-row {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.custom-select__option-label {
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 12px;
 }
+
+.custom-select__option-design-thumb {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  border: 1px solid rgba(100, 210, 120, 0.55);
+  border-radius: 2px;
+  display: block;
+}
+
+.custom-select__option-mat-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.custom-select__option-mat-thumb {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  object-fit: cover;
+  border: none;
+  border-radius: 50%;
+  display: block;
+}
+
+.custom-select__option-rename {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.custom-select__option:hover .custom-select__option-rename,
+.custom-select__option.is-active .custom-select__option-rename {
+  opacity: 0.45;
+}
+.custom-select__option-rename:hover { opacity: 1 !important; }
 
 .custom-select__group-label {
   padding: 6px 8px 3px;
