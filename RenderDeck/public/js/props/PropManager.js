@@ -34,6 +34,7 @@ export class PropManager {
     this.mainModel = null;
     this._mainModelHelper = null;
     this.onTransformCommit = null; // set by caller; receives (mode: 'translate'|'rotate'|'scale')
+    this.onChange = null;          // set by caller; fired whenever props are added, moved or removed
     this._editModeEnabled = true;
     this._showLabels = true;
     this._labelsParallel = false;
@@ -761,6 +762,7 @@ export class PropManager {
   }
 
   _updatePropsList() {
+    this.onChange?.();
     const list = document.getElementById('props-list');
     if (!list) return;
 

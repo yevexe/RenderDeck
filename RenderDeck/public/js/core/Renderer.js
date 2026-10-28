@@ -305,6 +305,18 @@ export class RendererManager {
     }
   }
 
+  // restoreState() + bring an already-built composer in line with it. Saved
+  // settings load asynchronously, so the first frames may have built the
+  // composer with defaults — rebuild so passes and their params match.
+  applyState(state) {
+    if (!state) return;
+    this.restoreState(state);
+    if (this.composer && this._scene) {
+      this.buildComposer(this._scene, this._camera);
+      this.renderer.compile(this._scene, this._camera);
+    }
+  }
+
   // Push all internal state to the DOM (checkboxes, sliders, inputs, color pickers).
   // Call this after restoreState() once the UI has been set up.
   syncUI() {

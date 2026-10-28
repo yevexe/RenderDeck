@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { STANDARD_ENVIRONMENTS } from '../config.js';
+import * as IDBStorage from '../storage/indexedDBStorage.js';
+import { envPreviewKey } from '../storage/storageKeys.js';
 
 /**
  * Load the first configured environment on startup.
@@ -45,35 +47,44 @@ export function getSceneNames() {
 }
 
 // ── Environment preview cache ────────────────────────────────
+// Rendered previews are cached in memory and in IDB 'blobs' under
+// `env-preview:${cacheId}` (data URL). Derived data — safe to clear.
 const _envPreviewMemCache = new Map();
-const _ENV_PREVIEW_LS_PREFIX = 'rd_envpreview_v1_';
 
-function _envCacheKey(path) {
-  return _ENV_PREVIEW_LS_PREFIX + path.replace(/[^a-z0-9]/gi, '_');
+/** Cache id for a standard environment path (matches the old localStorage suffix). */
+export function envPreviewCacheId(path) {
+  return path.replace(/[^a-z0-9]/gi, '_');
+}
+
+/** Drop a preview from the in-memory cache (the IDB copy is deleted by the caller). */
+export function forgetEnvPreview(path) {
+  _envPreviewMemCache.delete(path);
 }
 
 /**
  * Render a tiny HDR environment preview onto a reflective sphere.
- * Results are cached in memory and localStorage — subsequent calls
+ * Results are cached in memory and IndexedDB — subsequent calls
  * for the same path resolve instantly from cache.
- * @param {string} path - Path to the .hdr file
+ * @param {string} path - Path (or blob: URL) of the .hdr file
  * @param {number} [size=128] - Width/height of the output image in pixels
+ * @param {string} [cacheId] - IDB cache id; defaults to one derived from path
  * @returns {Promise<string|null>} data URL or null on failure
  */
-export function generateEnvPreview(path, size = 128) {
+export async function generateEnvPreview(path, size = 128, cacheId = envPreviewCacheId(path)) {
   // 1. In-memory cache hit
   if (_envPreviewMemCache.has(path)) {
-    return Promise.resolve(_envPreviewMemCache.get(path));
+    return _envPreviewMemCache.get(path);
   }
 
-  // 2. localStorage cache hit
+  // 2. IndexedDB cache hit
+  const idbKey = envPreviewKey(cacheId);
   try {
-    const stored = localStorage.getItem(_envCacheKey(path));
+    const stored = await IDBStorage.get('blobs', idbKey);
     if (stored) {
       _envPreviewMemCache.set(path, stored);
-      return Promise.resolve(stored);
+      return stored;
     }
-  } catch (_) { /* localStorage unavailable — proceed to render */ }
+  } catch (_) { /* IDB unavailable — proceed to render */ }
 
   // 3. Render and cache
   return new Promise((resolve) => {
@@ -105,7 +116,9 @@ export function generateEnvPreview(path, size = 128) {
         renderer.dispose();
 
         _envPreviewMemCache.set(path, dataUrl);
-        try { localStorage.setItem(_envCacheKey(path), dataUrl); } catch (_) {}
+        IDBStorage.put('blobs', idbKey, dataUrl).catch((err) => {
+          console.warn('Environment preview cache write failed:', err);
+        });
 
         resolve(dataUrl);
       },

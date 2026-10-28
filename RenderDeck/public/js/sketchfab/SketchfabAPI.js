@@ -1,14 +1,23 @@
+import { loadAppSettings, setAppSetting } from '../storage/SettingsStorage.js';
+
 const BASE_URL = 'https://api.sketchfab.com/v3';
 
 export class SketchfabAPI {
   constructor() {
-    this.token = localStorage.getItem('renderdeck_sketchfab_token') || '';
+    // Stored in settings/app.sketchfabToken — call load() before first use
+    this.token = '';
   }
 
-  setToken(token) {
-    this.token = token.trim();
-    if (this.token) localStorage.setItem('renderdeck_sketchfab_token', this.token);
-    else localStorage.removeItem('renderdeck_sketchfab_token');
+  async load() {
+    const app = await loadAppSettings();
+    this.token = app.sketchfabToken || '';
+  }
+
+  // Writes settings/app first; the token in memory only changes once saved.
+  async setToken(token) {
+    const next = token.trim();
+    await setAppSetting('sketchfabToken', next || null);
+    this.token = next;
   }
 
   hasToken() { return !!this.token; }

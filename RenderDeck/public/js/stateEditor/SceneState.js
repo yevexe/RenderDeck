@@ -28,6 +28,7 @@ export class SceneStateManager {
     this.loadModel       = loadModel     || (() => {});
 
     this._restoringModel = false;
+    this.onChanged = null; // optional callback — fired after every push or restore
 
     this.history = new HistoryManager(50);
     this.history.onChange(() => this.updateUI());
@@ -55,6 +56,7 @@ export class SceneStateManager {
   push(label) {
     if (this._restoringModel) return;
     this.history.push(this.snapshot(), label);
+    this.onChanged?.();
   }
 
   // ── Restore ─────────────────────────────────────────────────────
@@ -110,6 +112,7 @@ export class SceneStateManager {
     }
 
     this.markNeedsRender(60);
+    this.onChanged?.();
   }
 
   // ── UI ──────────────────────────────────────────────────────────

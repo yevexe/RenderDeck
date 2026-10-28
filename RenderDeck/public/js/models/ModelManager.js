@@ -5,7 +5,9 @@
 import { ModelVerifier } from './ModelVerifier.js';
 import { CustomModelStorage } from '../storage/CustomModelStorage.js';
 import * as IDBStorage from '../storage/indexedDBStorage.js';
-import { getActiveProjectId } from '../storage/ProjectStorage.js';
+import { ensureActiveProject, getActiveProjectId } from '../storage/ProjectStorage.js';
+import { modelDeleteOps, sessionWithoutModels } from '../storage/cascade.js';
+import { sessionKey } from '../storage/storageKeys.js';
 
 export class ModelManager {
   constructor(log) {
@@ -18,6 +20,9 @@ export class ModelManager {
   }
 
   async _init() {
+    // Runs while main.js is still loading — make sure the project exists first
+    // so uploads are read from the right `${projectId}:` prefix on a fresh profile.
+    await ensureActiveProject();
     await this._loadPersistedUploadedModels();
   }
 
@@ -25,56 +30,42 @@ export class ModelManager {
     // Custom models are accessed lazily via storage — no eager load needed.
   }
 
+  // Writes every file and the record in one transaction — all or nothing.
+  // Throws on failure (including QuotaExceededError).
   async _persistUploadedModel(projectId, name, type, verificationFiles) {
-    try {
-      const prefix = `uploaded:${projectId}:${name}`;
-      if (type === 'uploaded-glb') {
-        await IDBStorage.put('blobs', `${prefix}:glb`, verificationFiles.glb);
-        await IDBStorage.put('uploaded-models', `${projectId}:${name}`, {
-          name, type, uploadDate: new Date().toISOString()
-        });
-      } else {
-        await IDBStorage.put('blobs', `${prefix}:obj`, verificationFiles.obj);
-        if (verificationFiles.mtl) {
-          await IDBStorage.put('blobs', `${prefix}:mtl`, verificationFiles.mtl);
-        }
-        for (const tex of (verificationFiles.textures || [])) {
-          await IDBStorage.put('blobs', `${prefix}:tex:${tex.name}`, tex);
-        }
-        await IDBStorage.put('uploaded-models', `${projectId}:${name}`, {
-          name,
-          type,
-          uploadDate:   new Date().toISOString(),
-          hasMtl:       !!verificationFiles.mtl,
-          textureNames: (verificationFiles.textures || []).map(t => t.name),
-          metadata:     verificationFiles.metadata || {},
-        });
+    const prefix = `uploaded:${projectId}:${name}`;
+    const ops = [];
+    if (type === 'uploaded-glb') {
+      ops.push({ type: 'put', store: 'blobs', key: `${prefix}:glb`, value: verificationFiles.glb });
+      ops.push({ type: 'put', store: 'uploaded-models', key: `${projectId}:${name}`, value: {
+        name, type, uploadDate: new Date().toISOString()
+      } });
+    } else {
+      ops.push({ type: 'put', store: 'blobs', key: `${prefix}:obj`, value: verificationFiles.obj });
+      if (verificationFiles.mtl) {
+        ops.push({ type: 'put', store: 'blobs', key: `${prefix}:mtl`, value: verificationFiles.mtl });
       }
-    } catch (err) {
-      console.error(`[ModelManager] Failed to persist uploaded model "${name}":`, err);
-      if (typeof this.log === 'function') this.log(`Failed to persist model "${name}": ${err.message}`, true);
+      for (const tex of (verificationFiles.textures || [])) {
+        ops.push({ type: 'put', store: 'blobs', key: `${prefix}:tex:${tex.name}`, value: tex });
+      }
+      ops.push({ type: 'put', store: 'uploaded-models', key: `${projectId}:${name}`, value: {
+        name,
+        type,
+        uploadDate:   new Date().toISOString(),
+        hasMtl:       !!verificationFiles.mtl,
+        textureNames: (verificationFiles.textures || []).map(t => t.name),
+        metadata:     verificationFiles.metadata || {},
+      } });
     }
+    await IDBStorage.batch(ops);
   }
 
-  async _deletePersistedUploadedModel(projectId, name) {
-    try {
-      const prefix = `uploaded:${projectId}:${name}`;
-      const meta = await IDBStorage.get('uploaded-models', `${projectId}:${name}`);
-      if (!meta) return;
-      if (meta.type === 'uploaded-glb') {
-        await IDBStorage.del('blobs', `${prefix}:glb`);
-      } else {
-        await IDBStorage.del('blobs', `${prefix}:obj`);
-        if (meta.hasMtl) await IDBStorage.del('blobs', `${prefix}:mtl`);
-        for (const texName of (meta.textureNames || [])) {
-          await IDBStorage.del('blobs', `${prefix}:tex:${texName}`);
-        }
-      }
-      await IDBStorage.del('uploaded-models', `${projectId}:${name}`);
-    } catch (err) {
-      console.error(`[ModelManager] Failed to delete persisted model "${name}":`, err);
-      if (typeof this.log === 'function') this.log(`Failed to delete model "${name}": ${err.message}`, true);
-    }
+  // Turn a failed write into a user-facing error message
+  _persistError(name, err) {
+    console.error(`[ModelManager] Failed to persist uploaded model "${name}":`, err);
+    return IDBStorage.isQuotaError(err)
+      ? `Storage full — "${name}" was not saved. Delete unused models or textures and try again.`
+      : `Could not save "${name}": ${err.message}`;
   }
 
   async _loadPersistedUploadedModels() {
@@ -103,22 +94,15 @@ export class ModelManager {
           } else {
             const objBlob = await IDBStorage.get('blobs', `${blobPrefix}:obj`);
             if (!objBlob) continue;
-            const textureFiles = [];
+            const textureURLs = {};
             for (const texName of (meta.textureNames || [])) {
               const texBlob = await IDBStorage.get('blobs', `${blobPrefix}:tex:${texName}`);
-              if (texBlob) textureFiles.push(new File([texBlob], texName, { type: texBlob.type }));
+              if (texBlob) textureURLs[texName] = URL.createObjectURL(texBlob);
             }
             let mtlURL = null;
             if (meta.hasMtl) {
               const mtlBlob = await IDBStorage.get('blobs', `${blobPrefix}:mtl`);
-              if (mtlBlob) {
-                const mtlFile = new File([mtlBlob], `${name}.mtl`, { type: 'text/plain' });
-                mtlURL = await this.createMTLWithBlobURLs(mtlFile, textureFiles);
-              }
-            }
-            const textureURLs = {};
-            for (const f of textureFiles) {
-              textureURLs[f.name] = URL.createObjectURL(f);
+              if (mtlBlob) mtlURL = await this.createMTLWithBlobURLs(mtlBlob, textureURLs);
             }
             this.models.set(name, {
               type: 'uploaded',
@@ -184,6 +168,14 @@ export class ModelManager {
         result.errors.push(`A model named "${modelName}" already exists. Please rename.`);
         return result;
       }
+      // Save first — the model only appears once it is stored
+      try {
+        const projectId = await getActiveProjectId();
+        await this._persistUploadedModel(projectId, modelName, 'uploaded-glb', { glb: glbFile });
+      } catch (err) {
+        result.errors.push(this._persistError(modelName, err));
+        return result;
+      }
       this.models.set(modelName, {
         type: 'uploaded-glb',
         name: modelName,
@@ -191,8 +183,6 @@ export class ModelManager {
         source: 'user-uploaded',
         uploadDate: new Date()
       });
-      const projectId = await getActiveProjectId();
-      await this._persistUploadedModel(projectId, modelName, 'uploaded-glb', { glb: glbFile });
       result.success = true;
       result.name = modelName;
       result.warnings = verification.warnings;
@@ -205,6 +195,17 @@ export class ModelManager {
     // Check for duplicate names
     if (this.models.has(modelName)) {
       result.errors.push(`A model named "${modelName}" already exists. Please rename.`);
+      return result;
+    }
+
+    // Save first — the model only appears once it is stored
+    try {
+      const projectId = await getActiveProjectId();
+      await this._persistUploadedModel(projectId, modelName, 'uploaded', {
+        ...verification.files, metadata: verification.metadata,
+      });
+    } catch (err) {
+      result.errors.push(this._persistError(modelName, err));
       return result;
     }
 
@@ -223,28 +224,23 @@ export class ModelManager {
       uploadDate: new Date()
     };
 
-    // Create object URLs for the files (so Three.js can load them)
+    // Create object URLs for the files (so Three.js can load them).
+    // The MTL is rewritten to point at the same texture URLs, so every URL this
+    // model creates is listed in objectURLs and revoked when it is deleted.
     modelData.objectURLs.obj = URL.createObjectURL(verification.files.obj);
-
-    if (verification.files.mtl) {
-      // Need to rewrite MTL content to use blob URLs for textures
-      modelData.objectURLs.mtl = await this.createMTLWithBlobURLs(
-        verification.files.mtl,
-        verification.files.textures
-      );
-    }
-
-    // Create texture blob URLs
     modelData.objectURLs.textures = {};
     verification.files.textures.forEach(textureFile => {
       modelData.objectURLs.textures[textureFile.name] = URL.createObjectURL(textureFile);
     });
+    if (verification.files.mtl) {
+      modelData.objectURLs.mtl = await this.createMTLWithBlobURLs(
+        verification.files.mtl,
+        modelData.objectURLs.textures
+      );
+    }
 
     // Store the model
     this.models.set(modelName, modelData);
-
-    const projectId = await getActiveProjectId();
-    await this._persistUploadedModel(projectId, modelName, 'uploaded', verification.files);
 
     result.success = true;
     result.name = modelName;
@@ -255,15 +251,10 @@ export class ModelManager {
 
   // ─────────────────────────────────────────────
   // Create MTL with blob URLs for textures
+  // textureMap: { fileName: blobURL } — URLs owned by the model (not created here)
   // ─────────────────────────────────────────────
-  async createMTLWithBlobURLs(mtlFile, textureFiles) {
+  async createMTLWithBlobURLs(mtlFile, textureMap) {
     const mtlContent = await this.readFileAsText(mtlFile);
-    
-    // Create a map of texture names to blob URLs
-    const textureMap = {};
-    textureFiles.forEach(file => {
-      textureMap[file.name] = URL.createObjectURL(file);
-    });
 
     // Replace texture filenames with blob URLs
     let modifiedContent = mtlContent;
@@ -327,34 +318,43 @@ export class ModelManager {
   }
 
   // ─────────────────────────────────────────────
-  // Remove a model (updated to handle custom)
+  // Delete models (uploaded or custom) and everything stored for them — files,
+  // decals, per-part materials, design layers, thumbnails, node graphs and their
+  // session entries — in one transaction. Blob URLs are revoked only after the
+  // write committed. Throws on failure (nothing is deleted then).
   // ─────────────────────────────────────────────
-  async removeModel(name) {
-    // Try custom models in storage first
-    const customModel = await this.storage.loadCustomModel(name);
-    if (customModel) {
-      return await this.storage.deleteCustomModel(name);
-    }
-    
-    // Regular model removal
+  async deleteModels(names) {
+    const projectId = await getActiveProjectId();
+    const ops = [];
+    for (const name of names) ops.push(...await modelDeleteOps(projectId, name));
+    const session = sessionWithoutModels(await IDBStorage.get('metadata', sessionKey(projectId)), names);
+    if (session) ops.push({ type: 'put', store: 'metadata', key: sessionKey(projectId), value: session });
+    await IDBStorage.batch(ops);
+    names.forEach(name => this._releaseModel(name));
+  }
+
+  // Free the in-memory copy of an uploaded model (blob URLs)
+  _releaseModel(name) {
     const model = this.models.get(name);
-    if (!model) return false;
-
-    // Cleanup blob URLs and IDB persistence
-    if (model.type === 'uploaded' && model.objectURLs) {
-      if (model.objectURLs.obj) URL.revokeObjectURL(model.objectURLs.obj);
-      if (model.objectURLs.mtl) URL.revokeObjectURL(model.objectURLs.mtl);
-      Object.values(model.objectURLs.textures || {}).forEach(url => URL.revokeObjectURL(url));
-    } else if (model.type === 'uploaded-glb' && model.objectURLs?.glb) {
-      URL.revokeObjectURL(model.objectURLs.glb);
-    }
-    if (model.type === 'uploaded' || model.type === 'uploaded-glb') {
-      const projectId = await getActiveProjectId();
-      await this._deletePersistedUploadedModel(projectId, name);
-    }
-
+    if (!model || model.type === 'registry') return;
+    const urls = model.objectURLs || {};
+    [urls.glb, urls.obj, urls.mtl, ...Object.values(urls.textures || {})]
+      .filter(Boolean)
+      .forEach(url => URL.revokeObjectURL(url));
     this.models.delete(name);
-    return true;
+  }
+
+  // Names of saved custom models built on the given base model
+  async getCustomModelsBasedOn(baseName) {
+    const projectId = await getActiveProjectId();
+    const prefix = `${projectId}:`;
+    const keys = await IDBStorage.getAllKeys('models', prefix);
+    const names = [];
+    for (const key of keys) {
+      const record = await IDBStorage.get('models', key);
+      if (record?.basedOn === baseName) names.push(key.slice(prefix.length));
+    }
+    return names;
   }
 
   // ─────────────────────────────────────────────
@@ -506,14 +506,6 @@ export class ModelManager {
         });
       }
     });
-  }
-
-  // ─────────────────────────────────────────────
-  // Clear all custom models from storage
-  // ─────────────────────────────────────────────
-  async clearAllCustomModels() {
-    const result = await this.storage.clearAllCustomModels();
-    return result;
   }
 
   // ─────────────────────────────────────────────

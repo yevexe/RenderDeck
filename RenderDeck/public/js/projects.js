@@ -10,6 +10,7 @@ import {
   setActiveProjectId,
   ensureActiveProject,
 } from './storage/ProjectStorage.js';
+import { log } from './utils/logger.js';
 
 const grid        = document.getElementById('projects-grid');
 const emptyMsg    = document.getElementById('projects-empty');
@@ -140,7 +141,15 @@ function closeDeleteModal() {
 
 async function confirmDelete() {
   if (!_deleteId) return;
-  await deleteProject(_deleteId);
+  try {
+    await deleteProject(_deleteId);
+  } catch (err) {
+    // This page has no log panel — show the error as well as logging it
+    log(`Could not delete project: ${err.message}`, true);
+    alert(`Could not delete project: ${err.message}`);
+    closeDeleteModal();
+    return;
+  }
   // If we deleted the active project, ensureActiveProject will pick/create another
   if (_deleteId === _activeId) {
     await ensureActiveProject();

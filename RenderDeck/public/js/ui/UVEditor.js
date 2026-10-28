@@ -237,7 +237,10 @@ export class UVEditor {
       const lockAspect = document.getElementById('lock-aspect-ratio');
       if (lockAspect) {
         this._lockAspectRatio = lockAspect.checked;
-        lockAspect.addEventListener('change', e => { this._lockAspectRatio = e.target.checked; });
+        lockAspect.addEventListener('change', e => {
+          this._lockAspectRatio = e.target.checked;
+          this.onPrefsChanged?.();
+        });
       }
 
       // Text tool
@@ -1259,6 +1262,8 @@ export class UVEditor {
     this._updateLayersList();
     this._renderPreview();
     window.markNeedsRender?.(4);
+    this._notifyLayersSaved();
+    this.onCommit?.('Removed all decals');
     this.log('All decals removed');
   }
 
@@ -1945,6 +1950,7 @@ export class UVEditor {
     if (btn) btn.classList.toggle('button-selected', this._wrapImages);
     this._renderPreview();
     this._renderComposite();
+    this.onPrefsChanged?.();
     this.log(`Wrap: ${this._wrapImages ? 'on' : 'off'}`);
   }
 
@@ -2163,24 +2169,30 @@ export class UVEditor {
     this._layersSavedHandlers.push(cb);
   }
 
+  // Fires immediately with a snapshot of the current layers. Image encoding is
+  // deferred: handlers call encodeLayerImage(entry) when they actually write, so
+  // the (debounced) persistence layer decides when that cost is paid.
   _notifyLayersSaved() {
-    clearTimeout(this._layersSavedTimer);
-    this._layersSavedTimer = setTimeout(() => {
-      const snapshot = this.overlayImages.map(img => ({
-        id:          img.id,
-        name:        img.name,
-        type:        img.type     || 'image',
-        textData:    img.textData ? { ...img.textData } : null,
-        position:    { ...img.position },
-        size:        { ...img.size },
-        rotation:    img.rotation,
-        aspectRatio: img.aspectRatio,
-        flipH:       !!img.flipH,
-        flipV:       !!img.flipV,
-        dataURL:     img._originalDataURL ?? this._imageToDataURL(img.image),
-      }));
-      this._layersSavedHandlers.forEach(cb => cb(snapshot));
-    }, 400);
+    const snapshot = this.overlayImages.map(img => ({
+      id:          img.id,
+      name:        img.name,
+      type:        img.type     || 'image',
+      textData:    img.textData ? { ...img.textData } : null,
+      position:    { ...img.position },
+      size:        { ...img.size },
+      rotation:    img.rotation,
+      aspectRatio: img.aspectRatio,
+      flipH:       !!img.flipH,
+      flipV:       !!img.flipV,
+      image:            img.image,
+      _originalDataURL: img._originalDataURL,
+    }));
+    this._layersSavedHandlers.forEach(cb => cb(snapshot));
+  }
+
+  /** Data URL for a layer snapshot entry from _notifyLayersSaved. */
+  encodeLayerImage(entry) {
+    return entry._originalDataURL ?? this._imageToDataURL(entry.image);
   }
 
   // ─── Build a clean material for thumbnail rendering ───────────

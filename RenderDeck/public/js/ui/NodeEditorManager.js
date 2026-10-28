@@ -330,6 +330,16 @@ export class NodeEditorManager {
     }
   }
 
+  /** Forget every graph of an object (the model was deleted). */
+  removeGraphsForObject(objectName) {
+    const prefix = `${objectName}|`;
+    for (const key of [...this._graphs.keys()]) {
+      if (key.startsWith(prefix)) this._graphs.delete(key);
+    }
+    // The displayed graph belongs to the deleted object — don't save it back
+    if (this._currentKey?.startsWith(prefix)) this._currentKey = null;
+  }
+
   // Called from main.js when Material Editor controls change, to keep Node Editor in sync.
   syncMaterialProp(matProp, value) {
     const matNode = this._nodes.find(n => n.type === 'material-output');

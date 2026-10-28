@@ -5,9 +5,14 @@
 // tracks which project is currently active.
 
 import * as IDBStorage from './indexedDBStorage.js';
+import { projectDeleteOps } from './cascade.js';
 
 const ACTIVE_PROJECT_KEY = 'activeProjectId';
-const LS_ACTIVE_PROJECT_KEY = 'rd_active_project'; // localStorage mirror for sync reads
+
+// In-memory copy of metadata/activeProjectId for synchronous reads.
+// Filled by ensureActiveProject() / setActiveProjectId(); null until then.
+let _activeProjectId = null;
+let _ensuring = null; // in-flight ensureActiveProject() promise
 
 function generateId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -47,8 +52,11 @@ export async function updateProject(id, changes) {
   return updated;
 }
 
+// Deletes the project and every record keyed by its id, in every store,
+// in one transaction (see cascade.js).
 export async function deleteProject(id) {
-  await IDBStorage.del('projects', id);
+  await IDBStorage.batch(await projectDeleteOps(id));
+  if (_activeProjectId === id) _activeProjectId = null;
 }
 
 // ─────────────────────────────────────────────
@@ -60,13 +68,14 @@ export async function getActiveProjectId() {
 }
 
 export async function setActiveProjectId(id) {
-  try { localStorage.setItem(LS_ACTIVE_PROJECT_KEY, id); } catch (_) {}
-  return IDBStorage.put('metadata', ACTIVE_PROJECT_KEY, id);
+  await IDBStorage.put('metadata', ACTIVE_PROJECT_KEY, id);
+  _activeProjectId = id;
 }
 
-// Synchronous read — returns the localStorage mirror (may be null on very first load)
+// Synchronous read of the in-memory copy. Returns null until ensureActiveProject()
+// has resolved — callers that run earlier must skip their work.
 export function getActiveProjectIdSync() {
-  try { return localStorage.getItem(LS_ACTIVE_PROJECT_KEY); } catch (_) { return null; }
+  return _activeProjectId;
 }
 
 export async function getActiveProject() {
@@ -77,11 +86,19 @@ export async function getActiveProject() {
 
 // Ensures an active project always exists.
 // Called on app init — creates "Default Project" if nothing exists.
-export async function ensureActiveProject() {
+// Concurrent callers share one run so two default projects can't be created.
+export function ensureActiveProject() {
+  if (!_ensuring) {
+    _ensuring = _ensureActiveProject().finally(() => { _ensuring = null; });
+  }
+  return _ensuring;
+}
+
+async function _ensureActiveProject() {
   const activeId = await getActiveProjectId();
   if (activeId) {
     const project = await getProject(activeId);
-    if (project) return project;
+    if (project) { _activeProjectId = project.id; return project; }
   }
   // Active project missing or deleted — fall back to first available
   const all = await listProjects();
