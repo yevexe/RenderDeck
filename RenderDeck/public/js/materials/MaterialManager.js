@@ -9,7 +9,17 @@ import {
   createGlassTexture,
   createPlasticTexture
 } from './generators.js';
-import { getActiveProjectIdSync } from '../storage/ProjectStorage.js';
+import * as IDBStorage from '../storage/indexedDBStorage.js';
+import { setAppSetting } from '../storage/SettingsStorage.js';
+
+// Strip bookkeeping fields (_id, _channelMaps, _order) before building a Three.js material
+function cleanParams(params) {
+  const clean = {};
+  for (const [k, v] of Object.entries(params || {})) {
+    if (!k.startsWith('_')) clean[k] = v;
+  }
+  return clean;
+}
 
 export class MaterialManager {
   constructor() {
@@ -24,14 +34,15 @@ export class MaterialManager {
     // Raw params for each JSON preset — used by _createFresh to build materials
     this._presetParams = {};
 
-    // User-created presets — stored in localStorage, prepended to the UI list
+    // User-created presets — stored in IDB 'materials', prepended to the UI list.
+    // Loaded by loadUserPresets() once the active project is known.
+    this._projectId = null;
     this._userPresetNames = [];  // ordered list, newest first
-    this._userPresetParams = {}; // name → params
-    this._loadUserPresetsFromStorage();
+    this._userPresetParams = {}; // name → params (+ _id, _order, _channelMaps)
+    this._presetWrites = new Map(); // preset id → promise of its in-flight write chain
 
-    // Standard presets the user has hidden ("deleted") — persisted in localStorage
+    // Standard presets the user has hidden ("deleted") — settings/app.hiddenPresets
     this._hiddenStandardPresets = new Set();
-    this._loadHiddenFromStorage();
   }
 
   /** Legacy procedural presets kept for backward compatibility. */
@@ -105,7 +116,7 @@ export class MaterialManager {
       const params = this._userPresetParams[name];
       if (!params) continue;
       this._presetParams[name] = { ...params };
-      this.presets[name] = () => this.createMaterial(name, params);
+      this.presets[name] = () => this.createMaterial(name, cleanParams(params));
     }
   }
 
@@ -208,30 +219,22 @@ export class MaterialManager {
       : Object.keys(this._legacyPresets);
   }
 
-  /** Hide a standard preset from the list (soft-delete). */
-  hideStandardPreset(name) {
-    this._hiddenStandardPresets.add(name);
-    this._saveHiddenToStorage();
+  /** Set hidden standard presets from settings/app (called once on startup). */
+  setHiddenPresets(names) {
+    this._hiddenStandardPresets = new Set(Array.isArray(names) ? names : []);
+  }
+
+  /** Hide a standard preset from the list (soft-delete). Writes settings/app first. */
+  async hideStandardPreset(name) {
+    const next = new Set(this._hiddenStandardPresets).add(name);
+    await setAppSetting('hiddenPresets', [...next]);
+    this._hiddenStandardPresets = next;
   }
 
   /** Restore all hidden standard presets back to the list. */
-  restoreAllStandardPresets() {
-    this._hiddenStandardPresets.clear();
-    this._saveHiddenToStorage();
-  }
-
-  _saveHiddenToStorage() {
-    try {
-      localStorage.setItem('rd_hidden_presets', JSON.stringify([...this._hiddenStandardPresets]));
-    } catch (_) {}
-  }
-
-  _loadHiddenFromStorage() {
-    try {
-      const raw = localStorage.getItem('rd_hidden_presets');
-      if (!raw) return;
-      JSON.parse(raw).forEach(n => this._hiddenStandardPresets.add(n));
-    } catch (_) {}
+  async restoreAllStandardPresets() {
+    await setAppSetting('hiddenPresets', []);
+    this._hiddenStandardPresets = new Set();
   }
 
   /** True when the named preset is a standard (read-only) preset. */
@@ -262,54 +265,125 @@ export class MaterialManager {
     return name;
   }
 
-  /** Register a user preset from the given property object (no Three.js material needed). */
-  addUserPreset(name, params) {
-    // Preserve existing ID if re-saving, otherwise generate a new one
-    const existingId = this._userPresetParams[name]?._id;
-    const id = params._id || existingId || crypto.randomUUID();
-    // Remove if already exists (re-add at top)
-    this._userPresetNames = this._userPresetNames.filter(n => n !== name);
-    this._userPresetNames.unshift(name);
-    const stored = { ...params, _id: id };
+  // ─── User preset persistence ──────────────────────────────────
+  // Each user preset is one record in the IDB 'materials' store:
+  //   key   `${projectId}:${uuid}`
+  //   value { id, projectId, name, order, params, materialData: { channelMaps } }
+  // Writes to one preset run one at a time (_enqueuePresetWrite). Each write
+  // builds its record from the in-memory state when it actually runs, writes
+  // IndexedDB, and only then updates memory (and therefore the UI).
+  // Methods throw on failure.
+
+  _enqueuePresetWrite(id, task) {
+    const prev = this._presetWrites.get(id) || Promise.resolve();
+    const next = prev.catch(() => {}).then(task);
+    this._presetWrites.set(id, next);
+    const cleanup = () => { if (this._presetWrites.get(id) === next) this._presetWrites.delete(id); };
+    next.then(cleanup, cleanup);
+    return next;
+  }
+
+  _presetKey(id) {
+    return `${this._projectId}:${id}`;
+  }
+
+  _buildPresetRecord(name, params) {
+    return {
+      id:        params._id,
+      projectId: this._projectId,
+      name,
+      order:     params._order,
+      params:    cleanParams(params),
+      materialData: { channelMaps: params._channelMaps || null },
+    };
+  }
+
+  _registerUserPreset(name, stored) {
     this._userPresetParams[name] = stored;
     this._presetParams[name] = stored;
-    this.presets[name] = () => this.createMaterial(name, params);
-    this._saveUserPresetsToStorage();
+    this.presets[name] = () => this.createMaterial(name, cleanParams(stored));
+  }
+
+  _unregisterUserPreset(name) {
+    this._userPresetNames = this._userPresetNames.filter(n => n !== name);
+    delete this._userPresetParams[name];
+    delete this._presetParams[name];
+    delete this.presets[name];
+  }
+
+  _sortUserPresetNames() {
+    this._userPresetNames.sort((a, b) =>
+      (this._userPresetParams[b]?._order ?? 0) - (this._userPresetParams[a]?._order ?? 0));
+  }
+
+  /** Register a user preset from the given property object (no Three.js material needed). */
+  async addUserPreset(name, params) {
+    if (!this._projectId) throw new Error('No active project — cannot save preset');
+    // Preserve existing ID if re-saving, otherwise generate a new one
+    const id = params._id || this._userPresetParams[name]?._id || crypto.randomUUID();
+    return this._enqueuePresetWrite(id, async () => {
+      const existing = this._userPresetParams[name];
+      const stored = { ...cleanParams(params), _id: id, _order: Date.now() };
+      const maps = ('_channelMaps' in params) ? params._channelMaps : existing?._channelMaps;
+      if (maps) stored._channelMaps = maps;
+      await IDBStorage.put('materials', this._presetKey(id), this._buildPresetRecord(name, stored));
+      // Remove if already exists (re-add at top)
+      this._userPresetNames = this._userPresetNames.filter(n => n !== name);
+      this._userPresetNames.unshift(name);
+      this._registerUserPreset(name, stored);
+    });
   }
 
   /**
-   * Update a user preset's stored params in-place (no reordering, no cached instance reset).
-   * Used to persist live slider edits so switching away and back keeps the edits.
-   * Preserves the existing _id and _channelMaps — only visual params are replaced.
+   * Update a user preset by id without reordering it.
+   * params: new visual params, or undefined to keep the stored ones.
+   * channelMaps: new maps (null clears), or undefined to keep the stored ones.
+   * Resolves false if the preset was deleted before the write ran.
    */
-  updateUserPresetParams(name, params) {
-    if (!this._userPresetNames.includes(name)) return;
-    const existingId = this._userPresetParams[name]?._id;
-    const existingChannelMaps = this._userPresetParams[name]?._channelMaps;
-    const stored = { ...params, _id: existingId || crypto.randomUUID() };
-    if (existingChannelMaps) stored._channelMaps = existingChannelMaps;
-    this._userPresetParams[name] = stored;
-    this._presetParams[name] = stored;
-    this.presets[name] = () => this.createMaterial(name, params);
-    this._saveUserPresetsToStorage();
+  async updateUserPreset(id, { params, channelMaps } = {}) {
+    return this._enqueuePresetWrite(id, async () => {
+      const name = this.getPresetNameById(id); // may have been renamed meanwhile
+      if (!name) return false;
+      const prev = this._userPresetParams[name];
+      const stored = { ...cleanParams(params ?? prev), _id: id, _order: prev._order };
+      const maps = channelMaps === undefined ? prev._channelMaps : channelMaps;
+      if (maps) stored._channelMaps = maps;
+      await IDBStorage.put('materials', this._presetKey(id), this._buildPresetRecord(name, stored));
+      this._registerUserPreset(name, stored);
+      return true;
+    });
+  }
+
+  /** Replace a user preset's visual params (keeps id, order and channel maps). */
+  async updateUserPresetParams(name, params) {
+    const id = this.getPresetId(name);
+    if (!id) return false;
+    return this.updateUserPreset(id, { params });
+  }
+
+  /** Attach channel maps to an existing user preset without changing its params or order. */
+  async setPresetChannelMaps(name, channelMaps) {
+    const id = this.getPresetId(name);
+    if (!id) return false;
+    return this.updateUserPreset(id, { channelMaps: channelMaps || null });
   }
 
   /** Rename a user preset. Returns false if not found or name taken. */
-  renamePreset(oldName, newName) {
+  async renamePreset(oldName, newName) {
     if (!this.isUserPreset(oldName)) return false;
     if (this.getPresetNames().includes(newName)) return false;
-    const params = this._userPresetParams[oldName]; // _id is preserved inside params
-    // Update all tracking structures
-    const idx = this._userPresetNames.indexOf(oldName);
-    this._userPresetNames[idx] = newName;
-    delete this._userPresetParams[oldName];
-    this._userPresetParams[newName] = params;
-    delete this._presetParams[oldName];
-    this._presetParams[newName] = params;
-    delete this.presets[oldName];
-    this.presets[newName] = () => this.createMaterial(newName, params);
-    this._saveUserPresetsToStorage();
-    return true;
+    const id = this.getPresetId(oldName);
+    return this._enqueuePresetWrite(id, async () => {
+      const current = this.getPresetNameById(id);
+      if (!current || this.getPresetNames().includes(newName)) return false;
+      const stored = this._userPresetParams[current]; // _id is preserved inside params
+      await IDBStorage.put('materials', this._presetKey(id), this._buildPresetRecord(newName, stored));
+      const idx = this._userPresetNames.indexOf(current);
+      this._unregisterUserPreset(current);
+      this._userPresetNames.splice(Math.max(idx, 0), 0, newName);
+      this._registerUserPreset(newName, stored);
+      return true;
+    });
   }
 
   /** Return the stable UUID for a user preset (null for standard presets). */
@@ -331,95 +405,24 @@ export class MaterialManager {
     return this._userPresetParams[name]?._channelMaps ?? null;
   }
 
-  /** Attach channel maps to an existing user preset without changing its params or order. */
-  setPresetChannelMaps(name, channelMaps) {
-    if (!this._userPresetParams[name]) return;
-    this._userPresetParams[name]._channelMaps = channelMaps || null;
-    this._saveUserPresetsToStorage();
-  }
-
-  /** Delete a user preset. Returns false if it's a standard preset. */
-  deleteUserPreset(name) {
+  /**
+   * Delete a user preset. extraOps (e.g. its thumbnail) are deleted in the same
+   * transaction as the record. Returns false if it's not a user preset.
+   */
+  async deleteUserPreset(name, extraOps = []) {
     if (!this.isUserPreset(name)) return false;
-    this._userPresetNames = this._userPresetNames.filter(n => n !== name);
-    delete this._userPresetParams[name];
-    delete this._presetParams[name];
-    delete this.presets[name];
-    this._saveUserPresetsToStorage();
-    return true;
+    const id = this.getPresetId(name);
+    return this._enqueuePresetWrite(id, async () => {
+      const current = this.getPresetNameById(id);
+      if (!current) return false;
+      await IDBStorage.batch([{ type: 'del', store: 'materials', key: this._presetKey(id) }, ...extraOps]);
+      this._unregisterUserPreset(current);
+      return true;
+    });
   }
 
-  _presetsKey(projectId) {
-    return projectId ? `rd_user_presets:${projectId}` : null;
-  }
-
-  _saveUserPresetsToStorage() {
-    try {
-      const projectId = getActiveProjectIdSync();
-      const key = this._presetsKey(projectId);
-      if (!key) return;
-      // Strip _channelMaps — they contain large data URLs that overflow localStorage quota.
-      // Channel maps are stored separately in IDB (see savePresetChannelMapsToIDB in main.js).
-      const paramsForStorage = {};
-      for (const [name, params] of Object.entries(this._userPresetParams)) {
-        const { _channelMaps, ...rest } = params;
-        paramsForStorage[name] = rest;
-      }
-      localStorage.setItem(key, JSON.stringify({
-        names:  this._userPresetNames,
-        params: paramsForStorage,
-      }));
-    } catch (_) { /* quota exceeded — ignore */ }
-  }
-
-  /** Returns {presetId: channelMaps} for all user presets that have channel maps. */
-  getAllPresetChannelMaps() {
-    const result = {};
-    for (const params of Object.values(this._userPresetParams)) {
-      if (params._id && params._channelMaps) {
-        result[params._id] = params._channelMaps;
-      }
-    }
-    return result;
-  }
-
-  /** Merges channel maps (keyed by preset ID) back into in-memory params after IDB load. */
-  applyPresetChannelMaps(channelMapsById) {
-    for (const params of Object.values(this._userPresetParams)) {
-      if (params._id && channelMapsById[params._id]) {
-        params._channelMaps = channelMapsById[params._id];
-      }
-    }
-  }
-
-  _loadUserPresetsFromStorage() {
-    try {
-      const projectId = getActiveProjectIdSync();
-      const key = this._presetsKey(projectId);
-      // Try project-scoped key first, fall back to legacy key for migration
-      const raw = (key ? localStorage.getItem(key) : null)
-               ?? localStorage.getItem('rd_user_presets');
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      if (!data?.names || !data?.params) return;
-      let needsResave = !key || !localStorage.getItem(key); // legacy migration
-      for (const name of data.names) {
-        const params = data.params[name];
-        if (!params) continue;
-        // Assign stable ID to presets that predate the ID system
-        if (!params._id) { params._id = crypto.randomUUID(); needsResave = true; }
-        this._userPresetNames.push(name);
-        this._userPresetParams[name] = params;
-        this._presetParams[name] = params;
-        this.presets[name] = () => this.createMaterial(name, params);
-      }
-      if (needsResave) this._saveUserPresetsToStorage();
-    } catch (_) { /* corrupt data — ignore */ }
-  }
-
-  // Called from main.js after ensureActiveProject() resolves.
-  // Reloads user presets for the now-known active project.
-  reloadUserPresetsForProject(projectId) {
+  /** Load every user preset of a project from IDB, replacing what is in memory. */
+  async loadUserPresets(projectId) {
     // Clear in-memory state
     for (const name of this._userPresetNames) {
       delete this._presetParams[name];
@@ -427,29 +430,18 @@ export class MaterialManager {
     }
     this._userPresetNames = [];
     this._userPresetParams = {};
+    this._projectId = projectId;
+    if (!projectId) return;
 
-    try {
-      const key = this._presetsKey(projectId);
-      const raw = (key ? localStorage.getItem(key) : null)
-               ?? localStorage.getItem('rd_user_presets');
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      if (!data?.names || !data?.params) return;
-      let needsResave = false;
-      for (const name of data.names) {
-        const params = data.params[name];
-        if (!params) continue;
-        if (!params._id) { params._id = crypto.randomUUID(); needsResave = true; }
-        this._userPresetNames.push(name);
-        this._userPresetParams[name] = params;
-        this._presetParams[name] = params;
-        this.presets[name] = () => this.createMaterial(name, params);
-      }
-      // Migrate from legacy key or assign missing IDs
-      if ((key && !localStorage.getItem(key)) || needsResave) {
-        this._saveUserPresetsToStorage();
-      }
-    } catch (_) { /* corrupt data — ignore */ }
+    const records = await IDBStorage.getAll('materials', `${projectId}:`);
+    for (const rec of records) {
+      if (!rec?.id || !rec.name || !rec.params) continue;
+      const stored = { ...rec.params, _id: rec.id, _order: rec.order ?? 0 };
+      if (rec.materialData?.channelMaps) stored._channelMaps = rec.materialData.channelMaps;
+      this._userPresetNames.push(rec.name);
+      this._registerUserPreset(rec.name, stored);
+    }
+    this._sortUserPresetNames();
   }
 
   addPreset(name, generator) {

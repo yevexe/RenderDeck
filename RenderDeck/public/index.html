@@ -315,6 +315,7 @@
             <button class="button-medium" id="import-scene-btn" title="Import Scene"><img class="btn-icon" src="icons/ui-icons/scene-import.png" alt="Import Scene"></button>
             <button class="button-medium" id="clear-scenes-btn" title="Delete All Custom Scenes"><img class="btn-icon" src="icons/ui-icons/scene-delete.png" alt="Delete All Custom Scenes"></button>
             <button class="button-medium" id="reset-scene-btn" title="Reset Scene"><img class="btn-icon" src="icons/ui-icons/scene-reset.png" alt="Reset Scene"></button>
+            <button class="button-medium" id="delete-scene-btn" title="Delete Selected Scene">Delete Scene</button>
             <input type="file" id="scene-file-input" accept=".json" style="display:none;">
 
             <hr>
@@ -1469,7 +1470,7 @@
               <div class="dbg-topbar">
                 <div class="dbg-title">
                   <span class="dbg-title-label">DEBUG INSPECTOR</span>
-                  <span class="dbg-title-sub">renderdeck_db · localStorage · runtime memory</span>
+                  <span class="dbg-title-sub">renderdeck_db · runtime memory</span>
                 </div>
                 <div class="dbg-topbar-actions">
                   <button id="dbg-refresh-btn" class="dbg-btn">↻ Refresh</button>
@@ -1491,23 +1492,16 @@
                     <span class="dbg-chip">activeMesh</span>
                   </div>
                 </div>
-                <div class="dbg-diagram-arrow">▼ persists on unload / page hide</div>
+                <div class="dbg-diagram-arrow">▼ written on change (debounced), flushed on page hide</div>
                 <div class="dbg-diagram-row">
-                  <div class="dbg-diagram-layer dbg-layer-ls">
-                    <div class="dbg-layer-label">localStorage — sync, small payload</div>
-                    <div class="dbg-layer-items">
-                      <span class="dbg-chip">boot key (model + camera)</span>
-                      <span class="dbg-chip">user presets</span>
-                      <span class="dbg-chip">hidden presets</span>
-                      <span class="dbg-chip">sketchfab token</span>
-                    </div>
-                  </div>
                   <div class="dbg-diagram-layer dbg-layer-idb">
-                    <div class="dbg-layer-label">IndexedDB renderdeck_db — async, large</div>
+                    <div class="dbg-layer-label">IndexedDB renderdeck_db — single source of truth</div>
                     <div class="dbg-layer-items">
-                      <span class="dbg-chip">models</span>
+                      <span class="dbg-chip">models / uploaded-*</span>
+                      <span class="dbg-chip">materials (presets)</span>
+                      <span class="dbg-chip">settings (app + project)</span>
+                      <span class="dbg-chip">metadata (session, part state)</span>
                       <span class="dbg-chip">blobs / thumbnails</span>
-                      <span class="dbg-chip">metadata / session</span>
                     </div>
                   </div>
                 </div>
@@ -1584,12 +1578,13 @@
                 <div id="dbg-idb-content"></div>
               </div>
 
-              <!-- LocalStorage -->
+              <!-- Settings records -->
               <div class="dbg-section">
                 <div class="dbg-section-hdr">
-                  <span class="dbg-section-title">LOCALSTORAGE</span>
+                  <span class="dbg-section-title">SETTINGS</span>
+                  <span class="dbg-badge dbg-badge-idb">IDB · settings store</span>
                 </div>
-                <div id="dbg-ls-table"></div>
+                <div id="dbg-settings-table"></div>
               </div>
 
             </div>

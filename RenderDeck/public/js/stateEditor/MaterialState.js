@@ -24,7 +24,8 @@ export class MaterialStateManager {
     this.history = new HistoryManager(50);
     this.history.onChange(() => this.updateUI());
 
-    this.onChanged = null; // optional callback — fired after every push or restore
+    this.onChanged = null;  // optional callback — fired after every push or restore
+    this.onRestored = null; // optional callback — fired after undo/redo/jump restores a state
   }
 
   // ── Snapshot ────────────────────────────────────────────────────
@@ -139,6 +140,7 @@ export class MaterialStateManager {
 
       this.markNeedsRender(4);
       this.onChanged?.();
+      this.onRestored?.();
     }
   }
 

@@ -1,3 +1,5 @@
+import { log } from '../utils/logger.js';
+
 function formatFaces(n) {
   if (!n) return '?';
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -192,10 +194,15 @@ export class SketchfabModal {
     this._q('.sf-close').addEventListener('click', () => this.close());
     this._el.addEventListener('click', e => { if (e.target === this._el) this.close(); });
 
-    this._q('#sf-token-save').addEventListener('click', () => {
+    this._q('#sf-token-save').addEventListener('click', async () => {
       const val = this._q('#sf-token-input').value.trim();
       if (!val) return;
-      this.api.setToken(val);
+      try {
+        await this.api.setToken(val);
+      } catch (err) {
+        log(`Could not save Sketchfab token: ${err.message}`, true);
+        return;
+      }
       this._showSearch();
     });
     this._q('#sf-token-input').addEventListener('keydown', e => {
@@ -209,8 +216,13 @@ export class SketchfabModal {
     this._q('#sf-face-select').addEventListener('change', e => {
       this.maxFaces = parseInt(e.target.value);
     });
-    this._q('#sf-change-token').addEventListener('click', () => {
-      this.api.setToken('');
+    this._q('#sf-change-token').addEventListener('click', async () => {
+      try {
+        await this.api.setToken('');
+      } catch (err) {
+        log(`Could not clear Sketchfab token: ${err.message}`, true);
+        return;
+      }
       this._showToken();
     });
     this._q('#sf-load-more').addEventListener('click', () => this._loadMore());

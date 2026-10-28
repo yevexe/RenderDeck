@@ -37,6 +37,7 @@
 
 import * as IDBStorage from './indexedDBStorage.js';
 import { getActiveProjectId } from './ProjectStorage.js';
+import { customModelBlobKeys, modelWorkingStateOps } from './cascade.js';
 
 const UUID_PREFIX_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:/i;
 
@@ -71,8 +72,13 @@ export class CustomModelStorage {
   // modelData: { basedOn, customName, sourceType, sceneState, parts }
   // parts: { [partName]: { materialPreset, materialPresetId, isCustomMaterial, materialData, decals } }
   // decals: [{ name, imageData, position, size, rotation, flipH, flipV, type, textData, aspectRatio }]
+  //
+  // One transaction: the previous decal blobs are deleted, the new ones and the
+  // record written — a failure leaves the previously saved model untouched.
+  // replaceWorkingState: also clear per-part working state stored under this name
+  // (used when an import overwrites a model).
   // ─────────────────────────────────────────────
-  async saveCustomModel(name, modelData) {
+  async saveCustomModel(name, modelData, { replaceWorkingState = false } = {}) {
     if (!this.idbAvailable) {
       this.log('Cannot save: IndexedDB unavailable', true);
       return false;
@@ -80,11 +86,13 @@ export class CustomModelStorage {
 
     try {
       const projectId = await getActiveProjectId();
+      const existingMeta = await IDBStorage.get('models', modelKey(projectId, name));
+      const ops = replaceWorkingState ? modelWorkingStateOps(projectId, name) : [];
+      for (const key of (existingMeta ? customModelBlobKeys(existingMeta) : [])) {
+        ops.push({ type: 'del', store: 'blobs', key });
+      }
 
-      // Delete old blobs for this model (handles both old and new key formats)
-      await this._deleteModelBlobs(projectId, name);
-
-      // Build per-part metadata, storing decal images as blobs
+      // Build per-part metadata; decal images become blobs written in the same transaction
       const partsMetadata = {};
       for (const [partName, partData] of Object.entries(modelData.parts || {})) {
         const overlayKeys = [];
@@ -93,8 +101,7 @@ export class CustomModelStorage {
           const decal = partData.decals[i];
           if (decal.imageData) {
             const key = partBlobKey(projectId, name, partName, i);
-            const blob = await IDBStorage.dataURLToBlob(decal.imageData);
-            await IDBStorage.put('blobs', key, blob);
+            ops.push({ type: 'put', store: 'blobs', key, value: IDBStorage.dataURLToBlobSync(decal.imageData) });
             overlayKeys.push(key);
             overlayMetadata.push({
               name:        decal.name,
@@ -120,7 +127,6 @@ export class CustomModelStorage {
       }
 
       // Preserve existing ID on re-save
-      const existingMeta = await IDBStorage.get('models', modelKey(projectId, name));
       const modelId = modelData.id || existingMeta?.id || crypto.randomUUID();
 
       const stored = {
@@ -135,16 +141,16 @@ export class CustomModelStorage {
         lastModified: new Date().toISOString(),
         parts: partsMetadata,
       };
+      ops.push({ type: 'put', store: 'models', key: modelKey(projectId, name), value: stored });
 
-      await IDBStorage.put('models', modelKey(projectId, name), stored);
+      await IDBStorage.batch(ops);
       const totalDecals = Object.values(partsMetadata).reduce((s, p) => s + p.overlayKeys.length, 0);
       this.log(`Saved: ${name} (${Object.keys(partsMetadata).length} part(s), ${totalDecals} decal(s))`);
       return true;
     } catch (error) {
-      this.log(`Failed to save custom model: ${error.message}`, true);
-      if (error.name === 'QuotaExceededError') {
-        alert('Storage full! Try deleting some old custom models or use smaller images.');
-      }
+      this.log(IDBStorage.isQuotaError(error)
+        ? `Storage full — "${name}" was not saved. Delete unused models or use smaller images.`
+        : `Failed to save custom model: ${error.message}`, true);
       return false;
     }
   }
@@ -260,44 +266,8 @@ export class CustomModelStorage {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // Delete all blob entries for a model (both v2 and v3 key formats)
-  // ─────────────────────────────────────────────
-  async _deleteModelBlobs(projectId, name) {
-    const existing = await IDBStorage.get('models', modelKey(projectId, name));
-    if (!existing) return;
-
-    if (existing.version >= 3 && existing.parts) {
-      // v3: blobs keyed per part
-      for (const partMeta of Object.values(existing.parts)) {
-        for (const bk of (partMeta.overlayKeys || [])) {
-          await IDBStorage.del('blobs', bk);
-        }
-      }
-    } else {
-      // v2: flat overlay keys
-      for (const bk of (existing.overlayKeys || [])) {
-        await IDBStorage.del('blobs', bk);
-      }
-    }
-  }
-
-  // ─────────────────────────────────────────────
-  // Delete a custom model and all its blobs
-  // ─────────────────────────────────────────────
-  async deleteCustomModel(name) {
-    if (!this.idbAvailable) return false;
-    try {
-      const projectId = await getActiveProjectId();
-      await this._deleteModelBlobs(projectId, name);
-      await IDBStorage.del('models', modelKey(projectId, name));
-      this.log(`Deleted: ${name}`);
-      return true;
-    } catch (error) {
-      this.log(`Failed to delete custom model: ${error.message}`, true);
-      return false;
-    }
-  }
+  // Deleting a custom model (and everything that belongs to it) is done by
+  // ModelManager.deleteModels(), which builds its operations in cascade.js.
 
   // ─────────────────────────────────────────────
   // Get all custom model names for the active project
@@ -375,16 +345,17 @@ export class CustomModelStorage {
       let importedCount = 0, skippedCount = 0, firstImportedName = null;
 
       for (const [name, modelData] of Object.entries(importData.models)) {
-        const existing = await this.loadCustomModel(name);
+        const existing = (await this.getAllCustomModelNames()).includes(name);
         if (existing) {
           const overwrite = confirm(`Model "${name}" already exists. Overwrite?`);
           if (!overwrite) { skippedCount++; continue; }
-          await this.deleteCustomModel(name);
         }
 
-        // Normalise v2 flat format to v3 parts format before saving
+        // Normalise v2 flat format to v3 parts format before saving.
+        // Overwriting replaces the record, its decals and the old model's
+        // working state in one transaction.
         const normalised = this._normaliseImport(modelData);
-        const success = await this.saveCustomModel(name, normalised);
+        const success = await this.saveCustomModel(name, normalised, { replaceWorkingState: existing });
         if (success) {
           importedCount++;
           if (!firstImportedName) firstImportedName = name;
@@ -423,22 +394,6 @@ export class CustomModelStorage {
         },
       },
     };
-  }
-
-  // ─────────────────────────────────────────────
-  // Clear all custom models in the active project
-  // ─────────────────────────────────────────────
-  async clearAllCustomModels() {
-    try {
-      const names = await this.getAllCustomModelNames();
-      if (names.length === 0) { this.log('No custom models to clear'); return { success: true, count: 0 }; }
-      for (const name of names) await this.deleteCustomModel(name);
-      this.log(`Cleared ${names.length} custom model(s)`);
-      return { success: true, count: names.length };
-    } catch (error) {
-      this.log(`Failed to clear custom models: ${error.message}`, true);
-      return { success: false, error: error.message };
-    }
   }
 
   // ─────────────────────────────────────────────

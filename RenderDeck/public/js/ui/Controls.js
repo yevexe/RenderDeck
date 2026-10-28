@@ -4,6 +4,7 @@
 import { log } from '../utils/logger.js';
 import { STANDARD_ENVIRONMENTS } from '../config.js';
 import { generateEnvPreview } from '../core/SceneLoader.js';
+import { scheduleAppSetting } from '../storage/SettingsStorage.js';
 
 const COLOR_CANVAS_SIZE = 168;
 const COLOR_SLIDER_HEIGHT = 16;
@@ -196,6 +197,24 @@ function generateSwatchColors(anchors, count = 64) {
 export class CompactColorPicker {
   static active = null;
 
+  // Swatch collections are shared by every picker instance and stored in
+  // settings/app.swatchCollections. Nothing is written until the stored value
+  // has been loaded (setSharedCollections), so defaults never overwrite it.
+  static _sharedCollections = null;
+  static _swatchesLoaded = false;
+  static _savedJSON = null;
+  static _swatchVersion = 0; // bumped on every change; other pickers re-render on open
+
+  static setSharedCollections(saved) {
+    if (Array.isArray(saved) && saved.length) CompactColorPicker._sharedCollections = saved;
+    CompactColorPicker._savedJSON = JSON.stringify(CompactColorPicker._sharedCollections);
+    CompactColorPicker._swatchVersion++;
+    CompactColorPicker._swatchesLoaded = true;
+  }
+
+  get swatchCollections() { return CompactColorPicker._sharedCollections; }
+  set swatchCollections(value) { CompactColorPicker._sharedCollections = value; }
+
   constructor({ pickerEl, hexEl, swatchEl, wrapInput, onLiveChange, onCommitChange }) {
     this.pickerEl = pickerEl;
     this.hexEl = hexEl;
@@ -234,7 +253,8 @@ export class CompactColorPicker {
         })),
       })),
     ];
-    this.swatchCollections = this._loadCollections() ?? defaultCollections;
+    if (!CompactColorPicker._sharedCollections) CompactColorPicker._sharedCollections = defaultCollections;
+    this._renderedSwatchVersion = CompactColorPicker._swatchVersion;
     this.state = {
       hex: '#ffffff',
       rgb: { r: 255, g: 255, b: 255 },
@@ -1321,21 +1341,13 @@ export class CompactColorPicker {
   }
 
   _saveCollections() {
-    try {
-      localStorage.setItem('renderdeck-swatch-collections', JSON.stringify(this.swatchCollections));
-    } catch (_) {}
-  }
-
-  _loadCollections() {
-    try {
-      const raw = localStorage.getItem('renderdeck-swatch-collections');
-      if (!raw) return null;
-      const data = JSON.parse(raw);
-      if (!Array.isArray(data) || !data.length) return null;
-      return data;
-    } catch (_) {
-      return null;
-    }
+    if (!CompactColorPicker._swatchesLoaded) return; // stored collections not loaded yet
+    const json = JSON.stringify(this.swatchCollections);
+    if (json === CompactColorPicker._savedJSON) return;
+    CompactColorPicker._savedJSON = json;
+    CompactColorPicker._swatchVersion++;
+    this._renderedSwatchVersion = CompactColorPicker._swatchVersion;
+    scheduleAppSetting('swatchCollections', JSON.parse(json));
   }
 
   _clearCollectionDropIndicators() {
@@ -1753,6 +1765,13 @@ export class CompactColorPicker {
     if (CompactColorPicker.active && CompactColorPicker.active !== this) CompactColorPicker.active.close();
     CompactColorPicker.active = this;
     this.isOpen = true;
+    // Another picker (or the startup load) changed the shared swatches — rebuild ours
+    if (this._renderedSwatchVersion !== CompactColorPicker._swatchVersion) {
+      this._renderedSwatchVersion = CompactColorPicker._swatchVersion;
+      this.selectedCollectionIndex = Math.min(this.selectedCollectionIndex, this.swatchCollections.length - 1);
+      this.selectedSwatchRef = null;
+      this._renderSwatchCollections();
+    }
     this.panelEl.hidden = false;
     this._configureCanvasResolution();
     this._positionPanel();
