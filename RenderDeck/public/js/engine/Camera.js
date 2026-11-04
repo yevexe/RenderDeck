@@ -5,6 +5,18 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CONFIG } from '../config.js';
 
+const SENSOR_SIZES = {
+  fullframe: { w: 36, h: 24 },
+  'aps-c':   { w: 23.5, h: 15.6 },
+  mft:       { w: 17.3, h: 13 }
+};
+
+function computeFOV(focalLength, sensorKey) {
+  const sensor = SENSOR_SIZES[sensorKey] || SENSOR_SIZES.fullframe;
+  // Vertical FOV: 2 * atan(sensorHeight / (2 * focalLength))
+  return 2 * Math.atan(sensor.h / (2 * focalLength)) * (180 / Math.PI);
+}
+
 export class CameraManager {
   constructor(container) {
     this.container = container;
@@ -65,6 +77,24 @@ export class CameraManager {
    */
   getCamera() {
     return this.camera;
+  }
+
+  setPerspectiveLens(focalLength, sensorKey, near, far) {
+    this.camera.fov = computeFOV(focalLength, sensorKey);
+    this.camera.near = near;
+    this.camera.far = far;
+    this.camera.updateProjectionMatrix();
+  }
+
+  setCameraType(type, focalLength, sensorKey) {
+    // Orthographic camera swap would need deeper integration;
+    // for now we just update FOV approach or set very high FOV
+    if (type === 'orthographic') {
+      this.camera.fov = 1; // Near-orthographic
+    } else {
+      this.camera.fov = computeFOV(focalLength, sensorKey);
+    }
+    this.camera.updateProjectionMatrix();
   }
 
   /**

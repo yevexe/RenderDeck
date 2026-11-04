@@ -1,4 +1,6 @@
 import { fileDataURL, loadDesignImage } from '../../utils/imageAssets.js';
+import { markNeedsRender } from '../../engine/renderRequest.js';
+import { applyTexQuality } from '../../engine/textureQuality.js';
 // UVEDITOR.JS - Design Editor (Inline Tab 2)
 // No floating modal. All UI lives inside Tab 2's existing elements.
 
@@ -96,6 +98,9 @@ export class UVEditor {
 
     // History hook — set by main.js; called with (label) after any committed change
     this.onCommit = null;
+    this.onSaveCustomModel = null;
+    this.onModelListChanged = null;
+    this.onSelectModel = null;
 
     // Channel maps hook — set by main.js; returns serialized channel map data for saving
     this.getChannelMaps = null;
@@ -111,6 +116,10 @@ export class UVEditor {
     this._dragLayerId = null;
 
     this._setupInlineUI();
+  }
+
+  setCallbacks(callbacks) {
+    Object.assign(this, callbacks);
   }
 
   // ─── Wire up Tab 2's existing HTML elements ───────────────────
@@ -139,9 +148,9 @@ export class UVEditor {
 
       const saveBtn = document.getElementById('save-custom-model-btn');
       if (saveBtn) saveBtn.addEventListener('click', () => {
-        // main.js registers saveCustomModelHandler to handle multi-part saves.
+        // main.js registers onSaveCustomModel to handle multi-part saves.
         // Fall back to single-part saveAsCustomModel for standalone use.
-        if (window.saveCustomModelHandler) window.saveCustomModelHandler();
+        if (this.onSaveCustomModel) this.onSaveCustomModel();
         else this.saveAsCustomModel();
       });
 
@@ -575,7 +584,7 @@ export class UVEditor {
       this.liveCanvasTexture = null;
     }
     this._freeDesignCanvases();
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   // Called by main.js when the model is unloaded, before its materials are disposed.
@@ -644,7 +653,7 @@ export class UVEditor {
       this._setMaterialValue(material, property, value);
     }
     material.needsUpdate = true;
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
     return true;
   }
 
@@ -1012,7 +1021,7 @@ export class UVEditor {
     texture.colorSpace = colorSpace ?? (from.colorSpace || THREE.SRGBColorSpace);
     // Always apply renderer-aware quality settings (anisotropy, mipmap filtering)
     // regardless of the source. Keeps the texture sharp at angles.
-    window.applyTexQuality?.(texture);
+    applyTexQuality(texture);
     texture.needsUpdate = true;
   }
 
@@ -1082,7 +1091,7 @@ export class UVEditor {
 
     if (this.liveCanvasTexture) {
       this.liveCanvasTexture.needsUpdate = true;
-      window.markNeedsRender?.(4);
+      markNeedsRender(4);
     }
   }
 
@@ -1105,7 +1114,7 @@ export class UVEditor {
       this._renderStickerPBRMapsDrag();
     }
 
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   // ─── Low-res sticker PBR maps during drag ───────────────────
@@ -1239,7 +1248,7 @@ export class UVEditor {
       if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
       if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
       if (this._liveTransmissionTexture) this._liveTransmissionTexture.needsUpdate = true;
-      window.markNeedsRender?.(2);
+      markNeedsRender(2);
     }
   }
 
@@ -1277,7 +1286,7 @@ export class UVEditor {
       if (this._uvCheckActive) this._savedMaterialMap = this.liveCanvasTexture;
       else this.activeMesh.material.map = this.liveCanvasTexture;
       this.activeMesh.material.needsUpdate = true;
-      window.markNeedsRender?.(4);
+      markNeedsRender(4);
     }
   }
 
@@ -1300,7 +1309,7 @@ export class UVEditor {
       if (this._liveRoughnessTexture)   this.activeMesh.material.roughnessMap   = this._liveRoughnessTexture;
       if (this._liveTransmissionTexture) this.activeMesh.material.transmissionMap = this._liveTransmissionTexture;
       this.activeMesh.material.needsUpdate = true;
-      window.markNeedsRender?.(4);
+      markNeedsRender(4);
     }
   }
 
@@ -1365,7 +1374,7 @@ export class UVEditor {
       this.activeMesh.material.needsUpdate = true;
     }
 
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
     this.log('✓ Design applied to model');
   }
 
@@ -1473,7 +1482,7 @@ export class UVEditor {
       disposeOld?.(mesh.material);
       mesh.material = material;
     }
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   // What a material slot holds underneath any design on the part.
@@ -1515,7 +1524,7 @@ export class UVEditor {
       applySaved(material, params);
     }
     material.needsUpdate = true;
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   // Called by main.js right before the active part's material is replaced, so the old
@@ -1540,7 +1549,7 @@ export class UVEditor {
 
     this._updateLayersList();
     this._renderPreview();
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
     this._notifyLayersSaved();
     this.onCommit?.('Removed all decals');
     this.log('All decals removed');
@@ -1784,8 +1793,8 @@ export class UVEditor {
     if (this.overlayImages.length > 0) this.applyTextureToModel();
 
     this.log(`✓ Saved: ${this.customModelName}`);
-    if (window.updateModelSelect) await window.updateModelSelect();
-    window.selectModelInDropdown?.(this.customModelName);
+    if (this.onModelListChanged) await this.onModelListChanged();
+    this.onSelectModel?.(this.customModelName);
   }
 
   // ─── Local-space coordinate transform ────────────────────────
@@ -2020,7 +2029,7 @@ export class UVEditor {
     this._renderPreview();
     this._renderComposite();
     this._updateStickerPBRIfActive();
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
     this._notifyLayersSaved();
     this.onCommit?.(`Flipped ${axis === 'h' ? 'horizontal' : 'vertical'}`);
   }
@@ -2202,12 +2211,12 @@ export class UVEditor {
         this.activeMesh.material.needsUpdate = true;
         this._uvCheckActive = true;
         if (btn) btn.classList.add('button-selected');
-        window.markNeedsRender?.(4);
+        markNeedsRender(4);
         this.log('Check UV: on');
       }, undefined, () => this.log('Check UV: failed to load UVChecker.png'));
     } else {
       this._deactivateCheckUV();
-      window.markNeedsRender?.(4);
+      markNeedsRender(4);
       this.log('Check UV: off');
     }
   }
@@ -2325,7 +2334,7 @@ export class UVEditor {
     if (sel) this._syncSlidersFromImage(sel);
     this._renderPreview();
     this._syncDesignToLayers();
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   _copyLayers(layers) {
@@ -2519,5 +2528,3 @@ export class UVEditor {
     return m;
   }
 }
-
-

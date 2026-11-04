@@ -1,5 +1,5 @@
 
-// SCENELOADER.JS - HDR Environment Loader
+// ENVIRONMENTLOADER.JS - HDR Environment Loader
 
 import * as THREE from 'three';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
@@ -13,13 +13,13 @@ import { envPreviewKey } from '../../storage/storageKeys.js';
  */
 let environmentRequest = 0;
 
-export function initScenes(onLoad) {
+export function initEnvironments(onLoad) {
   if (STANDARD_ENVIRONMENTS.length === 0) {
     console.warn('No environments configured in STANDARD_ENVIRONMENTS');
     return;
   }
   const first = STANDARD_ENVIRONMENTS[0];
-  loadScene(first.label, onLoad);
+  loadEnvironment(first.label, onLoad);
 }
 
 /**
@@ -27,7 +27,7 @@ export function initScenes(onLoad) {
  * @param {string} label - Matches STANDARD_ENVIRONMENTS[].label
  * @param {Function} onLoad - (label, texture) => void
  */
-export function loadScene(label, onLoad) {
+export function loadEnvironment(label, onLoad) {
   const env = STANDARD_ENVIRONMENTS.find(e => e.label === label);
   if (!env) {
     console.error(`Environment not found: ${label}`);
@@ -44,7 +44,7 @@ export function loadScene(label, onLoad) {
  * Return all environment labels for populating the UI select.
  * @returns {string[]}
  */
-export function getSceneNames() {
+export function getEnvironmentNames() {
   return STANDARD_ENVIRONMENTS.map(e => e.label);
 }
 

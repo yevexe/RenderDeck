@@ -39,8 +39,7 @@
 
 import * as IDBStorage from './indexedDBStorage.js';
 import { getActiveProjectId } from './ProjectStorage.js';
-import { customModelBlobKeys, modelWorkingStateOps, uploadedModelBlobKeys } from './cascade.js';
-import { downloadBlob, safeFileName } from '../utils/helpers.js';
+import { customModelBlobKeys, modelWorkingStateOps } from './cascade.js';
 
 const UUID_PREFIX_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:/i;
 
@@ -290,117 +289,6 @@ export class CustomModelStorage {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // Export custom models as JSON (active project only)
-  // ─────────────────────────────────────────────
-  async exportCustomModels() {
-    try {
-      const models = await this.loadAllCustomModels();
-      for (const name of Object.keys(models)) models[name] = this._withMaterials(models[name]);
-      const baseModels = await this._baseModelEntries(Object.values(models).map(model => model.basedOn));
-      const exportData = { version: 3, exportDate: new Date().toISOString(), models, ...baseModels };
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-      downloadBlob(`renderdeck-custom-models-${Date.now()}.json`, blob);
-      this.log(`Exported ${Object.keys(models).length} custom model(s)`);
-      return true;
-    } catch (error) {
-      this.log(`Failed to export: ${error.message}`, true);
-      return false;
-    }
-  }
-
-  // An export carries the definitions its parts use, so another project can rebuild them.
-  _withMaterials(model) {
-    const ids = model.parts
-      ? Object.values(model.parts).map(part => part.materialId).filter(Boolean)
-      : [model.materialId].filter(Boolean);
-    return { ...model, materials: this.materialLibrary?.exportDefinitions(ids) || {} };
-  }
-
-  // ─────────────────────────────────────────────
-  // Export a single custom model
-  // ─────────────────────────────────────────────
-  async exportSingleModel(name) {
-    try {
-      const model = await this.loadCustomModel(name);
-      if (!model) { this.log(`Model not found: ${name}`, true); return false; }
-      return await this.exportModelData(name, model);
-    } catch (error) {
-      this.log(`Failed to export model: ${error.message}`, true);
-      return false;
-    }
-  }
-
-  // Download one model's data in the file shape custom models export in.
-  async exportModelData(name, model) {
-    try {
-      const baseModels = await this._baseModelEntries([model.basedOn]);
-      const exportData = { version: 3, exportDate: new Date().toISOString(), models: { [name]: this._withMaterials(model) }, ...baseModels };
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-      downloadBlob(`${safeFileName(name) || 'model'}-${Date.now()}.json`, blob);
-      return true;
-    } catch (error) {
-      this.log(`Failed to export model: ${error.message}`, true);
-      return false;
-    }
-  }
-
-  // Uploaded models behind these names, with their files, so a file imports into any project:
-  // { baseModels: { name: { record, files: [{ key, name, type, dataURL }] } } }, or nothing.
-  // key is the part of the blob key after `uploaded:${pid}:${name}`. Standard models are
-  // left out because every project has them.
-  async _baseModelEntries(names) {
-    const projectId = await getActiveProjectId();
-    const baseModels = {};
-    for (const start of new Set(names)) {
-      let name = start;
-      for (const seen = new Set(); !seen.has(name);) {
-        seen.add(name);
-        const custom = await IDBStorage.get('models', modelKey(projectId, name));
-        if (custom?.basedOn) name = custom.basedOn;
-      }
-      if (baseModels[name]) continue;
-      const stored = await IDBStorage.get('uploaded-models', `${projectId}:${name}`);
-      if (!stored) continue;
-      const { projectId: _unused, ...record } = stored;
-      const prefix = `uploaded:${projectId}:${name}`;
-      const files = [];
-      for (const key of uploadedModelBlobKeys(projectId, name, stored)) {
-        const blob = await IDBStorage.get('blobs', key);
-        if (!blob) continue;
-        files.push({
-          key: key.slice(prefix.length),
-          name: blob.name ?? null,
-          type: blob.type,
-          dataURL: await IDBStorage.blobToDataURL(blob),
-        });
-      }
-      baseModels[name] = { record, files };
-    }
-    return Object.keys(baseModels).length ? { baseModels } : {};
-  }
-
-  // Writes that recreate an uploaded model from an export file
-  _baseModelOps(projectId, name, { record, files }) {
-    if (!['uploaded', 'uploaded-glb'].includes(record?.type) || !Array.isArray(files)) {
-      throw new Error(`The file's copy of "${name}" is damaged`);
-    }
-    const ops = files.map(({ key, name: fileName, type, dataURL }) => {
-      if (!/^:(glb|obj|mtl(:.+)?|tex:.+)$/.test(key) || !String(dataURL).startsWith('data:')) {
-        throw new Error(`The file's copy of "${name}" is damaged`);
-      }
-      const blob = IDBStorage.dataURLToBlobSync(dataURL);
-      return {
-        type: 'put',
-        store: 'blobs',
-        key: `uploaded:${projectId}:${name}${key}`,
-        value: fileName ? new File([blob], fileName, { type }) : blob,
-      };
-    });
-    ops.push({ type: 'put', store: 'uploaded-models', key: `${projectId}:${name}`, value: { ...record, name } });
-    return ops;
-  }
-
   // Record the ids of parts migrated when the custom model first loaded.
   async setPartMaterialIds(name, ids) {
     const projectId = await getActiveProjectId();
@@ -410,88 +298,6 @@ export class CustomModelStorage {
     const parts = Object.fromEntries(Object.entries(stored.parts).map(([part, data]) =>
       [part, part in ids ? { ...data, materialId: ids[part] } : data]));
     await IDBStorage.put('models', key, { ...stored, parts });
-  }
-
-  // ─────────────────────────────────────────────
-  // Import custom models from JSON
-  // Accepts both v2 (flat) and v3 (parts) export formats. Imported models are always
-  // custom models. hasModel: whether a standard or uploaded model has this name.
-  // ─────────────────────────────────────────────
-  async importCustomModels(file, { hasModel = () => false } = {}) {
-    try {
-      const text = await file.text();
-      const importData = JSON.parse(text);
-      if (!importData.models) {
-        return { success: false, error: 'Invalid export file — missing models property' };
-      }
-
-      let skippedCount = 0;
-      const imported = [];
-      const newBaseModels = [];
-      const projectId = await getActiveProjectId();
-      const fileBases = importData.baseModels && typeof importData.baseModels === 'object' ? importData.baseModels : {};
-      const missingBases = Object.keys(fileBases).filter(name => !hasModel(name));
-      const nameIsTaken = name => hasModel(name) || name in fileBases;
-
-      for (const [originalName, modelData] of Object.entries(importData.models)) {
-        const customNames = await this.getAllCustomModelNames();
-        let name = originalName;
-        if (nameIsTaken(name)) {
-          name = `${originalName} (Custom)`;
-          for (let n = 2; nameIsTaken(name) || customNames.includes(name); n++) name = `${originalName} (Custom) (${n})`;
-        }
-        const existing = customNames.includes(name);
-        if (existing) {
-          const overwrite = confirm(`Model "${name}" already exists. Overwrite?`);
-          if (!overwrite) { skippedCount++; continue; }
-        }
-
-        // Normalise v2 flat format to v3 parts format before saving.
-        // Overwriting replaces the record, its decals and the old model's
-        // working state in one transaction.
-        const normalised = await this.materialLibrary.importModelMaterials(this._normaliseImport(modelData));
-        // Uploaded models the file carries are written with the first model saved, so a
-        // failure leaves neither behind. A model of that name already here is used as it is.
-        const extraOps = missingBases.flatMap(base => this._baseModelOps(projectId, base, fileBases[base]));
-        const success = await this.saveCustomModel(name, { ...normalised, customName: name }, { replaceWorkingState: existing, extraOps });
-        if (success) {
-          imported.push({ name, originalName, basedOn: normalised.basedOn });
-          newBaseModels.push(...missingBases.splice(0));
-        }
-      }
-
-      if (imported.length > 0) {
-        this.log(`Imported ${imported.length} model(s), skipped ${skippedCount}`);
-        return { success: true, name: imported[0].name, imported, newBaseModels, count: imported.length, skipped: skippedCount };
-      }
-      return { success: false, error: `No models imported (${skippedCount} skipped)` };
-    } catch (error) {
-      this.log(`Failed to import: ${error.message}`, true);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // Convert a v2 flat model record into v3 parts shape
-  _normaliseImport(modelData) {
-    if (modelData.parts) return modelData; // already v3
-    // v2: wrap the single-part flat data into parts['__default__']
-    const materialData = { ...(modelData.materialProperties || {}) };
-    if (modelData.channelMaps) materialData.channelMaps = modelData.channelMaps;
-    return {
-      basedOn:    modelData.basedOn,
-      customName: modelData.customName,
-      sourceType: 'standard',
-      sceneState: modelData.sceneState || null,
-      materials:  modelData.materials,
-      parts: {
-        '__default__': {
-          materialId:       modelData.materialId,
-          materialPreset:   modelData.materialPreset   || 'Default — White',
-          materialData,
-          decals: modelData.overlayImages || [],
-        },
-      },
-    };
   }
 
   // ─────────────────────────────────────────────

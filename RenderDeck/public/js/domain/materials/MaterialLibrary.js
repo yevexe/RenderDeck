@@ -15,6 +15,7 @@
 // THREE material instance; main.js applies definition changes across the instances.
 
 import * as THREE from 'three';
+import { applyTexQuality } from '../../engine/textureQuality.js';
 import * as IDBStorage from '../../storage/indexedDBStorage.js';
 import {
   materialOverrideKey, materialOverridePrefix, materialThumbKey, standardCatalogKey,
@@ -606,7 +607,7 @@ export class MaterialLibrary {
     if (cached) cached.promise.then(texture => texture.dispose(), () => {});
     const promise = new THREE.TextureLoader().loadAsync(url).then(texture => {
       texture.colorSpace = COLOR_CHANNELS.has(channel) ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
-      window.applyTexQuality?.(texture);
+      applyTexQuality(texture);
       return texture;
     });
     this._textures.set(key, { url, promise });

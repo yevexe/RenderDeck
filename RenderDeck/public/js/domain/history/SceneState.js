@@ -8,7 +8,7 @@ export class SceneStateManager {
    * @param {object} deps
    * @param {object}   deps.propManager
    * @param {object}   deps.sceneManager
-   * @param {function} deps.loadScene        - loadScene(name, callback)
+   * @param {function} deps.loadEnvironment - loadEnvironment(name, callback)
    * @param {function} deps.applyBackground  - applyBackground()
    * @param {function} deps.markNeedsRender  - markNeedsRender(frames)
    * @param {function} deps.getEnv           - () => { currentEnvironment, currentEnvTexture, showEnvBackground, gradientBgEnabled, currentGradientBg }
@@ -16,10 +16,10 @@ export class SceneStateManager {
    * @param {function} deps.getModelName     - () => string  — current object/model name
    * @param {function} deps.loadModel        - (name) => void — switch to a different object
    */
-  constructor({ propManager, sceneManager, loadScene, applyBackground, markNeedsRender, getEnv, setEnv, getModelName, loadModel }) {
+  constructor({ propManager, sceneManager, loadEnvironment, applyBackground, markNeedsRender, getEnv, setEnv, getModelName, loadModel }) {
     this.propManager     = propManager;
     this.sceneManager    = sceneManager;
-    this.loadScene       = loadScene;
+    this.loadEnvironment = loadEnvironment;
     this.applyBackground = applyBackground;
     this.markNeedsRender = markNeedsRender;
     this.getEnv          = getEnv;
@@ -79,7 +79,7 @@ export class SceneStateManager {
     if (envChanged) {
       const envSel = document.getElementById('environment-select');
       if (envSel) envSel.value = state.sceneName;
-      this.loadScene(state.sceneName, (name, texture) => {
+      this.loadEnvironment(state.sceneName, (name, texture) => {
         this.sceneManager.setEnvironment(texture);
         this.setEnv({
           currentEnvironment: name,

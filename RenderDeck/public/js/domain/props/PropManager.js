@@ -12,6 +12,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { PROP_PATHS } from '../../config.js';
+import { markNeedsRender } from '../../engine/renderRequest.js';
 
 export class PropManager {
   constructor(scene, camera, renderer, orbitControls, log) {
@@ -88,7 +89,7 @@ export class PropManager {
       this.onMainModelTransform?.();
       this.onChange?.();
       this._outlineDirty = true;
-      window.markNeedsRender?.(4);
+      markNeedsRender(4);
     });
   }
 
@@ -582,17 +583,17 @@ export class PropManager {
   setShowLabels(visible) {
     this._showLabels = visible;
     if (!visible) this._clearSizeLabels();
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   setLabelsParallel(parallel) {
     this._labelsParallel = parallel;
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   setMeasureUnit(unit) {
     this._measureUnit = unit; // 'cm' | 'in'
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   /** Call every frame from the animate loop to keep outlines tracking moving objects */
@@ -729,7 +730,7 @@ export class PropManager {
     if (this._mainModelHelper) this._mainModelHelper.visible = enabled;
     if (this.selectedProp?._outlineHelper) this.selectedProp._outlineHelper.visible = enabled;
     if (!enabled || !this._showLabels) this._clearSizeLabels();
-    window.markNeedsRender?.(4);
+    markNeedsRender(4);
   }
 
   setCollisionEnabled(enabled) {
@@ -923,7 +924,7 @@ export class PropManager {
         );
         if (data.scale) prop.object3D.scale.set(data.scale.x, data.scale.y, data.scale.z);
         this._updatePropTransform(prop);
-        window.markNeedsRender?.(4);
+        markNeedsRender(4);
       } catch (err) {
         this._unresolvedProps.push(structuredClone(data));
         this.log(`Could not restore prop "${data.displayName || data.type}": ${err.message}. Its saved entry is retained.`, true);

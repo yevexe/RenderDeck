@@ -2,7 +2,7 @@ import { loadDesignImage, fileDataURL } from '../../utils/imageAssets.js';
 import { logError } from '../../utils/logger.js';
 // NodeEditorManager.js — HTML node graph editor
 // Nodes are plain HTML divs; only connection curves use SVG.
-import { CompactColorPicker } from '../Controls.js';
+import { CompactColorPicker } from '../widgets/CompactColorPicker.js';
 
 // ─── layout constants ─────────────────────────────────────────────────────────
 const NODE_W     = 227;   // 6 cm @ 96 dpi
@@ -388,7 +388,7 @@ export class NodeEditorManager {
   syncMaterialProp(matProp, value) {
     const matNode = this._nodes.find(n => n.type === 'material-output');
     if (!matNode?._portControls) return;
-    // iridescenceThicknessRange arrives as [min, max] from Controls.js
+    // iridescenceThicknessRange arrives as [min, max] from ControlsManager.js
     if (matProp === 'iridescenceThicknessRange' && Array.isArray(value)) {
       this._syncOnePortControl(matNode, 'iridescenceThicknessRange_min', value[0]);
       this._syncOnePortControl(matNode, 'iridescenceThicknessRange_max', value[1]);

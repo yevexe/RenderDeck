@@ -608,28 +608,8 @@ export class ModelManager {
     });
   }
 
-  // ─────────────────────────────────────────────
-  // Export a single custom model
-  // ─────────────────────────────────────────────
-  async exportCustomModel(name) {
-    const success = await this.storage.exportSingleModel(name);
-    return success;
-  }
-
-  // Download a model that isn't saved as a custom model in custom model form
-  async exportModelAsCustom(name, modelData) {
-    return this.storage.exportModelData(name, modelData);
-  }
-
-  // ─────────────────────────────────────────────
-  // Import custom model(s) from JSON file
-  // ─────────────────────────────────────────────
-  async importCustomModel(file) {
-    const result = await this.storage.importCustomModels(file, { hasModel: name => this.models.has(name) });
-    if (result.success) {
-      const projectId = await getActiveProjectId();
-      for (const name of result.newBaseModels) await this._restoreUploadedModel(projectId, name);
-    }
-    return result;
+  async restoreImportedBaseModels(names) {
+    const projectId = await getActiveProjectId();
+    for (const name of names) await this._restoreUploadedModel(projectId, name);
   }
 }
