@@ -1,8 +1,15 @@
 .DS_Store
-.claude/
+.claude
 .env
 # Local browser tests (not uploaded)
-RenderDeck/tests/
+tests/
 
 # Backend has its own private repository
-RenderDeck/backend/
+backend/
+
+# Chat logs
+*.jsonl
+chat-logs/
+chats/
+transcripts/
+.specstory/
