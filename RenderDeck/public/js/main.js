@@ -3146,10 +3146,6 @@ window.saveCustomModelHandler = async function() {
   window.selectModelInDropdown?.(customName);
 };
 
-window.switchToModel = (name) => {
-  const sel = document.getElementById('object-select') || document.getElementById('model-select');
-  if (sel) { sel.value = name; return loadModel(name); }
-};
 window.selectModelInDropdown = (name) => {
   const sel = document.getElementById('object-select') || document.getElementById('model-select');
   if (sel) sel.value = name;
