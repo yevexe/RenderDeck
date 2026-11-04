@@ -2,7 +2,7 @@
 // Uses MeshPhysicalMaterial for full PBR support (clearcoat, transmission, sheen, etc.)
 
 import * as THREE from 'three';
-import { CONFIG } from '../config.js';
+import { CONFIG } from '../../config.js';
 import {
   createWoodTexture,
   createMetalTexture,

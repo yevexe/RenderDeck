@@ -8,16 +8,16 @@
 // project.json → { format, version, exportedAt, scene, records: [{ store, key, value }] }
 
 import { strFromU8, unzipSync } from 'fflate';
-import * as IDBStorage from '../storage/indexedDBStorage.js';
-import { customModelBlobKeys, isProjectKey, modelWorkingStateOps, uploadedModelBlobKeys } from '../storage/cascade.js';
-import { decodeValue, encodeRecords, PID_PLACEHOLDER, swapProjectId, zipProjectFile } from '../storage/projectFile.js';
-import { getActiveProjectId } from '../storage/ProjectStorage.js';
+import * as IDBStorage from '../../storage/indexedDBStorage.js';
+import { customModelBlobKeys, isProjectKey, modelWorkingStateOps, uploadedModelBlobKeys } from '../../storage/cascade.js';
+import { decodeValue, encodeRecords, PID_PLACEHOLDER, swapProjectId, zipProjectFile } from './projectFile.js';
+import { getActiveProjectId } from '../../storage/ProjectStorage.js';
 import {
   materialOverrideKey, materialOverridePrefix, objectOverridePrefix, nativeIdPrefix, partMaterialPrefix,
   uploadedCatalogKey, uploadedPropBlobKey, uploadedPropKey,
-} from '../storage/storageKeys.js';
-import { encodeKeyPart as enc } from '../storage/indexedDBStorage.js';
-import { isSceneData } from './CustomSceneStorage.js';
+} from '../../storage/storageKeys.js';
+import { encodeKeyPart as enc } from '../../storage/indexedDBStorage.js';
+import { isSceneData } from '../../storage/CustomSceneStorage.js';
 
 const FORMAT = 'renderdeck-scene';
 const VERSION = 1;

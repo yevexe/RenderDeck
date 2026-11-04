@@ -1,16 +1,16 @@
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { rewriteMTL } from './MTLUtils.js';
-import { uploadedModelMtlKey } from '../storage/storageKeys.js';
+import { uploadedModelMtlKey } from '../../storage/storageKeys.js';
 
 // MODELMANAGER.JS - Model Management System for RenderDeck
 // Handles adding, loading, and managing 3D models dynamically
 
 import { ModelVerifier } from './ModelVerifier.js';
-import { CustomModelStorage } from '../storage/CustomModelStorage.js';
-import * as IDBStorage from '../storage/indexedDBStorage.js';
-import { ensureActiveProject, getActiveProjectId } from '../storage/ProjectStorage.js';
-import { modelDeleteOps, sessionWithoutModels } from '../storage/cascade.js';
-import { sessionKey, uploadedCatalogKey, standardModelBlobKey, standardModelInfoKey } from '../storage/storageKeys.js';
+import { CustomModelStorage } from '../../storage/CustomModelStorage.js';
+import * as IDBStorage from '../../storage/indexedDBStorage.js';
+import { ensureActiveProject, getActiveProjectId } from '../../storage/ProjectStorage.js';
+import { modelDeleteOps, sessionWithoutModels } from '../../storage/cascade.js';
+import { sessionKey, uploadedCatalogKey, standardModelBlobKey, standardModelInfoKey } from '../../storage/storageKeys.js';
 import { catalogFromGltf, catalogFromMtl, readGltfJsonFromBlob } from '../materials/nativeCatalog.js';
 
 export class ModelManager {

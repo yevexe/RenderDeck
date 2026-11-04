@@ -15,11 +15,11 @@
 // THREE material instance; main.js applies definition changes across the instances.
 
 import * as THREE from 'three';
-import * as IDBStorage from '../storage/indexedDBStorage.js';
+import * as IDBStorage from '../../storage/indexedDBStorage.js';
 import {
   materialOverrideKey, materialOverridePrefix, materialThumbKey, standardCatalogKey,
   uploadedCatalogKey, uploadedCatalogPrefix, partMaterialProjectPrefix, nativeIdPrefix,
-} from '../storage/storageKeys.js';
+} from '../../storage/storageKeys.js';
 
 export const FALLBACK_ID = 'internal:white';
 export const DEFAULT_STANDARD_ID = 'standard:RDM_Default_White';

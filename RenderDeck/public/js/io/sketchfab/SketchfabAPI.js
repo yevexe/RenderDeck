@@ -1,4 +1,4 @@
-import { loadAppSettings, setAppSetting } from '../storage/SettingsStorage.js';
+import { loadAppSettings, setAppSetting } from '../../storage/SettingsStorage.js';
 
 const BASE_URL = 'https://api.sketchfab.com/v3';
 

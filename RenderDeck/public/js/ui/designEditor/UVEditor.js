@@ -1,9 +1,9 @@
-import { fileDataURL, loadDesignImage } from '../utils/imageAssets.js';
+import { fileDataURL, loadDesignImage } from '../../utils/imageAssets.js';
 // UVEDITOR.JS - Design Editor (Inline Tab 2)
 // No floating modal. All UI lives inside Tab 2's existing elements.
 
 import * as THREE from 'three';
-import { ModelVerifier } from '../models/ModelVerifier.js';
+import { ModelVerifier } from '../../domain/models/ModelVerifier.js';
 
 const DESIGN_CANVAS_SIZE = 2048;
 // Drag-frame resolutions: 1/4 of the full-res upload for color, less for the PBR masks

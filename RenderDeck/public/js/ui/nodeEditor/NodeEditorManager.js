@@ -1,8 +1,8 @@
-import { loadDesignImage, fileDataURL } from '../utils/imageAssets.js';
-import { logError } from '../utils/logger.js';
+import { loadDesignImage, fileDataURL } from '../../utils/imageAssets.js';
+import { logError } from '../../utils/logger.js';
 // NodeEditorManager.js — HTML node graph editor
 // Nodes are plain HTML divs; only connection curves use SVG.
-import { CompactColorPicker } from './Controls.js';
+import { CompactColorPicker } from '../Controls.js';
 
 // ─── layout constants ─────────────────────────────────────────────────────────
 const NODE_W     = 227;   // 6 cm @ 96 dpi

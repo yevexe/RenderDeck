@@ -12,9 +12,9 @@
 //   { $rdDate: milliseconds }                         Date
 
 import { Zip, ZipDeflate, ZipPassThrough, unzipSync, strFromU8, strToU8 } from 'fflate';
-import * as IDBStorage from './indexedDBStorage.js';
-import { isProjectKey } from './cascade.js';
-import { generateId, getProject, listProjects } from './ProjectStorage.js';
+import * as IDBStorage from '../../storage/indexedDBStorage.js';
+import { isProjectKey } from '../../storage/cascade.js';
+import { generateId, getProject, listProjects } from '../../storage/ProjectStorage.js';
 
 const FORMAT = 'renderdeck-project';
 const VERSION = 1;

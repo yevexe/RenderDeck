@@ -3,9 +3,9 @@
 
 import * as THREE from 'three';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
-import { STANDARD_ENVIRONMENTS } from '../config.js';
-import * as IDBStorage from '../storage/indexedDBStorage.js';
-import { envPreviewKey } from '../storage/storageKeys.js';
+import { STANDARD_ENVIRONMENTS } from '../../config.js';
+import * as IDBStorage from '../../storage/indexedDBStorage.js';
+import { envPreviewKey } from '../../storage/storageKeys.js';
 
 /**
  * Load the first configured environment on startup.

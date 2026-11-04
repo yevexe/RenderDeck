@@ -2,7 +2,7 @@
 // GENERATORS.JS - Procedural Texture Generators
 
 import * as THREE from 'three';
-import { CONFIG } from '../config.js';
+import { CONFIG } from '../../config.js';
 
 /**
  * Helper to create texture from canvas drawing function

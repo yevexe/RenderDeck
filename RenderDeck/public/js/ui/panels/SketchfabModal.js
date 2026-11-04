@@ -1,4 +1,4 @@
-import { log } from '../utils/logger.js';
+import { log } from '../../utils/logger.js';
 
 function formatFaces(n) {
   if (!n) return '?';

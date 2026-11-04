@@ -1,29 +1,22 @@
-// MaterialState.js — undo/redo for material property changes
+// DesignState.js — undo/redo for UV editor overlay changes
 
-import { HistoryManager } from '../ui/HistoryManager.js';
+import { HistoryManager } from './HistoryManager.js';
 import { renderHistoryList } from './historyUtils.js';
 
-export class MaterialStateManager {
+export class DesignStateManager {
   /**
-   * @param {object}   deps
-   * @param {function} deps.captureState  - () => state of the active part's material
-   * @param {function} deps.applyState    - (state) => Promise, applies a state across the library
+   * @param {object} deps
+   * @param {object} deps.uvEditor
    */
-  constructor({ captureState, applyState }) {
-    this.captureState = captureState;
-    this.applyState   = applyState;
-
-    this.history = new HistoryManager(50);
+  constructor({ uvEditor }) {
+    this.uvEditor = uvEditor;
+    this.history  = new HistoryManager(50);
     this.history.onChange(() => this.updateUI());
-
-    this.onChanged = null;  // optional callback — fired after every push or restore
-    this.onRestored = null; // optional callback — fired after undo/redo/jump restores a state
   }
 
   // ── Snapshot ────────────────────────────────────────────────────
-  // { partName, materialId, materialProperties, channelMaps, clearedChannels }
   snapshot() {
-    return this.captureState() || { materialProperties: null };
+    return { overlays: this.uvEditor.snapshotOverlays() };
   }
 
   // ── History operations ──────────────────────────────────────────
@@ -33,37 +26,40 @@ export class MaterialStateManager {
 
   push(label) {
     this.history.push(this.snapshot(), label);
-    this.onChanged?.();
   }
 
   // ── Restore ─────────────────────────────────────────────────────
-  async restore(state) {
-    if (!state?.materialProperties) return;
-    await this.applyState(state);
-    this.onChanged?.();
-    this.onRestored?.();
+  restore(state) {
+    if (!state) return;
+    this.uvEditor.restoreHistoryState(state.overlays);
   }
 
   // ── UI ──────────────────────────────────────────────────────────
   setupUI() {
-    document.getElementById('mat-undo-btn')?.addEventListener('click', () => {
+    document.getElementById('design-undo-btn')?.addEventListener('click', () => {
       const state = this.history.undo();
       if (state) this.restore(state);
       this.updateUI();
     });
-    document.getElementById('mat-redo-btn')?.addEventListener('click', () => {
+    document.getElementById('design-redo-btn')?.addEventListener('click', () => {
       const state = this.history.redo();
       if (state) this.restore(state);
       this.updateUI();
     });
+
+    // Hook UV editor commits → push design history entry
+    this.uvEditor.onCommit = (label) => {
+      this.push(label);
+      this.updateUI();
+    };
   }
 
   updateUI() {
-    const undoBtn = document.getElementById('mat-undo-btn');
-    const redoBtn = document.getElementById('mat-redo-btn');
+    const undoBtn = document.getElementById('design-undo-btn');
+    const redoBtn = document.getElementById('design-redo-btn');
     if (undoBtn) undoBtn.disabled = !this.history.canUndo();
     if (redoBtn) redoBtn.disabled = !this.history.canRedo();
-    renderHistoryList('mat-history-list', this.history, (idx) => {
+    renderHistoryList('design-history-list', this.history, (idx) => {
       const state = this.history.jumpTo(idx);
       if (state) this.restore(state);
       this.updateUI();

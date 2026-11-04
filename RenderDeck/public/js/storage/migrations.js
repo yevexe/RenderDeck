@@ -25,7 +25,7 @@ import {
   sessionKey, projectSettingsKey, APP_SETTINGS_KEY, envPreviewKey,
   partMaterialProjectPrefix, materialOverrideKey,
 } from './storageKeys.js';
-import { MaterialLibrary } from '../materials/MaterialLibrary.js';
+import { MaterialLibrary } from '../domain/materials/MaterialLibrary.js';
 
 const KEYS_FLAG = 'migrated:v8:keys';
 const ORPHAN_PRESETS_FLAG = 'migrated:v8:orphan-presets';

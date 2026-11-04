@@ -6,7 +6,7 @@ import { fileDataURL, loadDesignImage } from '../utils/imageAssets.js';
 
 import { log } from '../utils/logger.js';
 import { STANDARD_ENVIRONMENTS } from '../config.js';
-import { generateEnvPreview } from '../core/SceneLoader.js';
+import { generateEnvPreview } from '../domain/scenes/SceneLoader.js';
 import { scheduleAppSetting, setAppBlobSetting, getAppSetting } from '../storage/SettingsStorage.js';
 
 const COLOR_CANVAS_SIZE = 168;

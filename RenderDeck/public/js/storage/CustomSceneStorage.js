@@ -3,8 +3,8 @@
 // Scenes are stored in renderdeck_db using `${projectId}:${name}` keys.
 // Legacy scenes from the old RenderDeckScenes database are auto-migrated.
 
-import * as IDBStorage from '../storage/indexedDBStorage.js';
-import { getActiveProjectId } from '../storage/ProjectStorage.js';
+import * as IDBStorage from './indexedDBStorage.js';
+import { getActiveProjectId } from './ProjectStorage.js';
 
 const LEGACY_DB_NAME    = 'RenderDeckScenes';
 const LEGACY_STORE_NAME = 'scenes';

@@ -1,7 +1,7 @@
 import { collectControlPreferences, restoreControlPreferences, bindControlPreferences } from './ui/ControlPreferences.js';
 import { loadNodeGraphs, saveNodeGraph } from './storage/NodeGraphStorage.js';
 import { loadDesignImage } from './utils/imageAssets.js';
-import { prepareModelParts } from './models/ModelParts.js';
+import { prepareModelParts } from './domain/models/ModelParts.js';
 // MAIN.JS - Application Orchestrator
 
 import * as THREE from 'three';
@@ -13,21 +13,21 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial }         from 'three/addons/lines/LineMaterial.js';
 
 // Core
-import { SceneManager } from './core/Scene.js';
-import { RendererManager } from './core/Renderer.js';
-import { CameraManager } from './core/Camera.js';
+import { SceneManager } from './engine/Scene.js';
+import { RendererManager } from './engine/Renderer.js';
+import { CameraManager } from './engine/Camera.js';
 
-import { MaterialManager } from './materials/MaterialManager.js';
-import { MaterialLibrary, FALLBACK_ID, DEFAULT_STANDARD_ID, CHANNELS, textureToDataURL } from './materials/MaterialLibrary.js';
-import { catalogFromGltf, catalogFromMtl, readGlbJsonFromUrl, tagFileMaterials } from './materials/nativeCatalog.js';
-import { ModelManager } from './models/ModelManager.js';
+import { MaterialManager } from './domain/materials/MaterialManager.js';
+import { MaterialLibrary, FALLBACK_ID, DEFAULT_STANDARD_ID, CHANNELS, textureToDataURL } from './domain/materials/MaterialLibrary.js';
+import { catalogFromGltf, catalogFromMtl, readGlbJsonFromUrl, tagFileMaterials } from './domain/materials/nativeCatalog.js';
+import { ModelManager } from './domain/models/ModelManager.js';
 
-import { UVEditor } from './ui/UVEditor.js';
+import { UVEditor } from './ui/designEditor/UVEditor.js';
 import { ControlsManager, CompactColorPicker, initDebugPanelWidth, initObjectPropsTabs } from './ui/Controls.js';
-import { NodeEditorManager } from './ui/NodeEditorManager.js';
-import { SceneStateManager }    from './stateEditor/SceneState.js';
-import { DesignStateManager }   from './stateEditor/DesignState.js';
-import { MaterialStateManager } from './stateEditor/MaterialState.js';
+import { NodeEditorManager } from './ui/nodeEditor/NodeEditorManager.js';
+import { SceneStateManager }    from './domain/history/SceneState.js';
+import { DesignStateManager }   from './domain/history/DesignState.js';
+import { MaterialStateManager } from './domain/history/MaterialState.js';
 import * as IDBStorage from './storage/indexedDBStorage.js';
 IDBStorage.startPersistentStorageRequests();
 import {
@@ -45,26 +45,26 @@ import { log, logError, logSuccess, logWarn } from './utils/logger.js';
 import { cleanupObject, downloadBlob, safeFileName } from './utils/helpers.js';
 
 // Sketchfab integration
-import { SketchfabAPI }    from './sketchfab/SketchfabAPI.js';
-import { SketchfabModal }  from './sketchfab/SketchfabModal.js';
-import { extractModelFromZip } from './sketchfab/SketchfabLoader.js';
+import { SketchfabAPI }    from './io/sketchfab/SketchfabAPI.js';
+import { SketchfabModal }  from './ui/panels/SketchfabModal.js';
+import { extractModelFromZip } from './io/sketchfab/SketchfabLoader.js';
 
 // Config
 import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './config.js';
 
 // Props
-import { PropManager } from './props/PropManager.js';
-import { CustomSceneStorage } from './scenes/CustomSceneStorage.js';
-import { buildSceneFile, importSceneFile } from './scenes/sceneFile.js';
+import { PropManager } from './domain/props/PropManager.js';
+import { CustomSceneStorage } from './storage/CustomSceneStorage.js';
+import { buildSceneFile, importSceneFile } from './io/files/sceneFile.js';
 import { ensureActiveProject, getActiveProject, getActiveProjectIdSync, updateProject } from './storage/ProjectStorage.js';
 
 // Export
-import { renderImage, renderExr } from './export/imageExport.js';
-import { buildModelPackage } from './export/modelExport.js';
-import { buildProjectFile, importProjectFile } from './storage/projectFile.js';
+import { renderImage, renderExr } from './io/files/imageExport.js';
+import { buildModelPackage } from './io/files/modelExport.js';
+import { buildProjectFile, importProjectFile } from './io/files/projectFile.js';
 
 // Scenes
-import { initScenes, loadScene, getSceneNames } from './core/SceneLoader.js';
+import { initScenes, loadScene, getSceneNames } from './domain/scenes/SceneLoader.js';
 
 //═══════════════════════════════════════════════════════════════
 // INITIALIZATION

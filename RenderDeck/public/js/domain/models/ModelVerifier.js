@@ -1,7 +1,7 @@
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { fileDataURL, loadDesignImage } from '../utils/imageAssets.js';
+import { fileDataURL, loadDesignImage } from '../../utils/imageAssets.js';
 import { fileName, mapLine, parseMap } from './MTLUtils.js';
-import { assertSelfContainedGLTF } from '../utils/modelAssets.js';
+import { assertSelfContainedGLTF } from '../../utils/modelAssets.js';
 
 // VERIFIER.JS - Universal File Validation System
 // Standalone module for validating 3D model files (OBJ/MTL/textures)
@@ -541,7 +541,7 @@ export class ModelVerifier {
 }
 
 // Example:
-// import { ModelVerifier } from './verifier.js';
+// import { ModelVerifier } from './ModelVerifier.js';
 //
 // // Use with default settings
 // const verifier = new ModelVerifier();

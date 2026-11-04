@@ -1,7 +1,7 @@
-import * as IDBStorage from '../storage/indexedDBStorage.js';
-import { getActiveProjectId } from '../storage/ProjectStorage.js';
-import { uploadedPropKey, uploadedPropBlobKey } from '../storage/storageKeys.js';
-import { assertSelfContainedGLTF } from '../utils/modelAssets.js';
+import * as IDBStorage from '../../storage/indexedDBStorage.js';
+import { getActiveProjectId } from '../../storage/ProjectStorage.js';
+import { uploadedPropKey, uploadedPropBlobKey } from '../../storage/storageKeys.js';
+import { assertSelfContainedGLTF } from '../../utils/modelAssets.js';
 // PROPMANAGER.JS - Manages scene props (GLB models)
 
 import * as THREE from 'three';
@@ -11,7 +11,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
-import { PROP_PATHS } from '../config.js';
+import { PROP_PATHS } from '../../config.js';
 
 export class PropManager {
   constructor(scene, camera, renderer, orbitControls, log) {

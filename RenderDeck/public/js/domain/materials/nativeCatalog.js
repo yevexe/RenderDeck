@@ -6,7 +6,7 @@
 // params are simple values for a thumbnail; the real ones are read when the file loads.
 
 import * as THREE from 'three';
-import { nativeMaterialId } from '../storage/storageKeys.js';
+import { nativeMaterialId } from '../../storage/storageKeys.js';
 
 const GLB_MAGIC = 0x46546C67; // 'glTF'
 const GLB_JSON_CHUNK = 0x4E4F534A; // 'JSON'

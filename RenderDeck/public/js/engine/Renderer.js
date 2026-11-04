@@ -11,10 +11,10 @@ import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { TAARenderPass } from 'three/addons/postprocessing/TAARenderPass.js';
 import { SSAARenderPass } from 'three/addons/postprocessing/SSAARenderPass.js';
-import { CustomVignetteShader } from '../shaders/CustomVignetteShader.js';
+import { CustomVignetteShader } from './shaders/CustomVignetteShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
-import { HQBokehFragmentShader } from '../shaders/DepthOfFieldShader.js';
+import { HQBokehFragmentShader } from './shaders/DepthOfFieldShader.js';
 
 export class RendererManager {
   constructor(container) {

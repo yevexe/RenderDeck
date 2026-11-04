@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { zipSync, strToU8 } from 'fflate';
-import { CHANNELS } from '../materials/MaterialLibrary.js';
+import { CHANNELS } from '../../domain/materials/MaterialLibrary.js';
 
 const uniqueName = (name, used) => {
   const base = name.replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'part';

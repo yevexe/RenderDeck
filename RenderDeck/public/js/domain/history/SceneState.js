@@ -1,6 +1,6 @@
 // SceneState.js — undo/redo for scene: environment, background, props, main model, object selection
 
-import { HistoryManager } from '../ui/HistoryManager.js';
+import { HistoryManager } from './HistoryManager.js';
 import { renderHistoryList } from './historyUtils.js';
 
 export class SceneStateManager {
