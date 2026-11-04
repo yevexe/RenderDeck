@@ -18,7 +18,7 @@ import { generateId, getProject, listProjects } from './ProjectStorage.js';
 
 const FORMAT = 'renderdeck-project';
 const VERSION = 1;
-const PID_PLACEHOLDER = '{pid}';
+export const PID_PLACEHOLDER = '{pid}';
 const LONG_TEXT = 256 * 1024; // keeps project.json far below the browser's string limit
 
 // Left out by "Include Uploaded Images in Project File" unchecked. The app already skips a
@@ -34,7 +34,8 @@ const BINARY_KINDS = {
   Int32Array, Uint32Array, Float32Array, Float64Array, DataView,
 };
 
-const swap = (text, from, to) => (text.includes(from) ? text.split(from).join(to) : text);
+export const swapProjectId = (text, from, to) => (text.includes(from) ? text.split(from).join(to) : text);
+const swap = swapProjectId;
 
 function extensionOf(blob) {
   const fromName = /\.([a-z0-9]{1,8})$/i.exec(blob.name || '')?.[1];
@@ -92,6 +93,19 @@ class ValueEncoder {
   }
 }
 
+// Encode already-read records for a manifest. encoder.attachments holds their files.
+export function encodeRecords(pid, records) {
+  const encoder = new ValueEncoder(pid, true);
+  return {
+    encoder,
+    records: records.map(({ store, key, value }) => ({
+      store,
+      key: swap(key, pid, PID_PLACEHOLDER),
+      value: encoder.encode(value),
+    })),
+  };
+}
+
 // Blob keys holding the rendered picture of a text layer. Design layers: design-blob:… next
 // to their design-meta:… record. Custom models: overlayKeys matched with overlayMetadata.
 async function textLayerBlobKeys(pid) {
@@ -115,7 +129,7 @@ async function textLayerBlobKeys(pid) {
   return keys;
 }
 
-async function zipFiles(manifestText, attachments) {
+export async function zipProjectFile(manifestText, attachments) {
   const chunks = [];
   let failure = null;
   const zip = new Zip((err, chunk) => {
@@ -169,14 +183,14 @@ export async function buildProjectFile(pid, { includeImages = true } = {}) {
     project: encoder.encode(project),
     records,
   };
-  return zipFiles(JSON.stringify(manifest), encoder.attachments);
+  return zipProjectFile(JSON.stringify(manifest), encoder.attachments);
 }
 
 // ─────────────────────────────────────────────
 // Reading
 // ─────────────────────────────────────────────
 
-function decodeValue(value, pid, entries) {
+export function decodeValue(value, pid, entries) {
   if (typeof value === 'string') return value.startsWith('data:') ? value : swap(value, PID_PLACEHOLDER, pid);
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(item => decodeValue(item, pid, entries));

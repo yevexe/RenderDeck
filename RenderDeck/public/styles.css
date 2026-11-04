@@ -4486,3 +4486,8 @@ a.app-header-logo { text-decoration: none; cursor: pointer; }
   font-family: 'Inter', monospace, sans-serif;
   user-select: none;
 }
+
+#save-project-btn.save-failed {
+  color: #ff8a80;
+  border-color: #ff8a80;
+}

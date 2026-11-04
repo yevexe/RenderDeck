@@ -781,7 +781,9 @@ export class PropManager {
       let name = options.name || file.name.replace(/\.(glb|gltf|obj)$/i, '');
       const existing = this.customProps.get(name);
       if (existing && !options.name && existing.fileName !== file.name) name = `${name} (${ext.toUpperCase()})`;
-      if (this.customProps.has(name)) throw new Error(`A prop named "${name}" already exists.`);
+      const replaced = this.customProps.get(name);
+      if (replaced && options.name) throw new Error(`A prop named "${name}" already exists.`);
+      if (replaced && !confirm(`A prop named "${name}" already exists. Replace it?`)) return null;
       if (ext === 'glb' || ext === 'gltf') await assertSelfContainedGLTF(file);
       if (ext === 'obj' && /^\s*mtllib\s+/mi.test(await file.text())) throw new Error('A standalone OBJ prop cannot reference an external MTL file.');
       url = URL.createObjectURL(file);
@@ -805,6 +807,7 @@ export class PropManager {
         { type: 'put', store: 'blobs', key: uploadedPropBlobKey(pid, name), value: file },
         { type: 'put', store: 'uploaded-props', key: uploadedPropKey(pid, name), value: meta },
       ]);
+      if (replaced) URL.revokeObjectURL(replaced.url);
       this.registerBlobProp(name, url, format, meta.sketchfabUid, meta.displayName);
       this.customProps.get(name).fileName = file.name;
       this.log(`Custom prop saved: ${meta.displayName}`);
@@ -900,6 +903,11 @@ export class PropManager {
     );
     this.mainModel.scale.set(data.scale.x, data.scale.y, data.scale.z);
     this.mainModel.updateMatrixWorld(true);
+  }
+
+  /** Scene props whose files this project doesn't have */
+  getUnresolvedProps() {
+    return this._unresolvedProps;
   }
 
   async loadSceneData(propsData) {

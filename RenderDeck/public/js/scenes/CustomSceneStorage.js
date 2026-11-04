@@ -19,6 +19,18 @@ function isLegacyKey(key) {
   return !UUID_PREFIX_RE.test(key);
 }
 
+// A string name, plus at least one scene section, each of the type it should be
+export function isSceneData(data) {
+  const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!isObject(data) || typeof data.name !== 'string' || !data.name.trim()) return false;
+  const { environment, props, camera, model } = data;
+  if (environment !== undefined && environment !== null && !isObject(environment)) return false;
+  if (props !== undefined && props !== null && !Array.isArray(props)) return false;
+  if (camera !== undefined && camera !== null && !(isObject(camera) && isObject(camera.position) && isObject(camera.target))) return false;
+  if (model !== undefined && model !== null && !(isObject(model) && typeof model.name === 'string')) return false;
+  return !!(environment || props || camera || model);
+}
+
 export class CustomSceneStorage {
   constructor() {
     this._migrationDone = false;
@@ -85,28 +97,7 @@ return allKeys
   }
 
   // ─────────────────────────────────────────────
-  // Export a scene as JSON
-  // ─────────────────────────────────────────────
-  async exportScene(name) {
-    const scene = await this.getScene(name);
-    if (!scene) throw new Error(`Scene not found: ${name}`);
-    const blob = new Blob(
-      [JSON.stringify({ ...scene, exportedAt: Date.now(), exportVersion: 1 }, null, 2)],
-      { type: 'application/json' }
-    );
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${name}.renderdeck-scene.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    return true;
-  }
-
-  // ─────────────────────────────────────────────
-  // Import a scene from JSON
+  // Import a scene from JSON (.rdscene files go through sceneFile.js)
   // ─────────────────────────────────────────────
   async importScene(file) {
     return new Promise((resolve, reject) => {
@@ -114,7 +105,7 @@ return allKeys
       reader.onload = async (e) => {
         try {
           const data = JSON.parse(e.target.result);
-          if (!data.name) throw new Error('Invalid scene file: missing name');
+          if (!isSceneData(data)) throw new Error(`"${file.name}" isn't a RenderDeck scene file`);
           const existing = await this.getScene(data.name);
           if (existing) {
             if (!confirm(`Scene "${data.name}" already exists. Overwrite?`)) {
@@ -127,6 +118,8 @@ return allKeys
             props:       data.props,
             camera:      data.camera,
             model:       data.model || null,
+            ...(data.cameraSettings ? { cameraSettings: data.cameraSettings } : {}),
+            ...(data.renderer ? { renderer: data.renderer } : {}),
           });
           resolve({ success: true, name: data.name });
         } catch (err) {

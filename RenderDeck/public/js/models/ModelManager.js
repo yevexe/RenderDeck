@@ -108,6 +108,58 @@ export class ModelManager {
       : `Could not save "${name}": ${err.message}`;
   }
 
+  // Make a stored upload available as a model
+  async restoreUploadedModel(name) {
+    await this._restoreUploadedModel(await getActiveProjectId(), name);
+  }
+
+  async _restoreUploadedModel(projectId, name) {
+    const meta = await IDBStorage.get('uploaded-models', `${projectId}:${name}`);
+    if (!meta) return;
+    const blobPrefix = `uploaded:${projectId}:${name}`;
+    try {
+      if (meta.type === 'uploaded-glb') {
+        const glbBlob = await IDBStorage.get('blobs', `${blobPrefix}:glb`);
+        if (!glbBlob) return;
+        this.models.set(name, {
+          type: 'uploaded-glb',
+          name,
+          objectURLs: { glb: URL.createObjectURL(glbBlob) },
+          source: 'user-uploaded',
+          uploadDate: meta.uploadDate,
+        });
+      } else {
+        const objBlob = await IDBStorage.get('blobs', `${blobPrefix}:obj`);
+        if (!objBlob) return;
+        const textureURLs = {};
+        for (const texName of (meta.textureNames || [])) {
+          const texBlob = await IDBStorage.get('blobs', `${blobPrefix}:tex:${texName}`);
+          if (texBlob) textureURLs[texName] = URL.createObjectURL(texBlob);
+        }
+        let mtlURL = null;
+        if (meta.hasMtl) {
+          const mtlBlob = await IDBStorage.get('blobs', `${blobPrefix}:mtl`);
+          if (mtlBlob) {
+      const selected = await Promise.all((meta.selectedMtlNames || []).map(file => IDBStorage.get('blobs', uploadedModelMtlKey(projectId, name, file))));
+      const text = selected.length ? (await Promise.all(selected.filter(Boolean).map(file => file.text()))).join('\n') : await mtlBlob.text();
+      mtlURL = await this.createMTLWithBlobURLs(new Blob([text]), textureURLs);
+    }
+        }
+        this.models.set(name, {
+          type: 'uploaded',
+          name,
+          objectURLs: { obj: URL.createObjectURL(objBlob), mtl: mtlURL, textures: textureURLs },
+          source: 'user-uploaded',
+          uploadDate: meta.uploadDate,
+          metadata: meta.metadata || {},
+        });
+      }
+    } catch (err) {
+      console.error(`[ModelManager] Failed to restore uploaded model "${name}":`, err);
+      if (typeof this.log === 'function') this.log(`Failed to restore model "${name}": ${err.message}`, true);
+    }
+  }
+
   async _loadPersistedUploadedModels() {
     if (!IDBStorage.isIndexedDBAvailable()) return;
     try {
@@ -116,51 +168,7 @@ export class ModelManager {
       const prefix = `${projectId}:`;
       for (const key of allKeys) {
         if (!key.startsWith(prefix)) continue;
-        const name = key.slice(prefix.length);
-        const meta = await IDBStorage.get('uploaded-models', key);
-        if (!meta) continue;
-        const blobPrefix = `uploaded:${projectId}:${name}`;
-        try {
-          if (meta.type === 'uploaded-glb') {
-            const glbBlob = await IDBStorage.get('blobs', `${blobPrefix}:glb`);
-            if (!glbBlob) continue;
-            this.models.set(name, {
-              type: 'uploaded-glb',
-              name,
-              objectURLs: { glb: URL.createObjectURL(glbBlob) },
-              source: 'user-uploaded',
-              uploadDate: meta.uploadDate,
-            });
-          } else {
-            const objBlob = await IDBStorage.get('blobs', `${blobPrefix}:obj`);
-            if (!objBlob) continue;
-            const textureURLs = {};
-            for (const texName of (meta.textureNames || [])) {
-              const texBlob = await IDBStorage.get('blobs', `${blobPrefix}:tex:${texName}`);
-              if (texBlob) textureURLs[texName] = URL.createObjectURL(texBlob);
-            }
-            let mtlURL = null;
-            if (meta.hasMtl) {
-              const mtlBlob = await IDBStorage.get('blobs', `${blobPrefix}:mtl`);
-              if (mtlBlob) {
-          const selected = await Promise.all((meta.selectedMtlNames || []).map(file => IDBStorage.get('blobs', uploadedModelMtlKey(projectId, name, file))));
-          const text = selected.length ? (await Promise.all(selected.filter(Boolean).map(file => file.text()))).join('\n') : await mtlBlob.text();
-          mtlURL = await this.createMTLWithBlobURLs(new Blob([text]), textureURLs);
-        }
-            }
-            this.models.set(name, {
-              type: 'uploaded',
-              name,
-              objectURLs: { obj: URL.createObjectURL(objBlob), mtl: mtlURL, textures: textureURLs },
-              source: 'user-uploaded',
-              uploadDate: meta.uploadDate,
-              metadata: meta.metadata || {},
-            });
-          }
-        } catch (err) {
-          console.error(`[ModelManager] Failed to restore uploaded model "${name}":`, err);
-          if (typeof this.log === 'function') this.log(`Failed to restore model "${name}": ${err.message}`, true);
-        }
+        await this._restoreUploadedModel(projectId, key.slice(prefix.length));
       }
     } catch (err) {
       console.error('[ModelManager] Failed to load persisted uploaded models:', err);
@@ -394,9 +402,9 @@ export class ModelManager {
   // ─────────────────────────────────────────────
   // Save a custom textured model
   // ─────────────────────────────────────────────
-  async saveCustomModel(name, customData) {
+  async saveCustomModel(name, customData, options) {
     // Use storage module to persist to IndexedDB
-    return await this.storage.saveCustomModel(name, customData);
+    return await this.storage.saveCustomModel(name, customData, options);
   }
 
   // ─────────────────────────────────────────────
@@ -608,11 +616,20 @@ export class ModelManager {
     return success;
   }
 
+  // Download a model that isn't saved as a custom model in custom model form
+  async exportModelAsCustom(name, modelData) {
+    return this.storage.exportModelData(name, modelData);
+  }
+
   // ─────────────────────────────────────────────
   // Import custom model(s) from JSON file
   // ─────────────────────────────────────────────
   async importCustomModel(file) {
-    const result = await this.storage.importCustomModels(file);
+    const result = await this.storage.importCustomModels(file, { hasModel: name => this.models.has(name) });
+    if (result.success) {
+      const projectId = await getActiveProjectId();
+      for (const name of result.newBaseModels) await this._restoreUploadedModel(projectId, name);
+    }
     return result;
   }
 }

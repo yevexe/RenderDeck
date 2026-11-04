@@ -12,6 +12,9 @@ export async function assertSelfContainedGLTF(file) {
     manifest = JSON.parse(await file.text());
   }
   const external = [...(manifest.buffers || []), ...(manifest.images || [])]
-    .find(item => item.uri && !/^data:/i.test(item.uri));
-  if (external) throw new Error(`Single-file import references an external file: ${external.uri}. Embed it before uploading.`);
+    .filter(item => item.uri && !/^data:/i.test(item.uri))
+    .map(item => item.uri);
+  if (external.length) {
+    throw new Error(`"${file.name}" refers to separate files (${external.join(', ')}). Export it as .glb, or as .gltf with embedded data, and import that.`);
+  }
 }

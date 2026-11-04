@@ -35,7 +35,7 @@ import {
   sessionKey, materialThumbKey, materialThumbPrefix, partMaterialPrefix,
   APP_SETTINGS_KEY, projectSettingsKey, modelTransformKey,
 } from './storage/storageKeys.js';
-import { scheduleWrite, flushWrites, getFailedWrites, cancelWrite, cancelWritesWithPrefix, cancelAllWrites } from './storage/pendingWrites.js';
+import { scheduleWrite, flushWrites, getFailedWrites, retryFailedWrites, onWriteStateChange, getWriteState, cancelWrite, cancelWritesWithPrefix, cancelAllWrites } from './storage/pendingWrites.js';
 import { loadAppSettings, loadProjectSettings, scheduleProjectSettings, setAppSetting } from './storage/SettingsStorage.js';
 import { runMigrations, migrateMaterialLibrary, migrateLegacyPart } from './storage/migrations.js';
 
@@ -55,6 +55,7 @@ import { STANDARD_OBJECTS, STANDARD_MATERIALS, STANDARD_ENVIRONMENTS } from './c
 // Props
 import { PropManager } from './props/PropManager.js';
 import { CustomSceneStorage } from './scenes/CustomSceneStorage.js';
+import { buildSceneFile, importSceneFile } from './scenes/sceneFile.js';
 import { ensureActiveProject, getActiveProject, getActiveProjectIdSync, updateProject } from './storage/ProjectStorage.js';
 
 // Export
@@ -983,6 +984,21 @@ async function loadCustomModel(name, modelData, onLoaded = null, request) {
     meshMap[child.name] = child;
     if (!activeMesh) activeMesh = child;
   });
+
+  // A v2 export has one '__default__' part: its material goes on every mesh, its designs on the first
+  const legacyPart = isV3 ? modelData.parts.__default__ : null;
+  if (legacyPart) {
+    const { decals: _unused, ...material } = legacyPart;
+    const parts = {};
+    for (const [index, mesh] of meshList.entries()) {
+      parts[mesh.name] = index === 0 ? legacyPart : { ...material, decals: [] };
+      const working = pid ? await loadDesignLayersFromCache(pid, name, mesh.name) : null;
+      checkModelRequest(request);
+      v3DecalPreload[mesh.name] = working ? await _decodeDecals(working) : (index === 0 ? v3DecalPreload.__default__ : []);
+      checkModelRequest(request);
+    }
+    modelData = { ...modelData, parts };
+  }
 
   sceneManager.add(object);
   activeModel = object;
@@ -2282,10 +2298,18 @@ const controls = new ControlsManager({
     if (!name) { logError('No model selected'); return; }
     const data = await modelManager.getModel(name);
     if (data?.type === 'custom') {
-      await modelManager.exportCustomModel(name);
-      logSuccess(`Exported: ${name}`);
-    } else {
-      logError('Only custom models can be exported');
+      if (await modelManager.exportCustomModel(name)) logSuccess(`Exported: ${name}`);
+    } else if (activeModel) {
+      // Any other model downloads as it looks now; nothing is saved in this project
+      const exportName = `${name} (Custom)`;
+      const exported = await modelManager.exportModelAsCustom(exportName, {
+        basedOn:    name,
+        customName: exportName,
+        sourceType: 'standard',
+        sceneState: uvEditor.sceneState || null,
+        parts:      await _collectModelParts(),
+      });
+      if (exported) logSuccess(`Exported: ${exportName}`);
     }
   },
 
@@ -2300,12 +2324,26 @@ const controls = new ControlsManager({
     await flushWrites();
     const result = await modelManager.importCustomModel(file);
     if (result.success) {
-      logSuccess(`Imported: ${result.name}`);
+      result.imported.forEach(({ name, originalName }) => logSuccess(name === originalName
+        ? `Imported: ${name}`
+        : `Imported "${originalName}" as "${name}": a standard or uploaded model already has that name`));
+      for (const baseName of result.newBaseModels) {
+        const catalog = await modelManager.readUploadedCatalog(baseName).catch(() => null);
+        if (catalog) await materialLibrary.addCatalog(catalog);
+      }
       updateMaterialPresetList();
       scheduleAllMissingThumbnails();
       await updateModelList();
-      loadModel(result.name);
-      window.selectModelInDropdown(result.name);
+      // A file holds only the name of its base model, which this project may not have
+      let loadable = null;
+      for (const { name, basedOn } of result.imported) {
+        if (await modelManager.getLoadingPaths(basedOn)) loadable ??= name;
+        else logWarn(`Imported "${name}", but its base model "${basedOn}" isn't in this project. Upload ${basedOn} to use it.`);
+      }
+      if (loadable) {
+        loadModel(loadable);
+        window.selectModelInDropdown(loadable);
+      }
     } else {
       logError(`Import failed: ${result.error}`);
     }
@@ -3035,19 +3073,10 @@ window.updateModelSelect = updateModelList;
 // ── Multi-part custom model save ──────────────────────────────────────────────
 // Collects all parts' state (channel maps + decals + material) into the v3 parts
 // schema and delegates to CustomModelStorage.saveCustomModel.
-window.saveCustomModelHandler = async function() {
-  if (!activeModel) return;
-
+// Every part's material link and designs, in the form custom models are saved and exported in.
+async function _collectModelParts() {
   // Snapshot the currently active part before collecting all parts
   _snapshotCurrentPart();
-
-  // Prompt for name if not yet saved as a custom model
-  let customName = uvEditor.customModelName;
-  if (!customName) {
-    const baseName = uvEditor.activeModelName || getCurrentModelName();
-    customName = prompt('Enter a name for your custom model:', `${baseName} (Custom)`);
-    if (!customName) { log('Save cancelled'); return; }
-  }
 
   // Build parts map from _partCache (all visited parts) + any unvisited meshes
   const parts = {};
@@ -3079,6 +3108,29 @@ window.saveCustomModelHandler = async function() {
       decals,
     };
   }
+  return parts;
+}
+
+window.saveCustomModelHandler = async function() {
+  if (!activeModel) return;
+
+  const openCustomName = uvEditor.customModelName;
+  const baseName = uvEditor.activeModelName || getCurrentModelName();
+  const customName = prompt('Enter a name for your custom model:', openCustomName || `${baseName} (Custom)`)?.trim();
+  if (!customName) { log('Save cancelled'); return; }
+
+  const existing = await modelManager.getModelNamesByCategory();
+  if (existing.builtin.includes(customName) || existing.uploaded.includes(customName)) {
+    logError(`"${customName}" is the name of a standard or uploaded model. Choose another name.`);
+    return;
+  }
+  const replacesOther = customName !== openCustomName && existing.custom.includes(customName);
+  if (replacesOther && !confirm(`A custom model named "${customName}" already exists. Replace it?`)) {
+    log('Save cancelled');
+    return;
+  }
+
+  const parts = await _collectModelParts();
 
   const saved = await modelManager.saveCustomModel(customName, {
     basedOn:    uvEditor.activeModelName,
@@ -3086,7 +3138,7 @@ window.saveCustomModelHandler = async function() {
     sourceType: 'standard',
     sceneState: uvEditor.sceneState || null,
     parts,
-  });
+  }, { replaceWorkingState: replacesOther });
   if (!saved) return; // CustomModelStorage already logged the error
 
   uvEditor.customModelName = customName;
@@ -3128,7 +3180,9 @@ window.addEventListener('drop', async event => {
   if (isModel || !imagesOnly) {
     event.stopImmediatePropagation();
     if (!isModel) { logError(`Unsupported dropped files: ${files.map(file => file.name).join(', ')}`); return; }
-    const result = await modelManager.addModelFromFiles(files);
+    const isModelFile = file => /\.(obj|mtl|glb|png|jpe?g|svg|webp|gif|bmp)$/i.test(file.name);
+    files.filter(file => !isModelFile(file)).forEach(file => logWarn(`Skipped ${file.name}: not a model or texture file`));
+    const result = await modelManager.addModelFromFiles(files.filter(isModelFile));
     if (!result.success) { result.errors.forEach(logError); return; }
     result.warnings.forEach(logWarn);
     await updateModelList();
@@ -3864,6 +3918,7 @@ async function _flushProjectWrites() {
 }
 
 async function saveProject() {
+  retryFailedWrites();
   const failed = await _flushProjectWrites();
   if (failed.length) logError(`Could not save: ${failed.join(', ')}`);
   else logSuccess('Project saved');
@@ -3904,7 +3959,22 @@ function _setupProjectButtons() {
       buttons.forEach(b => { if (b) b.disabled = false; });
     }
   };
+  const SAVE_LABELS = { saved: 'All changes saved', saving: 'Saving…', failed: 'Save failed — Retry' };
+  const showWriteState = (state) => {
+    if (!saveBtn) return;
+    saveBtn.textContent = SAVE_LABELS[state];
+    saveBtn.classList.toggle('save-failed', state === 'failed');
+  };
+  onWriteStateChange(showWriteState);
+  showWriteState(getWriteState());
+
   saveBtn?.addEventListener('click', () => run(saveProject, 'Could not save the project'));
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      run(saveProject, 'Could not save the project');
+    }
+  });
   downloadBtn?.addEventListener('click', () => run(downloadProject, 'Could not download the project'));
   loadBtn?.addEventListener('click', () => fileInput?.click());
   fileInput?.addEventListener('change', () => {
@@ -3946,6 +4016,8 @@ function setupExportUI() {
   });
 }
 
+let _refreshPropsSelect = null;
+
 function setupPropsUI() {
   const propsSelect   = document.getElementById('props-select');
   const addPropBtn      = document.getElementById('add-prop-btn');
@@ -3957,23 +4029,26 @@ function setupPropsUI() {
   if (!propsSelect) return;
 
   // Populate dropdown grouped by category
-  propsSelect.innerHTML = '<option value="" disabled selected>--- Select a Prop ---</option>';
-  const categories = {};
-  propManager.getAvailableProps().forEach(prop => {
-    if (!categories[prop.category]) categories[prop.category] = [];
-    categories[prop.category].push(prop);
-  });
-  Object.entries(categories).forEach(([cat, items]) => {
-    const grp = document.createElement('optgroup');
-    grp.label = cat;
-    items.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.id;
-      opt.textContent = p.name;
-      grp.appendChild(opt);
+  _refreshPropsSelect = () => {
+    propsSelect.innerHTML = '<option value="" disabled selected>--- Select a Prop ---</option>';
+    const categories = {};
+    propManager.getAvailableProps().forEach(prop => {
+      if (!categories[prop.category]) categories[prop.category] = [];
+      categories[prop.category].push(prop);
     });
-    propsSelect.appendChild(grp);
-  });
+    Object.entries(categories).forEach(([cat, items]) => {
+      const grp = document.createElement('optgroup');
+      grp.label = cat;
+      items.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        grp.appendChild(opt);
+      });
+      propsSelect.appendChild(grp);
+    });
+  };
+  _refreshPropsSelect();
 
   addPropBtn?.addEventListener('click', async () => {
     const propId = propsSelect.value;
@@ -3989,28 +4064,35 @@ function setupPropsUI() {
   propFileInput?.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const customId = await propManager.uploadCustomProp(file);
-    if (!customId) { propFileInput.value = ''; return; }
+    try {
+      const customId = await propManager.uploadCustomProp(file);
+      if (!customId) return;
 
-    // Re-populate dropdown so the new prop appears
-    const name = customId.replace('custom_', '');
-    let customGroup = propsSelect.querySelector('optgroup[label="Custom"]');
-    if (!customGroup) {
-      customGroup = document.createElement('optgroup');
-      customGroup.label = 'Custom';
-      propsSelect.appendChild(customGroup);
+      // Re-populate dropdown so the new prop appears
+      const name = customId.replace('custom_', '');
+      let customGroup = propsSelect.querySelector('optgroup[label="Custom"]');
+      if (!customGroup) {
+        customGroup = document.createElement('optgroup');
+        customGroup.label = 'Custom';
+        propsSelect.appendChild(customGroup);
+      }
+      if (![...customGroup.children].some(option => option.value === customId)) {
+        const opt = document.createElement('option');
+        opt.value = customId;
+        opt.textContent = name;
+        customGroup.appendChild(opt);
+      }
+
+      // Select it in dropdown and add to scene
+      propsSelect.value = customId;
+      const target = cameraManager.getControls().target;
+      await propManager.addProp(customId, { x: target.x, y: target.y, z: target.z });
+      pushSceneHistory(`Imported prop: ${name}`);
+    } catch (err) {
+      logError(`Could not import "${file.name}": ${err.message}`);
+    } finally {
+      propFileInput.value = '';
     }
-    const opt = document.createElement('option');
-    opt.value = customId;
-    opt.textContent = name;
-    customGroup.appendChild(opt);
-
-    // Select it in dropdown and add to scene
-    propsSelect.value = customId;
-    const target = cameraManager.getControls().target;
-    await propManager.addProp(customId, { x: target.x, y: target.y, z: target.z });
-    pushSceneHistory(`Imported prop: ${name}`);
-    propFileInput.value = '';
   });
 
   deletePropBtn?.addEventListener('click', () => {
@@ -4339,9 +4421,17 @@ async function loadSceneSetup(sceneData) {
     gradientBgEnabled = !!background.gradientBgEnabled;
     currentGradientBg = background.currentGradientBg || '';
   }
-  restoreProjectSettings({ background: { showEnvBackground, gradientBgEnabled, currentGradientBg } });
+  // Scenes saved before these fields existed leave the current settings alone
+  restoreProjectSettings({
+    background: { showEnvBackground, gradientBgEnabled, currentGradientBg },
+    camera: sceneData.cameraSettings,
+    renderer: sceneData.renderer,
+  });
+  const skipped = [];
   // 1. Restore environment
-  if (sceneData.environment?.hdr) {
+  if (sceneData.environment?.hdr && !STANDARD_ENVIRONMENTS.some(env => env.label === sceneData.environment.hdr)) {
+    skipped.push(`environment "${sceneData.environment.hdr}"`);
+  } else if (sceneData.environment?.hdr) {
     currentEnvironment = sceneData.environment.hdr;
     scheduleProjectSettingsSave();
     const sel = document.getElementById('environment-select');
@@ -4359,6 +4449,7 @@ async function loadSceneSetup(sceneData) {
   if (sceneData.props) {
     await ensureSketchfabPropsRegistered(sceneData.props);
     await propManager.loadSceneData(sceneData.props);
+    propManager.getUnresolvedProps().forEach(prop => skipped.push(`prop "${prop.displayName || prop.type}"`));
   }
 
   // 3. Camera restore — must run AFTER centerAndFrameModel inside onLoaded
@@ -4372,7 +4463,10 @@ async function loadSceneSetup(sceneData) {
   }
 
   // 4. Restore model + transform + camera
-  if (sceneData.model?.name) {
+  if (sceneData.model?.name && !await modelManager.getModel(sceneData.model.name)) {
+    skipped.push(`model "${sceneData.model.name}"`);
+    restoreCameraFromScene();
+  } else if (sceneData.model?.name) {
     const sel = document.getElementById('object-select') || document.getElementById('model-select');
     if (sel) sel.value = sceneData.model.name;
     await loadModel(sceneData.model.name, () => {
@@ -4388,6 +4482,7 @@ async function loadSceneSetup(sceneData) {
   } else {
     restoreCameraFromScene();
   }
+  if (skipped.length) logWarn(`This scene uses things this project doesn't have, so they were skipped: ${skipped.join(', ')}`);
 }
 
 async function resetScene() {
@@ -4426,6 +4521,18 @@ async function resetScene() {
 
   cameraManager.reset();
   log('Scene reset to defaults.');
+}
+
+// Everything a .rdscene import may have added: bring the running app in line with the database.
+async function _refreshAfterSceneImport(uploadedModels) {
+  const pid = getActiveProjectIdSync();
+  for (const name of uploadedModels) await modelManager.restoreUploadedModel(name);
+  await propManager.loadStoredProps();
+  _refreshPropsSelect?.();
+  await materialLibrary.loadProject(pid);
+  updateMaterialPresetList();
+  scheduleAllMissingThumbnails();
+  await updateModelList();
 }
 
 async function setupSceneSetupUI() {
@@ -4475,6 +4582,8 @@ async function setupSceneSetupUI() {
     try {
       await sceneStorage.saveScene(name.trim(), {
         environment: { hdr: currentEnvironment, background: { showEnvBackground, gradientBgEnabled, currentGradientBg } },
+        cameraSettings: { ...camState },
+        renderer: rendererManager.getState(),
         props:  propManager.getSceneData(),
         camera: {
           position: { x: cam.position.x,  y: cam.position.y,  z: cam.position.z },
@@ -4492,13 +4601,23 @@ async function setupSceneSetupUI() {
       return;
     }
     await populateScenesDropdown();
+    sceneSelect.value = `custom:${name.trim()}`;
+    scheduleSessionSave();
     log(`Scene saved: ${name.trim()}`);
   });
 
   exportSceneBtn?.addEventListener('click', async () => {
     const value = sceneSelect?.value;
     if (!value?.startsWith('custom:')) { log('Select a scene to export'); return; }
-    await sceneStorage.exportScene(value.replace('custom:', ''));
+    const name = value.replace('custom:', '');
+    try {
+      await flushWrites();
+      downloadBlob(`${safeFileName(name) || 'scene'}.rdscene`, await buildSceneFile(name));
+      logSuccess(`Exported: ${name}`);
+    } catch (err) {
+      logError(`Could not export the scene: ${err.message}`);
+      await populateScenesDropdown();
+    }
   });
 
   importSceneBtn?.addEventListener('click', () => sceneFileInput?.click());
@@ -4506,13 +4625,30 @@ async function setupSceneSetupUI() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
+      if (/\.rdscene$/i.test(file.name)) {
+        await flushWrites();
+        const imported = await importSceneFile(file);
+        if (!imported) return;
+        await _refreshAfterSceneImport(imported.uploadedModels);
+        await populateScenesDropdown();
+        sceneSelect.value = `custom:${imported.name}`;
+        scheduleSessionSave();
+        await loadSceneSetup(await sceneStorage.getScene(imported.name));
+        log(`Scene imported: ${imported.name}`);
+        return;
+      }
       const result = await sceneStorage.importScene(file);
       if (result.success) {
         await populateScenesDropdown();
+        sceneSelect.value = `custom:${result.name}`;
+        scheduleSessionSave();
         log(`Scene imported: ${result.name}`);
       }
-    } catch (err) { logError(`Scene import failed: ${err.message}`); }
-    sceneFileInput.value = '';
+    } catch (err) {
+      logError(`Scene import failed: ${err.message}`);
+    } finally {
+      sceneFileInput.value = '';
+    }
   });
 
   clearScenesBtn?.addEventListener('click', async () => {

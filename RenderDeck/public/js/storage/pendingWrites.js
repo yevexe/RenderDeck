@@ -14,7 +14,23 @@ import { log } from '../utils/logger.js';
 const DEFAULT_DELAY = 300;
 const _pending = new Map(); // id → { timer, run, label }  (scheduled, not started)
 const _running = new Map(); // id → Promise of the run in progress
-const _failed = new Map();  // id → label of a write whose latest run failed
+const _failed = new Map();  // id → entry of a write whose latest run failed
+const _stateListeners = new Set();
+
+// cb('saving' | 'failed' | 'saved') runs whenever the overall state may have changed.
+export function onWriteStateChange(cb) {
+  _stateListeners.add(cb);
+}
+
+export function getWriteState() {
+  if (hasPendingWrites()) return 'saving';
+  return _failed.size ? 'failed' : 'saved';
+}
+
+function _notifyState() {
+  const state = getWriteState();
+  _stateListeners.forEach(cb => cb(state));
+}
 
 // ─────────────────────────────────────────────
 // Schedule a write. A newer call with the same id replaces the older one.
@@ -27,6 +43,7 @@ export function scheduleWrite(id, run, { delay = DEFAULT_DELAY, label = id } = {
   const entry = { timer: null, run, label };
   entry.timer = setTimeout(() => { entry.timer = null; _start(id); }, delay);
   _pending.set(id, entry);
+  _notifyState();
 }
 
 // ─────────────────────────────────────────────
@@ -39,6 +56,7 @@ export function cancelWrite(id) {
   if (existing.timer) clearTimeout(existing.timer);
   _pending.delete(id);
   _failed.delete(id);
+  _notifyState();
 }
 
 // Cancel every pending write (e.g. before the database is deleted)
@@ -64,7 +82,16 @@ export function flushWrites() {
 
 // Labels of the writes whose latest run failed (their changes aren't stored)
 export function getFailedWrites() {
-  return [..._failed.values()];
+  return [..._failed.values()].map(entry => entry.label);
+}
+
+// Queue every failed write again; a newer write for the same record replaces it.
+export function retryFailedWrites() {
+  for (const [id, entry] of _failed) {
+    if (!_pending.has(id)) _pending.set(id, { timer: null, run: entry.run, label: entry.label });
+  }
+  _failed.clear();
+  _notifyState();
 }
 
 export function hasPendingWrites() {
@@ -85,7 +112,7 @@ function _start(id) {
       await entry.run();
       _failed.delete(id);
     } catch (err) {
-      _failed.set(id, entry.label);
+      _failed.set(id, entry);
       console.error(`[pendingWrites] ${entry.label} failed:`, err);
       log(`Save failed (${entry.label}): ${err.message}`, true);
     }
@@ -93,6 +120,7 @@ function _start(id) {
     _running.delete(id);
     // A request that became due (timer fired or flush) while we ran goes next
     if (_pending.get(id)?.timer === null) _start(id);
+    _notifyState();
   });
   _running.set(id, run);
 }

@@ -316,7 +316,7 @@
             <button class="button-medium" id="clear-scenes-btn" title="Delete All Custom Scenes"><img class="btn-icon" src="icons/ui-icons/scene-delete.png" alt="Delete All Custom Scenes"></button>
             <button class="button-medium" id="reset-scene-btn" title="Reset Scene"><img class="btn-icon" src="icons/ui-icons/scene-reset.png" alt="Reset Scene"></button>
             <button class="button-medium" id="delete-scene-btn" title="Delete Selected Scene">Delete Scene</button>
-            <input type="file" id="scene-file-input" accept=".json" style="display:none;">
+            <input type="file" id="scene-file-input" accept=".rdscene,.json" style="display:none;">
 
             <hr>
 
@@ -1443,8 +1443,8 @@
 
             <h4>Project</h4>
             <div class="button-row">
-              <button class="button" id="save-project-btn" title="Your project saves automatically. This makes sure nothing is still waiting to be written.">Save Project</button>
-              <button class="button" id="download-project-btn" title="Downloads a .rdo backup file of this whole project.">Download Project</button>
+              <button class="button" id="save-project-btn" title="Your project saves automatically. Click (or press Ctrl+S / Cmd+S) to write anything still waiting, or to retry a failed save.">All changes saved</button>
+              <button class="button" id="download-project-btn" title="Makes a backup copy: a .rdo file of this whole project that you can keep anywhere.">Download Project</button>
               <button class="button" id="load-project-btn" title="Opens a .rdo file as a new project. Your current project isn't changed.">Load Project</button>
             </div>
             <input type="file" id="project-file-input" accept=".rdo,.renderdeck" style="display:none;">
