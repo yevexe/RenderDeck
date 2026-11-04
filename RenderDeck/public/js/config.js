@@ -2,6 +2,8 @@
 // CONFIG.JS - Centralized Configuration
 
 export const CONFIG = {
+  API_BASE_URL: window.RENDERDECK_API_BASE_URL || window.location.origin,
+
   // Texture Settings
   TEXTURE: {
     DEFAULT_SIZE: 2048,

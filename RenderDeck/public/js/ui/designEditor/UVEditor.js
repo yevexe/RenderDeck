@@ -564,6 +564,17 @@ export class UVEditor {
     for (const mesh of [...this._partStates.keys()]) this._withPartState(mesh, fn);
   }
 
+  // Show a saved design on a part that isn't active, without opening it.
+  restorePartDesign(mesh, layers) {
+    if (!layers.length || mesh === this.activeMesh || this._partStates.has(mesh)) return false;
+    this._partBaselines.set(mesh, this._copyLayers(layers));
+    this._withPartState(mesh, () => {
+      this.overlayImages = layers;
+      this.applyTextureToModel();
+    });
+    return true;
+  }
+
   // Bring the material in line with the current layer list.
   _syncDesignToLayers() {
     if (!this.overlayImages.length) { this._clearActiveDesign(); return; }

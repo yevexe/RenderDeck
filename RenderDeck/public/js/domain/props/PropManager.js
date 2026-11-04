@@ -5,7 +5,7 @@ import { assertSelfContainedGLTF } from '../../utils/modelAssets.js';
 // PROPMANAGER.JS - Manages scene props (GLB models)
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { createGLTFLoader } from '../../engine/gltfLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
@@ -22,7 +22,7 @@ export class PropManager {
     this.orbitControls = orbitControls;
     this.log = log || console.log;
 
-    this.gltfLoader = new GLTFLoader();
+    this.gltfLoader = createGLTFLoader();
     this.objLoader = new OBJLoader();
     this.props = [];
     this._unresolvedProps = [];

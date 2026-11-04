@@ -3,7 +3,26 @@
 
 <head>
   <meta charset="UTF-8" />
+  <script>
+    (() => {
+      const url = new URL(window.location.href);
+      const reset = url.searchParams.get('resetPasswordToken');
+      const verify = url.searchParams.get('verifyEmailToken');
+      if (!url.searchParams.has('resetPasswordToken') && !url.searchParams.has('verifyEmailToken')) return;
+      url.searchParams.delete('resetPasswordToken');
+      url.searchParams.delete('verifyEmailToken');
+      history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+      const link = reset
+        ? { type: 'reset', token: reset }
+        : verify ? { type: 'verify', token: verify } : null;
+      window.__consumeRenderDeckAccountLink = () => {
+        delete window.__consumeRenderDeckAccountLink;
+        return link;
+      };
+    })();
+  </script>
   <title>RenderDeck</title>
+  <link rel="stylesheet" href="css/account.css" />
   <link rel="stylesheet" href="css/01-reset.css" />
   <link rel="stylesheet" href="css/02-base.css" />
   <link rel="stylesheet" href="css/03-layout.css" />
@@ -33,12 +52,15 @@
   <main>
     <div class="app-header">
       <a href="landing.html" class="app-header-logo"><span class="app-header-logo-blend"><img src="icons/rd_logo.jpg" class="app-header-logo-img app-header-logo-base" alt="RenderDeck logo"><img src="icons/rd_logo_light.jpg" class="app-header-logo-img app-header-logo-light" alt=""></span>RenderDeck</a>
-      <button id="project-btn" class="project-btn">
-        <span id="project-name">Loading...</span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="6 9 12 15 18 9"/>
-        </svg>
-      </button>
+      <div class="app-header-actions">
+        <button id="project-btn" class="project-btn">
+          <span id="project-name">Loading...</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div id="account-menu-host"></div>
+      </div>
     </div>
 
     <!-- PREVIEW -->
@@ -1186,13 +1208,13 @@
             <input id="render-scale-value" type="hidden" value="1.0">
 
             <h5>Max DPR (Retina Cap)</h5>
-            <div class="button-row" id="max-dpr-buttons" data-target-input="max-dpr-value">
-              <button class="button" type="button" data-value="auto">Auto</button>
-              <button class="button button-selected" type="button" data-value="1">1.0</button>
+            <div class="button-row" id="dpr-cap-buttons" data-target-input="max-dpr-value">
+              <button class="button button-selected" type="button" data-value="auto">Auto</button>
+              <button class="button" type="button" data-value="1">1.0</button>
               <button class="button" type="button" data-value="1.5">1.5</button>
               <button class="button" type="button" data-value="2">2.0</button>
             </div>
-            <input id="max-dpr-value" type="hidden" value="1">
+            <input id="max-dpr-value" type="hidden" value="auto">
 
             <h4>Quality</h4>
             <h5>Anti-Aliasing</h5>

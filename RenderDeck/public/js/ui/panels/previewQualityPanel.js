@@ -234,14 +234,16 @@ export function setupPreviewQualityPanel({
 
   setupButtonRow('render-scale-buttons', (v) => {
     const scale = parseFloat(v);
-    const baseDPR = window.devicePixelRatio || 1;
-    renderer.setPixelRatio(Math.min(baseDPR * scale, 2));
+    rendererManager.setRenderScale(scale);
+    updateResolutionDisplay();
+    markNeedsRender(4);
     log(`Render scale: ${(scale * 100).toFixed(0)}%`);
   });
 
-  setupButtonRow('max-dpr-buttons', (v) => {
-    if (v === 'auto') renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    else renderer.setPixelRatio(parseFloat(v));
+  setupButtonRow('dpr-cap-buttons', (v) => {
+    rendererManager.setMaxDPR(v === 'auto' ? null : parseFloat(v));
+    updateResolutionDisplay();
+    markNeedsRender(4);
     log(`Max DPR: ${v}`);
   });
 

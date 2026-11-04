@@ -11,7 +11,9 @@ const PREVIEW_TOGGLES = {
   vertexColors: 'preview-toggle-vertexcolors',
   culling: 'preview-toggle-culling',
 };
-const PREVIEW_BUTTON_ROWS = ['shadow-quality-buttons', 'texture-filtering-buttons', 'max-dpr-buttons', 'render-scale-buttons'];
+// dpr-cap-buttons replaced max-dpr-buttons: every old project saved the old default of 1.0,
+// which was never actually applied, so those values must not be restored.
+const PREVIEW_BUTTON_ROWS = ['shadow-quality-buttons', 'texture-filtering-buttons', 'dpr-cap-buttons', 'render-scale-buttons'];
 
 export function createProjectSettings({
   getActiveProjectIdSync,

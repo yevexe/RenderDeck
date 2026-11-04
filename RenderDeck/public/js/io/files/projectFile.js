@@ -13,98 +13,26 @@
 
 import { Zip, ZipDeflate, ZipPassThrough, unzipSync, strFromU8, strToU8 } from 'fflate';
 import * as IDBStorage from '../../storage/indexedDBStorage.js';
+import { isSyncInfrastructureStore } from '../../storage/syncRules.js';
 import { isProjectKey } from '../../storage/cascade.js';
 import { generateId, getProject, listProjects } from '../../storage/ProjectStorage.js';
+import { createRecordEncoder, decodeRecordValue, encodeRecords as encodeRecordValues } from '../recordCodec.js';
 
 const FORMAT = 'renderdeck-project';
 const VERSION = 1;
 export const PID_PLACEHOLDER = '{pid}';
-const LONG_TEXT = 256 * 1024; // keeps project.json far below the browser's string limit
 
 // Left out by "Include Uploaded Images in Project File" unchecked. The app already skips a
 // layer whose image is missing. Material thumbnails go too, so they get redrawn without
 // the textures; uploaded model files, including an OBJ's textures, stay with their model.
 // Text layers stay (see textLayerBlobKeys): they aren't uploaded images.
 const IMAGE_BLOB_PREFIXES = ['design-blob:', 'design-thumb:', 'overlay:', 'node-image:', 'preset-thumb:', 'mat-thumb:'];
-const IMAGE_VALUE_FIELDS = new Set(['channelMaps', 'imageData', 'imageDataUrl']);
-
 const THUMBNAIL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i;
-const BINARY_KINDS = {
-  ArrayBuffer, Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
-  Int32Array, Uint32Array, Float32Array, Float64Array, DataView,
-};
 
 export const swapProjectId = (text, from, to) => (text.includes(from) ? text.split(from).join(to) : text);
 const swap = swapProjectId;
 
-function extensionOf(blob) {
-  const fromName = /\.([a-z0-9]{1,8})$/i.exec(blob.name || '')?.[1];
-  const fromType = /^[a-z]+\/([a-z0-9]{1,8})$/i.exec(blob.type || '')?.[1];
-  return (fromName || fromType || 'bin').toLowerCase();
-}
-
-// ─────────────────────────────────────────────
-// Writing
-// ─────────────────────────────────────────────
-
-class ValueEncoder {
-  constructor(pid, includeImages) {
-    this.pid = pid;
-    this.includeImages = includeImages;
-    this.attachments = []; // { path, data: Blob | Uint8Array, compress }
-  }
-
-  _attach(makePath, data, compress = false) {
-    const path = makePath(this.attachments.length);
-    this.attachments.push({ path, data, compress });
-    return path;
-  }
-
-  encode(value) {
-    if (typeof value === 'string') {
-      if (!value.startsWith('data:')) return swap(value, this.pid, PID_PLACEHOLDER);
-      if (value.length <= LONG_TEXT) return value;
-      return { $rdText: this._attach(n => `blobs/${n}.txt`, strToU8(value), true) };
-    }
-    if (typeof value === 'number' && !Number.isFinite(value)) return { $rdNumber: String(value) };
-    if (value === null || typeof value !== 'object') return value;
-    if (Array.isArray(value)) return value.map(item => this.encode(item));
-    if (value instanceof Date) return { $rdDate: value.getTime() };
-    if (value instanceof Blob) {
-      const path = this._attach(n => `blobs/${n}.${extensionOf(value)}`, value);
-      return { $rdFile: { path, type: value.type, name: value.name ?? null, lastModified: value.lastModified ?? null } };
-    }
-    if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-      const bytes = value instanceof ArrayBuffer
-        ? new Uint8Array(value)
-        : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-      return { $rdBinary: { path: this._attach(n => `blobs/${n}.bin`, bytes), kind: value.constructor.name } };
-    }
-    const proto = Object.getPrototypeOf(value);
-    if (proto !== Object.prototype && proto !== null) {
-      throw new Error(`A ${value.constructor?.name ?? 'stored'} value can't be written to a project file`);
-    }
-    const output = {};
-    for (const [key, item] of Object.entries(value)) {
-      if (!this.includeImages && IMAGE_VALUE_FIELDS.has(key)) continue;
-      output[swap(key, this.pid, PID_PLACEHOLDER)] = this.encode(item);
-    }
-    return output;
-  }
-}
-
-// Encode already-read records for a manifest. encoder.attachments holds their files.
-export function encodeRecords(pid, records) {
-  const encoder = new ValueEncoder(pid, true);
-  return {
-    encoder,
-    records: records.map(({ store, key, value }) => ({
-      store,
-      key: swap(key, pid, PID_PLACEHOLDER),
-      value: encoder.encode(value),
-    })),
-  };
-}
+export const encodeRecords = (pid, records) => encodeRecordValues(records, { pid });
 
 // Blob keys holding the rendered picture of a text layer. Design layers: design-blob:… next
 // to their design-meta:… record. Custom models: overlayKeys matched with overlayMetadata.
@@ -160,18 +88,18 @@ export async function buildProjectFile(pid, { includeImages = true } = {}) {
   const project = await getProject(pid);
   if (!project) throw new Error('This project no longer exists');
 
-  const encoder = new ValueEncoder(pid, includeImages);
+  const encoder = createRecordEncoder({ pid, includeImages });
   const textBlobs = includeImages ? new Set() : await textLayerBlobKeys(pid);
   const records = [];
   for (const store of await IDBStorage.storeNames()) {
-    if (store === 'projects') continue;
+    if (store === 'projects' || isSyncInfrastructureStore(store)) continue;
     for (const key of await IDBStorage.getAllKeys(store)) {
       if (!isProjectKey(key, pid)) continue;
       if (!includeImages && store === 'blobs' && !textBlobs.has(key) && IMAGE_BLOB_PREFIXES.some(prefix => key.startsWith(prefix))) continue;
       records.push({
         store,
         key: swap(key, pid, PID_PLACEHOLDER),
-        value: encoder.encode(await IDBStorage.get(store, key)),
+        value: await encoder.encode(await IDBStorage.get(store, key)),
       });
     }
   }
@@ -180,7 +108,7 @@ export async function buildProjectFile(pid, { includeImages = true } = {}) {
     format: FORMAT,
     version: VERSION,
     exportedAt: new Date().toISOString(),
-    project: encoder.encode(project),
+    project: await encoder.encode(project),
     records,
   };
   return zipProjectFile(JSON.stringify(manifest), encoder.attachments);
@@ -190,40 +118,7 @@ export async function buildProjectFile(pid, { includeImages = true } = {}) {
 // Reading
 // ─────────────────────────────────────────────
 
-export function decodeValue(value, pid, entries) {
-  if (typeof value === 'string') return value.startsWith('data:') ? value : swap(value, PID_PLACEHOLDER, pid);
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(item => decodeValue(item, pid, entries));
-
-  const entry = (path) => {
-    const bytes = entries[path];
-    if (!bytes) throw new Error(`The file is damaged: ${path} is missing`);
-    return bytes;
-  };
-  if (value.$rdText !== undefined) return strFromU8(entry(value.$rdText));
-  if (value.$rdNumber !== undefined) return Number(value.$rdNumber);
-  if (value.$rdDate !== undefined) return new Date(value.$rdDate);
-  if (value.$rdFile) {
-    const { path, type, name, lastModified } = value.$rdFile;
-    const bytes = entry(path);
-    return name === null
-      ? new Blob([bytes], { type })
-      : new File([bytes], name, { type, lastModified });
-  }
-  if (value.$rdBinary) {
-    const { path, kind } = value.$rdBinary;
-    const Kind = Object.hasOwn(BINARY_KINDS, kind) ? BINARY_KINDS[kind] : null;
-    if (!Kind) throw new Error(`The file is damaged: unknown data type ${kind}`);
-    const bytes = entry(path);
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    return Kind === ArrayBuffer ? buffer : new Kind(buffer);
-  }
-
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-    swap(key, PID_PLACEHOLDER, pid),
-    decodeValue(item, pid, entries),
-  ]));
-}
+export const decodeValue = (value, pid, entries) => decodeRecordValue(value, { pid, entries });
 
 function readManifest(file, entries) {
   const notProject = new Error(`"${file.name}" isn't a RenderDeck project file`);
@@ -269,13 +164,21 @@ export async function importProjectFile(file) {
 
   const stores = new Set(await IDBStorage.storeNames());
   const pid = generateId();
-  const ops = manifest.records.map(({ store, key, value }) => {
-    if (store === 'projects' || !stores.has(store)) throw new Error(`The file is damaged: unknown store ${store}`);
+  const ops = [];
+  for (const { store, key, value } of manifest.records) {
+    if (store === 'projects' || isSyncInfrastructureStore(store) || !stores.has(store)) {
+      throw new Error(`The file is damaged: unknown store ${store}`);
+    }
     if (typeof key !== 'string' || !isProjectKey(key, PID_PLACEHOLDER)) throw new Error(`The file is damaged: bad key ${key}`);
-    return { type: 'put', store, key: swap(key, PID_PLACEHOLDER, pid), value: decodeValue(value, pid, entries) };
-  });
+    ops.push({
+      type: 'put',
+      store,
+      key: swap(key, PID_PLACEHOLDER, pid),
+      value: await decodeValue(value, pid, entries),
+    });
+  }
 
-  const stored = decodeValue(manifest.project, pid, entries);
+  const stored = await decodeValue(manifest.project, pid, entries);
   const project = {
     ...stored,
     id: pid,

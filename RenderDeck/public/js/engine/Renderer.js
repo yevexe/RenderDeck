@@ -16,6 +16,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { HQBokehFragmentShader } from './shaders/DepthOfFieldShader.js';
 
+const AUTO_MAX_DPR = 2;
+const ORBIT_PERF_PIXEL_RATIO = 0.5;
+
 export class RendererManager {
   constructor(container) {
     this.container = container;
@@ -35,6 +38,8 @@ export class RendererManager {
 
     this._customResolution = null;
     this._inOrbitPerf = false;
+    this._renderScale = 1;
+    this._maxDPR = null; // null = Auto
 
     // Post-processing passes
     this.composer       = null;
@@ -90,10 +95,30 @@ export class RendererManager {
     } else {
       const w = this.container.clientWidth  || 1;
       const h = this.container.clientHeight || 1;
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      const pixelRatio = this._viewportPixelRatio();
+      this.renderer.setPixelRatio(pixelRatio);
       this.renderer.setSize(w, h, false);
+      this.composer?.setPixelRatio(pixelRatio);
       this.resizeComposer(w, h);
     }
+  }
+
+  // ─── Viewport pixel ratio from the Preview Quality settings ──
+  _viewportPixelRatio() {
+    const dpr = Math.min(window.devicePixelRatio || 1, this._maxDPR ?? AUTO_MAX_DPR);
+    const pixelRatio = dpr * this._renderScale;
+    return this._inOrbitPerf ? Math.min(pixelRatio, ORBIT_PERF_PIXEL_RATIO) : pixelRatio;
+  }
+
+  setRenderScale(scale) {
+    this._renderScale = scale;
+    this.resize();
+  }
+
+  // null = Auto
+  setMaxDPR(maxDPR) {
+    this._maxDPR = maxDPR;
+    this.resize();
   }
 
   // ─── Resize composer + post-processing passes ────────────────
@@ -144,11 +169,7 @@ export class RendererManager {
   enterOrbitPerfMode() {
     if (this._inOrbitPerf || this._customResolution) return;
     this._inOrbitPerf = true;
-    const w = this.container.clientWidth  || 1;
-    const h = this.container.clientHeight || 1;
-    this.renderer.setPixelRatio(0.5);
-    this.renderer.setSize(w, h, false);
-    this.resizeComposer(w * 0.5, h * 0.5);
+    this.resize();
   }
 
   exitOrbitPerfMode() {

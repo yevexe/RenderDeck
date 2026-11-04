@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { nativeMaterialId } from '../../storage/storageKeys.js';
+import { SPECULAR_GLOSSINESS } from '../../engine/gltfLoader.js';
 
 const GLB_MAGIC = 0x46546C67; // 'glTF'
 const GLB_JSON_CHUNK = 0x4E4F534A; // 'JSON'
@@ -17,7 +18,10 @@ function linearColorHex([r, g, b]) {
 }
 
 function simpleGltfParams(material) {
-  const pbr = material.pbrMetallicRoughness || {};
+  const specularGlossiness = material.extensions?.[SPECULAR_GLOSSINESS];
+  const pbr = specularGlossiness
+    ? { baseColorFactor: specularGlossiness.diffuseFactor, metallicFactor: 0, roughnessFactor: 1 - (specularGlossiness.glossinessFactor ?? 1) }
+    : material.pbrMetallicRoughness || {};
   const factor = pbr.baseColorFactor || [1, 1, 1, 1];
   // A texture multiplies its factor. Without the texture the factor alone would be
   // wrong (the shirts have a white emissive factor), so leave emission out.

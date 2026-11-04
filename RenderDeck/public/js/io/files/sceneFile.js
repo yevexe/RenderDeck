@@ -10,7 +10,8 @@
 import { strFromU8, unzipSync } from 'fflate';
 import * as IDBStorage from '../../storage/indexedDBStorage.js';
 import { customModelBlobKeys, isProjectKey, modelWorkingStateOps, uploadedModelBlobKeys } from '../../storage/cascade.js';
-import { decodeValue, encodeRecords, PID_PLACEHOLDER, swapProjectId, zipProjectFile } from './projectFile.js';
+import { PID_PLACEHOLDER, swapProjectId, zipProjectFile } from './projectFile.js';
+import { decodeRecordValue, encodeRecords } from '../recordCodec.js';
 import { getActiveProjectId } from '../../storage/ProjectStorage.js';
 import {
   materialOverrideKey, materialOverridePrefix, objectOverridePrefix, nativeIdPrefix, partMaterialPrefix,
@@ -106,12 +107,12 @@ export async function buildSceneFile(name) {
     const value = await IDBStorage.get(store, key);
     if (value !== undefined && value !== null) present.push({ store, key, value });
   }
-  const { encoder, records } = encodeRecords(pid, present);
+  const { encoder, records } = await encodeRecords(present, { pid });
   const manifest = {
     format: FORMAT,
     version: VERSION,
     exportedAt: new Date().toISOString(),
-    scene: encoder.encode(scene),
+    scene: await encoder.encode(scene),
     records,
   };
   return zipProjectFile(JSON.stringify(manifest), encoder.attachments);
@@ -179,7 +180,7 @@ export async function importSceneFile(file) {
   }
 
   const pid = await getActiveProjectId();
-  const scene = decodeValue(manifest.scene, pid, entries);
+  const scene = await decodeRecordValue(manifest.scene, { pid, entries });
   if (!isSceneData(scene) || !Array.isArray(manifest.records)) throw new Error(`"${file.name}" is damaged`);
 
   const sceneKey = `${pid}:${scene.name}`;
@@ -190,7 +191,11 @@ export async function importSceneFile(file) {
   for (const { store, key, value } of manifest.records) {
     if (!DEPENDENCY_STORES.has(store)) throw new Error(`The file is damaged: unknown store ${store}`);
     if (typeof key !== 'string' || !isProjectKey(key, PID_PLACEHOLDER)) throw new Error(`The file is damaged: bad key ${key}`);
-    const record = { store, key: swapProjectId(key, PID_PLACEHOLDER, pid), value: decodeValue(value, pid, entries) };
+    const record = {
+      store,
+      key: swapProjectId(key, PID_PLACEHOLDER, pid),
+      value: await decodeRecordValue(value, { pid, entries }),
+    };
     const existing = await IDBStorage.get(store, record.key);
     if (existing === undefined || existing === null) fresh.push(record);
     else if (!await sameStored(existing, record.value)) different.push(record);

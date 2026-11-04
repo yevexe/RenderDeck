@@ -62,7 +62,7 @@ export function setupEnvironmentPanel({
       card.addEventListener('click', () => {
         sel.value = name;
         sel.dispatchEvent(new Event('change'));
-        syncEnvCards(name);
+        syncEnvironmentCards(name);
       });
       grid.appendChild(card);
 

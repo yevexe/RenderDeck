@@ -347,7 +347,7 @@ const history = createHistory({
   markNeedsRender,
   getEnvironmentState: () => ({ currentEnvironment, currentEnvTexture, showEnvBackground, gradientBgEnabled, currentGradientBg }),
   setEnvironmentState: updates => {
-    if ('currentEnvironment' in updates) currentEnvironment = updates.currentEnvironment;
+    if ('currentEnvironment' in updates) { currentEnvironment = updates.currentEnvironment; syncEnvironmentCards(currentEnvironment); }
     if ('currentEnvTexture' in updates) currentEnvTexture = updates.currentEnvTexture;
     if ('showEnvBackground' in updates) showEnvBackground = updates.showEnvBackground;
     if ('gradientBgEnabled' in updates) gradientBgEnabled = updates.gradientBgEnabled;
@@ -428,6 +428,7 @@ function restoreSceneState(sceneState) {
   if (sceneState.sceneName) {
     const sel = document.getElementById('environment-select');
     if (sel) sel.value = sceneState.sceneName;
+    syncEnvironmentCards(sceneState.sceneName);
     loadEnvironment(sceneState.sceneName, (name, texture) => {
       currentEnvTexture = texture;
       currentEnvironment = name;
@@ -1119,7 +1120,7 @@ document.getElementById('reset-cache-btn')?.addEventListener('click', async () =
   if (!confirm('Clear cached thumbnails and environment previews?\n\nYour models, materials, scenes and settings are kept. The page will reload.')) return;
   await flushWrites();
   try {
-    await IDBStorage.batch(CACHE_BLOB_PREFIXES.map(prefix => ({ type: 'delPrefix', store: 'blobs', prefix })));
+    await IDBStorage.batchWithoutOutbox(CACHE_BLOB_PREFIXES.map(prefix => ({ type: 'delPrefix', store: 'blobs', prefix })));
   } catch (err) {
     log(`Could not clear cache: ${err.message}`, true);
     return;

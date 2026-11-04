@@ -2,9 +2,11 @@
 // INDEXEDDBSTORAGE.JS - IndexedDB Wrapper for RenderDeck
 // Provides Promise-based interface for storing models and blobs
 
+import { isSyncable, isSyncInfrastructureStore } from './syncRules.js';
+
 const DB_NAME = 'renderdeck_db';
 // Raise this whenever a store is added: a database already at this version won't get it.
-const DB_VERSION = 9;
+const DB_VERSION = 10;
 
 let dbInstance = null;
 let dbDeleted = false; // set by deleteDatabase() — no further opens this page
@@ -86,6 +88,12 @@ export function openDB() {
       // image-node files in 'blobs' under `node-image:${projectId}:${enc(modelName)}:${enc(partName)}:${nodeId}`
       if (!db.objectStoreNames.contains('node-graphs')) {
         db.createObjectStore('node-graphs');
+      }
+      if (!db.objectStoreNames.contains('sync-outbox')) {
+        db.createObjectStore('sync-outbox'); // key: encoded store + record key
+      }
+      if (!db.objectStoreNames.contains('sync-state')) {
+        db.createObjectStore('sync-state'); // device/account metadata and sync cursors
       }
     };
 
@@ -204,14 +212,31 @@ export function del(storeName, key) {
 // Either every operation commits or none does.
 // ops: [{ type: 'put', store, key, value }
 //       { type: 'del', store, key }
-//       { type: 'delPrefix', store, prefix }]   — deletes every key starting with prefix
+//       { type: 'delPrefix', store, prefix }
+//       { type: 'clear', store }] — deletes matching keys and queues their sync entries
 // Values must be ready before calling (no awaiting inside a transaction).
 // ─────────────────────────────────────────────
 export function batch(ops) {
+  return _batch(ops, true);
+}
+
+// Local maintenance and server-applied changes must not queue data for upload.
+export function batchWithoutOutbox(ops) {
+  return _batch(ops, false);
+}
+
+function outboxKey(storeName, key) {
+  return `${encodeURIComponent(storeName)}|${encodeURIComponent(String(key))}`;
+}
+
+function _batch(ops, trackChanges) {
   return new Promise(async (resolve, reject) => {
     if (!ops.length) { resolve(); return; }
     try {
-      const storeNames = [...new Set(ops.map(o => o.store))];
+      const storeNames = [...new Set([
+        ...ops.map(o => o.store),
+        ...(trackChanges && ops.some(op => !isSyncInfrastructureStore(op.store)) ? ['sync-outbox'] : []),
+      ])];
       const db = await _requireDB(storeNames);
       const transaction = db.transaction(storeNames, 'readwrite');
 
@@ -223,14 +248,56 @@ export function batch(ops) {
       // Quota errors abort the transaction without a request error
       transaction.onabort = () => reject(_wrapError(`Transaction on ${storeNames.join(', ')} aborted`, transaction.error || 'aborted'));
 
-      try {
-        for (const op of ops) {
-          const store = transaction.objectStore(op.store);
-          if (op.type === 'put')            store.put(op.value, op.key);
-          else if (op.type === 'del')       store.delete(op.key);
-          else if (op.type === 'delPrefix') store.delete(prefixRange(op.prefix));
-          else throw new Error(`Unknown batch op: ${op.type}`);
+      const queueOutbox = (storeName, key) => {
+        if (!trackChanges || !isSyncable(storeName, key)) return;
+        transaction.objectStore('sync-outbox').put(
+          { store: storeName, key, changedAt: Date.now() },
+          outboxKey(storeName, key),
+        );
+      };
+
+      const deleteKeys = (storeName, keys) => {
+        const store = transaction.objectStore(storeName);
+        for (const key of keys) {
+          store.delete(key);
+          queueOutbox(storeName, key);
         }
+      };
+
+      let index = 0;
+      const runNext = () => {
+        while (index < ops.length) {
+          const op = ops[index++];
+          const store = transaction.objectStore(op.store);
+          if (op.type === 'put') {
+            store.put(op.value, op.key);
+            queueOutbox(op.store, op.key);
+          } else if (op.type === 'del') {
+            store.delete(op.key);
+            queueOutbox(op.store, op.key);
+          } else if (op.type === 'delPrefix' || op.type === 'clear') {
+            const request = op.type === 'clear'
+              ? store.getAllKeys()
+              : store.getAllKeys(prefixRange(op.prefix));
+            request.onsuccess = () => {
+              try {
+                deleteKeys(op.store, request.result);
+                runNext();
+              } catch (err) {
+                try { transaction.abort(); } catch (_) { /* already finished */ }
+                reject(err);
+              }
+            };
+            request.onerror = () => reject(_wrapError(`Failed to enumerate keys in ${op.store}`, request.error));
+            return;
+          } else {
+            throw new Error(`Unknown batch op: ${op.type}`);
+          }
+        }
+      };
+
+      try {
+        runNext();
       } catch (err) {
         // e.g. DataCloneError from a value IndexedDB can't store — roll back the
         // operations already queued so the batch stays all-or-nothing
@@ -287,20 +354,7 @@ export function getAll(storeName, prefix = null) {
 // Clear all entries in a store
 // ─────────────────────────────────────────────
 export function clearStore(storeName) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const db = await _requireDB([storeName]);
-      const transaction = db.transaction(storeName, 'readwrite');
-      const store = transaction.objectStore(storeName);
-      store.clear();
-
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(_wrapError(`Failed to clear ${storeName}`, transaction.error));
-      transaction.onabort = () => reject(_wrapError(`Clear of ${storeName} aborted`, transaction.error || 'aborted'));
-    } catch (err) {
-      reject(err);
-    }
-  });
+  return batch([{ type: 'clear', store: storeName }]);
 }
 
 // ─────────────────────────────────────────────

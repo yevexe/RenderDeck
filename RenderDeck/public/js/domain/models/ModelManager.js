@@ -1,4 +1,4 @@
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { createGLTFLoader } from '../../engine/gltfLoader.js';
 import { rewriteMTL } from './MTLUtils.js';
 import { uploadedModelMtlKey } from '../../storage/storageKeys.js';
 
@@ -268,7 +268,7 @@ export class ModelManager {
         return result;
       }
       try {
-        const gltf = await new GLTFLoader().parseAsync(await glbFile.arrayBuffer(), '');
+        const gltf = await createGLTFLoader().parseAsync(await glbFile.arrayBuffer(), '');
         const resources = new Set();
         let meshes = 0;
         gltf.scene.traverse(child => {

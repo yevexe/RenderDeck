@@ -1,6 +1,6 @@
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { createGLTFLoader } from '../../engine/gltfLoader.js';
 import { catalogFromGltf, catalogFromMtl, readGlbJsonFromUrl, tagFileMaterials } from '../materials/nativeCatalog.js';
 import { loadDesignImage } from '../../utils/imageAssets.js';
 import { STANDARD_OBJECTS } from '../../config.js';
@@ -80,7 +80,7 @@ export function createModelLoading({
   logWarn,
 }) {
   const mtlLoader = new MTLLoader();
-  const gltfLoader = new GLTFLoader();
+  const gltfLoader = createGLTFLoader();
   let modelRequest = null;
   const pendingModelLoads = new Map();
   let modelCommit = Promise.resolve();
@@ -420,6 +420,7 @@ export function createModelLoading({
       uvEditor.openWithPreloadedData(activeMesh, name, { basedOn: modelData.basedOn }, overlays, libIdOf(activeMesh));
       syncActiveMaterialView();
     }
+    await restoreInactivePartDesigns(name, request);
 
     if (modelData.sceneState) restoreSceneState(modelData.sceneState);
     const bootCamera = getBootCamera();
@@ -546,6 +547,25 @@ export function createModelLoading({
     if (transform && object === getActiveModel()) propManager.applyMainModelTransform(transform);
   }
 
+  // The editor only opens the active part, so every other part's design is restored here.
+  async function restoreInactivePartDesigns(modelName, request) {
+    const pid = getActiveProjectIdSync();
+    for (const [partName, mesh] of Object.entries(getMeshMap())) {
+      if (mesh === getActiveMesh()) continue;
+      let layers = getPartCache()[partName]?.overlayImages;
+      if (!layers) {
+        const saved = pid ? await loadDesignLayersFromCache(pid, modelName, partName) : null;
+        checkModelRequest(request);
+        if (!saved) continue;
+        layers = await decodeDecals(saved);
+        checkModelRequest(request);
+      }
+      if (uvEditor.restorePartDesign(mesh, layers.map(img => ({ ...img })))) {
+        getPartCache()[partName] = { overlayImages: layers };
+      }
+    }
+  }
+
   async function restoreDesignLayersForPart(partName) {
     const pid = getActiveProjectIdSync();
     const modelName = getCurrentModelName();
@@ -616,6 +636,7 @@ export function createModelLoading({
           await restoreDesignLayersForPart(activeMesh.name);
           checkModelRequest(request);
         }
+        await restoreInactivePartDesigns(name, request);
         markNeedsRender(60);
         await restoreModelTransform(name, object, request);
         onModelReady(object, name, getActiveMesh());
@@ -673,6 +694,7 @@ export function createModelLoading({
           await restoreDesignLayersForPart(activeMesh.name);
           checkModelRequest(request);
         }
+        await restoreInactivePartDesigns(name, request);
         markNeedsRender(60);
         await restoreModelTransform(name, object, request);
         onModelReady(object, name, getActiveMesh());

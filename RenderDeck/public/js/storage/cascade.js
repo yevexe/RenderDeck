@@ -5,6 +5,7 @@
 // so a failure leaves either everything or nothing deleted.
 
 import * as IDBStorage from './indexedDBStorage.js';
+import { isSyncInfrastructureStore } from './syncRules.js';
 import {
   partMaterialPrefix, designMetaPrefix, designBlobPrefix, designThumbKey,
   matThumbPrefix, nodeGraphPrefix, nodeImagePrefix, modelTransformKey, uploadedModelMtlKey,
@@ -118,6 +119,7 @@ export function isProjectKey(key, pid) {
 export async function projectDeleteOps(pid) {
   const ops = [];
   for (const store of await IDBStorage.storeNames()) {
+    if (isSyncInfrastructureStore(store)) continue;
     for (const key of await IDBStorage.getAllKeys(store)) {
       if (isProjectKey(key, pid)) ops.push({ type: 'del', store, key });
     }
