@@ -3,3 +3,6 @@
 .env
 # Local browser tests (not uploaded)
 RenderDeck/tests/
+
+# Backend has its own private repository
+RenderDeck/backend/
