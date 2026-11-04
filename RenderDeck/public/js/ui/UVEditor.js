@@ -1,8 +1,20 @@
+import { fileDataURL, loadDesignImage } from '../utils/imageAssets.js';
 // UVEDITOR.JS - Design Editor (Inline Tab 2)
 // No floating modal. All UI lives inside Tab 2's existing elements.
 
 import * as THREE from 'three';
 import { ModelVerifier } from '../models/ModelVerifier.js';
+
+const DESIGN_CANVAS_SIZE = 2048;
+// Drag-frame resolutions: 1/4 of the full-res upload for color, less for the PBR masks
+const DRAG_COLOR_SIZE = 1024;
+const DRAG_MASK_SIZE = 512;
+// How long after the last slider change the drag textures make way for full-res ones
+const DRAG_RESTORE_DELAY_MS = 300;
+// Settings a canvas texture has when there is nothing to copy them from
+const PLAIN_TEXTURE = new THREE.Texture();
+// Material slots the design owns while a part has layers
+const DESIGN_MAP_SLOTS = ['map', 'metalnessMap', 'roughnessMap', 'transmissionMap'];
 
 export class UVEditor {
   constructor(renderer, log, modelManager, materialManager) {
@@ -19,61 +31,29 @@ export class UVEditor {
     this.activeMesh = null;
     this.activeModelName = null;
     this.customModelName = null;
-    this.baseTexture = null;
-    this.overlayImages = [];
     this.nextImageId = 1;
-    this.selectedImageId = null;
-    this.currentMaterialPreset = 'Default — White';
 
-    this._uvCheckActive = false;
-    this._savedMaterialMap = null;
+    // Design state of every part except the active one (mesh → fields from
+    // _capturePartFields). The active part's state lives on the editor itself.
+    // A part is only stored while it has layers.
+    this._partStates = new Map();
+    // Layers each part had when first opened; undo falls back to them
+    this._partBaselines = new Map();
+    Object.assign(this, this._freshPartFields(null));
+
+    this.currentMaterialPreset = null; // library id of the active part's material
+
     this._uvCheckerTexture = null;
     this._uvPreviewEnabled = false;
     this._partSelectCallback = null;
     this._wrapImages = true;
     this._uvWireframeCache = null; // offscreen canvas — rebuilt once per mesh, reused every frame
 
-    // Stored material base color (captured at open/apply time for composite background)
-    this._materialBaseColor = null;
-
     // Resize / rotate handle state
     this._lockAspectRatio = true;
     this._dragMode = 'translate'; // 'translate' | 'resize' | 'rotate'
     this._resizeStart = null;     // { origW, origH, origDiag }
     this._rotateStart = null;     // { imgRotation, mouseAngle }
-
-    this.textureCanvas = document.createElement('canvas');
-    this.textureCanvas.width = 2048;
-    this.textureCanvas.height = 2048;
-    this.textureCtx = this.textureCanvas.getContext('2d');
-
-    // Sticker PBR map canvases — override metalness/roughness where decals are
-    this._metalnessCanvas = document.createElement('canvas');
-    this._metalnessCanvas.width = 2048;
-    this._metalnessCanvas.height = 2048;
-    this._metalnessCtx = this._metalnessCanvas.getContext('2d');
-
-    this._roughnessCanvas = document.createElement('canvas');
-    this._roughnessCanvas.width = 2048;
-    this._roughnessCanvas.height = 2048;
-    this._roughnessCtx = this._roughnessCanvas.getContext('2d');
-
-    // Original PBR values to restore on reset
-    this._origMetalness = null;
-    this._origRoughness = null;
-    this._origTransmission = null;
-    this._origColor = null;
-    this._origMetalnessMap    = undefined; // THREE.Texture | null (undefined = not captured yet)
-    this._origRoughnessMap    = undefined;
-    this._origTransmissionMap = undefined;
-    this._liveMetalnessTexture = null;
-    this._liveRoughnessTexture = null;
-    this._liveTransmissionTexture = null;
-
-    this._transmissionCanvas = document.createElement('canvas');
-    this._transmissionCanvas.width = 2048;
-    this._transmissionCanvas.height = 2048;
-    this._transmissionCtx = this._transmissionCanvas.getContext('2d');
 
     // Temp canvas used by _renderPBRMap for overlay mask compositing
     this._pbrMaskCanvas = document.createElement('canvas');
@@ -83,29 +63,31 @@ export class UVEditor {
     this.uvCtx = null;
     this._checkerCache = null; 
 
-    // Low-res drag canvases — 512x512 (1MB) instead of 2048x2048 (16MB) per frame
-    this._dragCanvas = document.createElement('canvas');
-    this._dragCanvas.width = 512;
-    this._dragCanvas.height = 512;
+    // Low-res drag canvases — shared by all parts. Their textures take the active
+    // part's settings on every use and are swapped out as soon as the change ends.
+    const dragCanvas = (size) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      return canvas;
+    };
+    this._dragCanvas = dragCanvas(DRAG_COLOR_SIZE);
     this._dragCtx = this._dragCanvas.getContext('2d');
     this._dragTexture = null;
 
     // Low-res drag PBR canvases for sticker metalness/roughness during drag
-    this._dragMetalnessCanvas = document.createElement('canvas');
-    this._dragMetalnessCanvas.width = 512;
-    this._dragMetalnessCanvas.height = 512;
+    this._dragMetalnessCanvas = dragCanvas(DRAG_MASK_SIZE);
     this._dragMetalnessCtx = this._dragMetalnessCanvas.getContext('2d');
-    this._dragRoughnessCanvas = document.createElement('canvas');
-    this._dragRoughnessCanvas.width = 512;
-    this._dragRoughnessCanvas.height = 512;
+    this._dragRoughnessCanvas = dragCanvas(DRAG_MASK_SIZE);
     this._dragRoughnessCtx = this._dragRoughnessCanvas.getContext('2d');
     this._dragMetalnessTexture = null;
     this._dragRoughnessTexture = null;
-    this._dragTransmissionCanvas = document.createElement('canvas');
-    this._dragTransmissionCanvas.width = 512;
-    this._dragTransmissionCanvas.height = 512;
+    this._dragTransmissionCanvas = dragCanvas(DRAG_MASK_SIZE);
     this._dragTransmissionCtx = this._dragTransmissionCanvas.getContext('2d');
     this._dragTransmissionTexture = null;
+
+    // Base and channel images scaled to drag size (texture → canvas), kept for one drag
+    this._dragImageCache = new Map();
+    this._dragRestoreTimer = null;
 
     this.isDragging = false;
     this.dragOffset = { x: 0, y: 0 };
@@ -197,11 +179,12 @@ export class UVEditor {
         e.preventDefault(); e.stopPropagation();
         this.uvCanvas.classList.remove('drag-over');
       });
-      this.uvCanvas.addEventListener('drop', (e) => {
+      this.uvCanvas.addEventListener('drop', async (e) => {
         e.preventDefault(); e.stopPropagation();
         this.uvCanvas.classList.remove('drag-over');
-        const file = e.dataTransfer.files[0];
-        if (file && file.type.startsWith('image/')) this.handleImageUpload(file);
+        for (const file of e.dataTransfer.files) {
+          if (/\.(png|jpe?g|svg|webp|gif|bmp)$/i.test(file.name)) await this.handleImageUpload(file);
+        }
       });
 
       // Transformation sliders (Tab 2 IDs)
@@ -343,7 +326,7 @@ export class UVEditor {
   // This sets up the editor for a model - NO prompting for names here
   // preloadedOverlays: already-decoded overlay image array, or null to load from IDB.
   // Pass this when switching parts so we use cached data instead of re-reading IDB.
-  async open(mesh, originalModelName, currentMaterialPreset = 'Default — White', preloadedOverlays = null) {
+  async open(mesh, originalModelName, currentMaterialPreset = null, preloadedOverlays = null) {
     // If already editing this mesh (same part), skip reset.
     // customModelName check prevents tearing down sticker state on part switches.
     if (this.activeMesh === mesh &&
@@ -351,43 +334,33 @@ export class UVEditor {
       return;
     }
 
-    const wasCheckUVActive = this._uvCheckActive;
-    this._deactivateCheckUV();
-    this._uvPreviewEnabled = false;
-    this._uvWireframeCache = null;
-    this._materialBaseColor = null;
-    this._removeStickerPBRMaps();
-    const pvBtn = document.getElementById('preview-uv-btn');
-    if (pvBtn) pvBtn.classList.remove('button-selected');
-    this.activeMesh = mesh;
+    const wasCheckUVActive = this._switchToPart(mesh);
     this.currentMaterialPreset = currentMaterialPreset;
 
-    let overlaysToApply = [];
-
-    if (preloadedOverlays !== null) {
+    if (this.liveCanvasTexture) {
+      // Returning to a part with a design: its stored layers and composite are current
+    } else if (preloadedOverlays !== null) {
       // Part switch with cached overlays — skip IDB entirely
       this.overlayImages = preloadedOverlays;
-      this.nextImageId = preloadedOverlays.length + 1;
-      overlaysToApply = preloadedOverlays;
       // activeModelName / customModelName already set from initial load
     } else {
       const existingCustom = await this.modelManager.getModel(originalModelName);
+      if (this.activeMesh !== mesh) return; // another part was opened meanwhile
       const isCustom = existingCustom?.type === 'custom';
 
       if (isCustom) {
         this.activeModelName = existingCustom.basedOn;
         this.customModelName = originalModelName;
         this.currentMaterialPreset = currentMaterialPreset;
-        this.overlayImages = [];
-        this.nextImageId = 1;
         // v2 compat: flat overlayImages; v3: overlays come per-part via preloadedOverlays
         const savedOverlays = existingCustom._v2compat ? (existingCustom.overlayImages || []) : [];
+        const decoded = [];
         if (savedOverlays.length > 0) {
           await Promise.all(savedOverlays.map(saved => new Promise(res => {
             const img = new Image();
             img.onload = () => {
-              this.overlayImages.push({
-                id:          this.nextImageId++,
+              decoded.push({
+                id:          decoded.length + 1,
                 image:       img,
                 name:        saved.name,
                 type:        saved.type     || 'image',
@@ -404,90 +377,307 @@ export class UVEditor {
             img.onerror = res;
             img.src = saved.imageData;
           })));
+          if (this.activeMesh !== mesh) return;
         }
-        overlaysToApply = this.overlayImages;
+        this.overlayImages = decoded;
       } else {
         this.activeModelName = originalModelName;
         this.customModelName = null;
         this.overlayImages = [];
-        this.nextImageId = 1;
       }
     }
 
-    this.baseTexture = (mesh.material?.map && mesh.material.map !== this.liveCanvasTexture)
-      ? mesh.material.map : null;
-    this._materialBaseColor = mesh.material?.color
-      ? ('#' + mesh.material.color.getHexString()) : '#ffffff';
-    this.liveCanvasTexture = null;
-
-    this._updateLayersList();
-    this._renderPreview();
     this.log(`Design Editor: ${this.customModelName || this.activeModelName}`);
-
-    if (overlaysToApply.length > 0) {
-      this._renderComposite();
-      const texture = new THREE.CanvasTexture(this.textureCanvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.needsUpdate = true;
-      this.liveCanvasTexture = texture;
-      if (mesh.material) {
-        mesh.material.map = texture;
-        this._applyStickerPBRMaps(mesh.material);
-        mesh.material.needsUpdate = true;
-      }
-      window.markNeedsRender?.(4);
-    }
-
-    if (wasCheckUVActive) this._toggleCheckUV();
+    this._finishPartSwitch(mesh, wasCheckUVActive);
   }
 
   // ─── Open with already-decoded overlay images (skips DB read + image decode) ─
-  openWithPreloadedData(mesh, originalModelName, modelData, preloadedImages, currentMaterialPreset = 'Default — White') {
+  openWithPreloadedData(mesh, originalModelName, modelData, preloadedImages, currentMaterialPreset = null) {
     if (this.activeMesh === mesh && this.activeModelName === (modelData.basedOn || originalModelName)) return;
 
+    const wasCheckUVActive = this._switchToPart(mesh);
+    this.activeModelName = modelData.basedOn || originalModelName;
+    this.customModelName = originalModelName;
+    this.currentMaterialPreset = currentMaterialPreset;
+    if (!this.liveCanvasTexture) this.overlayImages = preloadedImages;
+
+    this.log(`Design Editor active for: ${originalModelName}`);
+    this._finishPartSwitch(mesh, wasCheckUVActive);
+  }
+
+  // ─── Per-part design state ────────────────────────────────────
+  // Everything here belongs to one part. A part that hasn't been stored starts
+  // from its material; its current map can't be a composite because only stored
+  // parts have one.
+  _freshPartFields(mesh) {
+    const material = mesh?.material;
+    return {
+      overlayImages: [],
+      selectedImageId: null,
+      baseTexture: this._cleanMapOf(material),
+      liveCanvasTexture: null,
+      // Stored material base color (captured at open/apply time for composite background)
+      _materialBaseColor: mesh ? (material?.color ? '#' + material.color.getHexString() : '#ffffff') : null,
+      // Original PBR values to restore on reset
+      _origMetalness: null,
+      _origRoughness: null,
+      _origTransmission: null,
+      _origColor: null,
+      _origMetalnessMap: undefined, // THREE.Texture | null (undefined = not captured yet)
+      _origRoughnessMap: undefined,
+      _origTransmissionMap: undefined,
+      _liveMetalnessTexture: null,
+      _liveRoughnessTexture: null,
+      _liveTransmissionTexture: null,
+      // Composite and sticker PBR canvases — allocated once the part has layers
+      textureCanvas: null,
+      textureCtx: null,
+      _metalnessCanvas: null,
+      _metalnessCtx: null,
+      _roughnessCanvas: null,
+      _roughnessCtx: null,
+      _transmissionCanvas: null,
+      _transmissionCtx: null,
+      _uvCheckActive: false,
+      _savedMaterialMap: null,
+    };
+  }
+
+  _capturePartFields() {
+    return Object.fromEntries(Object.keys(this._freshPartFields(null)).map(key => [key, this[key]]));
+  }
+
+  // The material's map without any design in it. Base textures must only come from here.
+  _cleanMapOf(material) {
+    const map = this._uvCheckActive && material === this.activeMesh?.material
+      ? this._savedMaterialMap
+      : material?.map;
+    return map && !map.userData?.isDesignComposite ? map : null;
+  }
+
+  _nextLayerId(layers) {
+    return layers.reduce((max, layer) => Math.max(max, layer.id), 0) + 1;
+  }
+
+  _ensureCanvas(canvasKey, ctxKey) {
+    if (this[canvasKey]) return;
+    this[canvasKey] = document.createElement('canvas');
+    this[canvasKey].width = DESIGN_CANVAS_SIZE;
+    this[canvasKey].height = DESIGN_CANVAS_SIZE;
+    this[ctxKey] = this[canvasKey].getContext('2d');
+  }
+
+  _ensureDesignCanvases() {
+    this._ensureCanvas('textureCanvas', 'textureCtx');
+    this._ensureCanvas('_metalnessCanvas', '_metalnessCtx');
+    this._ensureCanvas('_roughnessCanvas', '_roughnessCtx');
+  }
+
+  _freeDesignCanvases() {
+    for (const key of ['textureCanvas', '_metalnessCanvas', '_roughnessCanvas', '_transmissionCanvas']) {
+      if (this[key]) this[key].width = this[key].height = 0; // releases the backing store
+      this[key] = null;
+    }
+    this.textureCtx = this._metalnessCtx = this._roughnessCtx = this._transmissionCtx = null;
+  }
+
+  // Store the active part's design under its mesh, or forget it if it has none left.
+  _stashActivePart() {
+    const mesh = this.activeMesh;
+    if (!mesh) return;
+    if (!this.overlayImages.length && this.liveCanvasTexture) this._clearActiveDesign();
+    if (this.overlayImages.length && this.liveCanvasTexture) {
+      this._partStates.set(mesh, this._capturePartFields());
+    } else {
+      this._partStates.delete(mesh);
+    }
+  }
+
+  // Leave the active part exactly as it looks and load the next part's state.
+  // Returns whether Check UV should be turned back on afterwards.
+  _switchToPart(mesh) {
     const wasCheckUVActive = this._uvCheckActive;
     this._deactivateCheckUV();
     this._uvPreviewEnabled = false;
     this._uvWireframeCache = null;
-    this._materialBaseColor = null;
-    this._removeStickerPBRMaps();
+    this.isDragging = false;
+    this._dragMode = 'translate';
+    const leaving = this.activeMesh?.material;
+    if (leaving && this.liveCanvasTexture && (leaving.map === this._dragTexture || leaving.metalnessMap === this._dragMetalnessTexture)) {
+      // The low-res drag canvases are shared, so they can't stay on a part we're leaving
+      this.commitMaterialChange();
+    }
+    clearTimeout(this._dragRestoreTimer);
+    this._clearDragImageCache();
+    this._stashActivePart();
     const pvBtn = document.getElementById('preview-uv-btn');
     if (pvBtn) pvBtn.classList.remove('button-selected');
-
     this.activeMesh = mesh;
-    this.activeModelName = modelData.basedOn || originalModelName;
-    this.customModelName = originalModelName;
-    this.currentMaterialPreset = modelData.materialPreset || currentMaterialPreset;
-    this.overlayImages = preloadedImages;
-    this.nextImageId = preloadedImages.length + 1;
-    // Capture any channel map already on the material (restored before this call)
-    // as the composite base. liveCanvasTexture is null at this point so the check is safe.
-    const _currentMap = mesh.material?.map || null;
-    this.baseTexture = (_currentMap && _currentMap !== this.liveCanvasTexture) ? _currentMap : null;
-    this._materialBaseColor = mesh.material?.color
-      ? ('#' + mesh.material.color.getHexString())
-      : '#ffffff';
-    this.liveCanvasTexture = null;
+    Object.assign(this, this._partStates.get(mesh) ?? this._freshPartFields(mesh));
+    this._partStates.delete(mesh);
+    return wasCheckUVActive;
+  }
+
+  _finishPartSwitch(mesh, wasCheckUVActive) {
+    this.nextImageId = this._nextLayerId(this.overlayImages);
+    if (!this._partBaselines.has(mesh)) this._partBaselines.set(mesh, this._copyLayers(this.overlayImages));
 
     this._updateLayersList();
+    const selected = this.overlayImages.find(i => i.id === this.selectedImageId);
+    if (selected) this._syncSlidersFromImage(selected);
     this._renderPreview();
-    this.log(`Design Editor active for: ${originalModelName}`);
 
-    if (preloadedImages.length > 0) {
-      this._renderComposite();
-      const texture = new THREE.CanvasTexture(this.textureCanvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.needsUpdate = true;
-      this.liveCanvasTexture = texture;
-      if (mesh.material) {
-        mesh.material.map = texture;
-        this._applyStickerPBRMaps(mesh.material);
-        mesh.material.needsUpdate = true;
-      }
-      window.markNeedsRender?.(4);
-    }
+    if (this.overlayImages.length > 0 && !this.liveCanvasTexture) this.applyTextureToModel();
 
     if (wasCheckUVActive) this._toggleCheckUV();
+  }
+
+  // Run fn with a stored part loaded as if it were active, then put everything back.
+  // The render and sticker code can then serve inactive parts unchanged. fn must be
+  // synchronous and must not touch the preview canvas or layer list.
+  _withPartState(mesh, fn) {
+    const activeMesh = this.activeMesh;
+    const activeFields = this._capturePartFields();
+    Object.assign(this, this._partStates.get(mesh) ?? this._freshPartFields(mesh));
+    this.activeMesh = mesh;
+    try {
+      return fn();
+    } finally {
+      this._stashActivePart();
+      this.activeMesh = activeMesh;
+      Object.assign(this, activeFields);
+    }
+  }
+
+  _forEachStoredPart(fn) {
+    for (const mesh of [...this._partStates.keys()]) this._withPartState(mesh, fn);
+  }
+
+  // Bring the material in line with the current layer list.
+  _syncDesignToLayers() {
+    if (!this.overlayImages.length) { this._clearActiveDesign(); return; }
+    if (!this.liveCanvasTexture) { this.applyTextureToModel(); return; }
+    this._renderComposite();
+    this._updateStickerPBRIfActive();
+  }
+
+  // Give the active part its clean material back and free everything its design held.
+  _clearActiveDesign() {
+    const material = this.activeMesh?.material;
+    this._removeStickerPBRMaps();
+    if (this.liveCanvasTexture) {
+      if (material) {
+        if (this._uvCheckActive) this._savedMaterialMap = this.baseTexture;
+        else material.map = this.baseTexture;
+        material.needsUpdate = true;
+      }
+      this.liveCanvasTexture.dispose();
+      this.liveCanvasTexture = null;
+    }
+    this._freeDesignCanvases();
+    window.markNeedsRender?.(4);
+  }
+
+  // Called by main.js when the model is unloaded, before its materials are disposed.
+  clearAllPartDesigns() {
+    this._deactivateCheckUV();
+    this.isDragging = false;
+    clearTimeout(this._dragRestoreTimer);
+    this._clearDragImageCache();
+    this._clearActiveDesign();
+    for (const [mesh, record] of this._partStates) {
+      Object.assign(this, record);
+      this.activeMesh = mesh;
+      this._clearActiveDesign();
+    }
+    this._partStates.clear();
+    this._partBaselines.clear();
+    this.activeMesh = null;
+    this._uvWireframeCache = null;
+    Object.assign(this, this._freshPartFields(null));
+  }
+
+  hasPartDesign(mesh) {
+    return mesh === this.activeMesh ? !!this.liveCanvasTexture : this._partStates.has(mesh);
+  }
+
+  getPartBaseTexture(mesh) {
+    return (mesh === this.activeMesh ? this : this._partStates.get(mesh))?.baseTexture ?? null;
+  }
+
+  // Run fn while a part's material shows its real values instead of the sticker overrides.
+  withOriginalMaterialValues(mesh, fn) {
+    const material = mesh?.material;
+    const state = mesh === this.activeMesh ? this : this._partStates.get(mesh);
+    if (!material || state?._origMetalness === null || state?._origMetalness === undefined) return fn();
+    material.metalness = state._origMetalness;
+    material.roughness = state._origRoughness;
+    if (state._origTransmission !== null) material.transmission = state._origTransmission;
+    if (state._origColor && material.color) material.color.set(state._origColor);
+    try {
+      return fn();
+    } finally {
+      material.metalness = 1.0;
+      material.roughness = 1.0;
+      if (state._liveTransmissionTexture) material.transmission = 1.0;
+      if (material.color) material.color.set(0xffffff);
+    }
+  }
+
+  // Change a material property on any part, including an inactive one with a design:
+  // updates the stored original value and re-composites so it shows without opening
+  // the part. Doesn't save anything — the caller persists the change.
+  updatePartMaterial(mesh, property, value) {
+    const material = mesh?.material;
+    if (!material) return false;
+    if (DESIGN_MAP_SLOTS.includes(property)) {
+      this.log(`updatePartMaterial can't set "${property}"; use notifyPartChannelChanged`, true);
+      return false;
+    }
+    const apply = () => this._applyMaterialValue(material, property, value);
+    if (mesh === this.activeMesh) {
+      apply();
+      this._renderPreview();
+    } else if (this._partStates.has(mesh)) {
+      this._withPartState(mesh, apply);
+    } else {
+      this._setMaterialValue(material, property, value);
+    }
+    material.needsUpdate = true;
+    window.markNeedsRender?.(4);
+    return true;
+  }
+
+  _setMaterialValue(material, property, value) {
+    if (material[property]?.isColor) material[property].set(value);
+    else if (property === 'normalScale') material.normalScale?.set(value, value);
+    else material[property] = value;
+    if (property === 'opacity') material.transparent = value < 1.0;
+    if (property === 'transmission') material.transparent = value > 0;
+  }
+
+  _applyMaterialValue(material, property, value) {
+    if (this._origMetalness === null) {
+      if (property === 'color') this._materialBaseColor = value;
+      this._setMaterialValue(material, property, value);
+    } else if (property === 'color') {
+      this._origColor = value;
+      this._materialBaseColor = value;
+      this._renderComposite();
+    } else if (property === 'metalness') {
+      this._origMetalness = value;
+      this._updateStickerPBRIfActive();
+    } else if (property === 'roughness') {
+      this._origRoughness = value;
+      this._updateStickerPBRIfActive();
+    } else if (property === 'transmission') {
+      this._origTransmission = value;
+      material.transparent = value > 0;
+      if (this._liveTransmissionTexture) this._updateStickerPBRIfActive();
+      else if (value > 0) this._applyStickerPBRMaps(material);
+    } else {
+      this._setMaterialValue(material, property, value);
+    }
   }
 
   // ─── Keep old show() as alias for backward compat ────────────
@@ -498,43 +688,30 @@ export class UVEditor {
   // ─── Image upload ─────────────────────────────────────────────
   async handleImageUpload(file) {
     if (!file) return;
-    this.log(`Validating: ${file.name}...`);
-    const validation = await this.verifier.validateTextureFile(file);
-    if (!validation.valid) {
-      this.log(`Invalid image: ${validation.errors.join(', ')}`, true);
-      alert(`Invalid image:\n${validation.errors.join('\n')}`);
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const aspectRatio = img.width / img.height;
-        const imageData = {
-          id: this.nextImageId++,
-          image: img,
-          name: file.name,
-          position: { x: 50, y: 50 },
-          size: { w: 30, h: 30 / aspectRatio },
-          rotation: 0,
-          aspectRatio,
-          flipH: false,
-          flipV: false,
-          _originalDataURL: img._originalDataURL,
-        };
-        this.overlayImages.push(imageData);
-        this._notifyLayersSaved();
-        this._updateLayersList();
-        this._renderPreview();
-        this.applyTextureToModel();
-        this.selectImage(imageData.id);
-        this.log(`Image added: ${file.name}`);
+    try {
+      const validation = await this.verifier.validateTextureFile(file);
+      if (!validation.valid) throw new Error(validation.errors.join('\n'));
+      const originalDataURL = await fileDataURL(file);
+      const image = await loadDesignImage(originalDataURL);
+      const aspectRatio = image.naturalWidth / image.naturalHeight;
+      const layer = {
+        id: this.nextImageId++, image, name: file.name, type: 'image',
+        position: { x: 50, y: 50 }, size: { w: 30, h: 30 / aspectRatio },
+        rotation: 0, aspectRatio, flipH: false, flipV: false,
+        _originalDataURL: originalDataURL,
       };
-      img._originalDataURL = e.target.result;
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+      const mesh = this.activeMesh;
+      if (!mesh) throw new Error('Select a model part before uploading a design.');
+      await this.commitImageLayer?.([...this.overlayImages, layer]);
+      if (mesh !== this.activeMesh) return;
+      this.overlayImages.push(layer);
+      this._notifyLayersSaved();
+      this._updateLayersList();
+      this._renderPreview();
+      this.applyTextureToModel();
+      this.selectImage(layer.id);
+      this.log(`Image saved: ${file.name}`);
+    } catch (err) { this.log(`Could not add design: ${err.message}`, true); }
   }
 
   // ─── Select an overlay image ──────────────────────────────────
@@ -554,30 +731,8 @@ export class UVEditor {
     this._notifyLayersSaved();
     this._updateLayersList();
     this._renderPreview();
-    this._renderComposite();
+    this._syncDesignToLayers();
 
-    // Re-render PBR maps so the deleted decal area reverts to original material
-    if (this._liveMetalnessTexture || this._liveRoughnessTexture) {
-      this._renderStickerPBRMaps();
-      if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
-      if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
-      window.markNeedsRender?.(4);
-    }
-
-    // If all overlays removed, clean up PBR maps and restore original texture
-    if (this.overlayImages.length === 0) {
-      this._removeStickerPBRMaps();
-      if (this.activeMesh?.material) {
-        if (this.liveCanvasTexture) {
-          this.liveCanvasTexture.dispose();
-          this.liveCanvasTexture = null;
-        }
-        this.activeMesh.material.map = this.baseTexture || null;
-        this.activeMesh.material.needsUpdate = true;
-      }
-    }
-
-    this._notifyLayersSaved();
     this.onCommit?.('Deleted overlay');
     this.log('Image deleted');
   }
@@ -808,7 +963,7 @@ export class UVEditor {
     ctx.fillRect(0, 0, w, h);
 
     if (this.baseTexture?.image && this.baseTexture !== this.liveCanvasTexture) {
-      ctx.drawImage(this.baseTexture.image, 0, 0, w, h);
+      this._drawTextureImage(ctx, this.baseTexture, w, h);
       // When sticker PBR is active, material.color is forced to white so decals
       // aren't tinted by Three.js. Bake the original color tint into the composite
       // via multiply blend so it's preserved (matches Three.js color * map behavior).
@@ -842,9 +997,88 @@ export class UVEditor {
     });
   }
 
+  // ─── Design texture settings ──────────────────────────────────
+  // Every texture of a design — composite, PBR masks and their drag versions — goes
+  // through here, so they all sample the part's UVs the same way. colorSpace is only
+  // passed for textures that aren't color (the masks).
+  _applyDesignTextureSettings(texture, source, colorSpace = null) {
+    const from = source ?? PLAIN_TEXTURE;
+    texture.flipY = from.flipY;
+    texture.wrapS = from.wrapS;
+    texture.wrapT = from.wrapT;
+    texture.magFilter = from.magFilter;
+    texture.minFilter = from.minFilter;
+    texture.anisotropy = from.anisotropy;
+    texture.colorSpace = colorSpace ?? (from.colorSpace || THREE.SRGBColorSpace);
+    // Always apply renderer-aware quality settings (anisotropy, mipmap filtering)
+    // regardless of the source. Keeps the texture sharp at angles.
+    window.applyTexQuality?.(texture);
+    texture.needsUpdate = true;
+  }
+
+  _makeStickerTexture(canvas) {
+    const texture = new THREE.CanvasTexture(canvas);
+    this._applyDesignTextureSettings(texture, this.liveCanvasTexture, THREE.LinearSRGBColorSpace);
+    return texture;
+  }
+
+  // Create a shared drag texture if needed and give it the active part's settings.
+  _refreshDragTexture(key, canvas, colorSpace = null) {
+    if (!this[key]) this[key] = new THREE.CanvasTexture(canvas);
+    this._applyDesignTextureSettings(this[key], this.liveCanvasTexture, colorSpace);
+    return this[key];
+  }
+
+  // The flipY the design's canvases are displayed with.
+  _designFlipY() {
+    return (this.liveCanvasTexture ?? this.baseTexture ?? PLAIN_TEXTURE).flipY;
+  }
+
+  // Draw a material texture into a design canvas. A texture with a different flipY
+  // (an upload on a GLB part) is mirrored so it looks the same as it does without a design.
+  _drawTextureImage(ctx, texture, w, h) {
+    const image = w < DESIGN_CANVAS_SIZE ? this._dragImageOf(texture, w) : texture.image;
+    const mirror = texture.flipY !== this._designFlipY();
+    if (mirror) {
+      ctx.save();
+      ctx.translate(0, h);
+      ctx.scale(1, -1);
+    }
+    ctx.drawImage(image, 0, 0, w, h);
+    if (mirror) ctx.restore();
+  }
+
+  // Scaling a 4K image down on every drag frame is what stutters, so do it once.
+  _dragImageOf(texture, size) {
+    let canvas = this._dragImageCache.get(texture);
+    if (canvas?.width !== size) {
+      canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(texture.image, 0, 0, size, size);
+      this._dragImageCache.set(texture, canvas);
+    }
+    return canvas;
+  }
+
+  _clearDragImageCache() {
+    this._dragImageCache.clear();
+  }
+
+  // Sliders end with a commit, but the node editor and color fields may never send one.
+  _scheduleDragRestore() {
+    clearTimeout(this._dragRestoreTimer);
+    this._dragRestoreTimer = setTimeout(() => {
+      if (!this.isDragging) this.commitMaterialChange();
+    }, DRAG_RESTORE_DELAY_MS);
+  }
+
   // ─── High-res composite render ────────────────────────────────
   _renderComposite() {
-    this._renderCompositeToCanvas(this.textureCtx, 2048, 2048, true);
+    if (!this.textureCtx) return; // no layers on this part
+    this._renderCompositeToCanvas(this.textureCtx, DESIGN_CANVAS_SIZE, DESIGN_CANVAS_SIZE, true);
 
     if (this.liveCanvasTexture) {
       this.liveCanvasTexture.needsUpdate = true;
@@ -853,19 +1087,15 @@ export class UVEditor {
   }
 
   
-  // Renders to 512x512 canvas during drag — 16x less GPU upload per frame.
+  // Renders to a smaller canvas during drag — much less GPU upload per frame.
   // Full-res texture is restored on mouseup/mouseleave.
   _renderCompositeDrag() {
-    this._renderCompositeToCanvas(this._dragCtx, 512, 512, true, 'low');
+    this._renderCompositeToCanvas(this._dragCtx, DRAG_COLOR_SIZE, DRAG_COLOR_SIZE, true, 'medium');
 
-    if (!this._dragTexture) {
-      this._dragTexture = new THREE.CanvasTexture(this._dragCanvas);
-      this._dragTexture.colorSpace = THREE.SRGBColorSpace;
-    }
-    this._dragTexture.needsUpdate = true;
+    this._refreshDragTexture('_dragTexture', this._dragCanvas);
+    this._dragTexture.userData.isDesignComposite = true;
 
-    
-    if (this.activeMesh?.material && this.activeMesh.material.map !== this._dragTexture) {
+    if (!this._uvCheckActive && this.activeMesh?.material && this.activeMesh.material.map !== this._dragTexture) {
       this.activeMesh.material.map = this._dragTexture;
       this.activeMesh.material.needsUpdate = true;
     }
@@ -886,19 +1116,11 @@ export class UVEditor {
     const metalness = this._origMetalness ?? m.metalness ?? 0;
     const roughness = this._origRoughness ?? m.roughness ?? 0.5;
 
-    this._renderPBRMap(this._dragMetalnessCtx, 512, 512, metalness * 255, 0, this._origMetalnessMap, metalness);
-    this._renderPBRMap(this._dragRoughnessCtx, 512, 512, roughness * 255, 0.5 * 255, this._origRoughnessMap, roughness);
+    this._renderPBRMap(this._dragMetalnessCtx, DRAG_MASK_SIZE, DRAG_MASK_SIZE, metalness * 255, 0, this._origMetalnessMap, metalness);
+    this._renderPBRMap(this._dragRoughnessCtx, DRAG_MASK_SIZE, DRAG_MASK_SIZE, roughness * 255, 0.5 * 255, this._origRoughnessMap, roughness);
 
-    if (!this._dragMetalnessTexture) {
-      this._dragMetalnessTexture = new THREE.CanvasTexture(this._dragMetalnessCanvas);
-      this._dragMetalnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
-    }
-    if (!this._dragRoughnessTexture) {
-      this._dragRoughnessTexture = new THREE.CanvasTexture(this._dragRoughnessCanvas);
-      this._dragRoughnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
-    }
-    this._dragMetalnessTexture.needsUpdate = true;
-    this._dragRoughnessTexture.needsUpdate = true;
+    this._refreshDragTexture('_dragMetalnessTexture', this._dragMetalnessCanvas, THREE.LinearSRGBColorSpace);
+    this._refreshDragTexture('_dragRoughnessTexture', this._dragRoughnessCanvas, THREE.LinearSRGBColorSpace);
 
     if (m.metalnessMap !== this._dragMetalnessTexture) {
       m.metalnessMap = this._dragMetalnessTexture;
@@ -908,13 +1130,9 @@ export class UVEditor {
 
     // Transmission drag map
     const transmission = this._origTransmission ?? m.transmission ?? 0;
-    if (transmission > 0) {
-      this._renderPBRMap(this._dragTransmissionCtx, 512, 512, transmission * 255, 0);
-      if (!this._dragTransmissionTexture) {
-        this._dragTransmissionTexture = new THREE.CanvasTexture(this._dragTransmissionCanvas);
-        this._dragTransmissionTexture.colorSpace = THREE.LinearSRGBColorSpace;
-      }
-      this._dragTransmissionTexture.needsUpdate = true;
+    if (this._liveTransmissionTexture) {
+      this._renderPBRMap(this._dragTransmissionCtx, DRAG_MASK_SIZE, DRAG_MASK_SIZE, transmission * 255, 0, this._origTransmissionMap, transmission);
+      this._refreshDragTexture('_dragTransmissionTexture', this._dragTransmissionCanvas, THREE.LinearSRGBColorSpace);
       if (m.transmissionMap !== this._dragTransmissionTexture) {
         m.transmissionMap = this._dragTransmissionTexture;
         m.needsUpdate = true;
@@ -924,8 +1142,10 @@ export class UVEditor {
 
   // ─── Restore full-res texture after drag ─────────────────────
   _restoreFullResTexture() {
+    clearTimeout(this._dragRestoreTimer);
+    this._clearDragImageCache();
     if (this.activeMesh?.material) {
-      if (this.liveCanvasTexture) {
+      if (this.liveCanvasTexture && !this._uvCheckActive) {
         this.activeMesh.material.map = this.liveCanvasTexture;
       }
       // Restore full-res PBR maps
@@ -961,7 +1181,7 @@ export class UVEditor {
     // Step 1: Draw background (bgImage scaled by bgScale, or flat bgValue).
     // We use a canvas 'multiply' blend instead of ctx.filter (more reliable).
     if (bgImage?.image) {
-      ctx.drawImage(bgImage.image, 0, 0, w, h);
+      this._drawTextureImage(ctx, bgImage, w, h);
       if (bgScale !== 1) {
         const v = Math.round(Math.max(0, Math.min(1, bgScale)) * 255);
         ctx.globalCompositeOperation = 'multiply';
@@ -1026,7 +1246,7 @@ export class UVEditor {
   // ─── Generate sticker metalness + roughness maps ─────────────
   _renderStickerPBRMaps() {
     const m = this.activeMesh?.material;
-    if (!m) return;
+    if (!m || !this._metalnessCtx) return;
 
     const metalness = this._origMetalness ?? m.metalness ?? 0;
     const roughness = this._origRoughness ?? m.roughness ?? 0.5;
@@ -1039,7 +1259,7 @@ export class UVEditor {
 
     // Transmission map: original value everywhere, 0 where decals are (opaque sticker).
     const transmission = this._origTransmission ?? m.transmission ?? 0;
-    if (transmission > 0) {
+    if (this._liveTransmissionTexture) {
       this._renderPBRMap(this._transmissionCtx, 2048, 2048, transmission * 255, 0, this._origTransmissionMap, transmission);
     }
   }
@@ -1048,10 +1268,14 @@ export class UVEditor {
   // Updates the composite base so the channel map appears underneath decals.
   notifyBaseMapChanged(newTexture) {
     if (!this.overlayImages.length) return;
+    // The material slot held the composite, so nothing else frees the old base
+    if (this.baseTexture && this.baseTexture !== newTexture) this.baseTexture.dispose();
+    this._clearDragImageCache();
     this.baseTexture = newTexture || null;
     this._renderComposite();
     if (this.liveCanvasTexture && this.activeMesh?.material) {
-      this.activeMesh.material.map = this.liveCanvasTexture;
+      if (this._uvCheckActive) this._savedMaterialMap = this.liveCanvasTexture;
+      else this.activeMesh.material.map = this.liveCanvasTexture;
       this.activeMesh.material.needsUpdate = true;
       window.markNeedsRender?.(4);
     }
@@ -1061,9 +1285,13 @@ export class UVEditor {
   // Re-generates the sticker PBR maps using the new channel map as background, then
   // re-assigns the live sticker textures to the material (the upload handler overwrote them).
   notifyPBRMapChanged(channel, texture) {
-    if (channel === 'metalnessMap')    this._origMetalnessMap    = texture ?? null;
-    if (channel === 'roughnessMap')    this._origRoughnessMap    = texture ?? null;
-    if (channel === 'transmissionMap') this._origTransmissionMap = texture ?? null;
+    const origKey = { metalnessMap: '_origMetalnessMap', roughnessMap: '_origRoughnessMap', transmissionMap: '_origTransmissionMap' }[channel];
+    if (origKey) {
+      const previous = this[origKey];
+      if (previous && previous !== texture) previous.dispose();
+      this._clearDragImageCache();
+      this[origKey] = texture ?? null;
+    }
     this._updateStickerPBRIfActive();
     // Re-assign sticker maps — the channel map upload set material[channel] = rawTex,
     // overwriting the live sticker composite. Restore sticker ownership of those slots.
@@ -1076,15 +1304,23 @@ export class UVEditor {
     }
   }
 
+  // Same as the two notifications above, for a channel change on any part.
+  notifyPartChannelChanged(mesh, channel, texture) {
+    if (!this.hasPartDesign(mesh) || !DESIGN_MAP_SLOTS.includes(channel)) return;
+    const notify = () => {
+      if (channel === 'map') this.notifyBaseMapChanged(texture);
+      else this.notifyPBRMapChanged(channel, texture);
+    };
+    if (mesh === this.activeMesh) notify();
+    else this._withPartState(mesh, notify);
+  }
+
   applyTextureToModel() {
     if (!this.activeMesh) { this.log('No model loaded', true); return; }
 
-    // Keep baseTexture as the original source map. Never replace it with live composited map.
-    // If no source map cached yet, capture the current non-live map.
-    if (!this.baseTexture || this.baseTexture === this.liveCanvasTexture) {
-      const currentMap = this.activeMesh.material?.map || null;
-      this.baseTexture = (currentMap && currentMap !== this.liveCanvasTexture) ? currentMap : null;
-    }
+    // Keep baseTexture as the original source map. While a composite is live the
+    // material's map can't tell us anything, and notifyBaseMapChanged keeps it current.
+    if (!this.liveCanvasTexture) this.baseTexture = this._cleanMapOf(this.activeMesh.material);
 
     // Capture material base color for composite background fill (prevents black-material issue)
     // Use stored original color if sticker PBR maps are active (material.color is overridden to white)
@@ -1104,44 +1340,24 @@ export class UVEditor {
       return;
     }
 
-    // Dispose any previously-applied live canvas texture (not the original base)
-    if (this.liveCanvasTexture) {
-      this.liveCanvasTexture.dispose();
-      this.liveCanvasTexture = null;
-    }
+    this._ensureDesignCanvases();
 
-    // Dispose previous map if it's not the original base preset texture
-    if (this.activeMesh.material?.map && this.activeMesh.material.map !== this.baseTexture) {
-      this.activeMesh.material.map.dispose();
-    }
+    // Create a new CanvasTexture. A part keeps its settings for as long as it has a
+    // design, so adding a layer after its base changed doesn't flip what's there.
+    const texture = new THREE.CanvasTexture(this.textureCanvas);
+    texture.userData.isDesignComposite = true;
+    this._applyDesignTextureSettings(texture, this.liveCanvasTexture ?? this.baseTexture);
+
+    // Dispose any previously-applied live canvas texture (not the original base)
+    if (this.liveCanvasTexture) this.liveCanvasTexture.dispose();
+    this.liveCanvasTexture = texture;
 
     // Render the composite (draws base texture + overlays)
     this._renderComposite();
 
-    // Create a new CanvasTexture — always sRGB so tone-mapping is correct
-    const texture = new THREE.CanvasTexture(this.textureCanvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    // Copy texture parameters from base texture when available
-    if (this.baseTexture) {
-      // Override colorSpace only if base texture has an explicit non-empty value
-      if (this.baseTexture.colorSpace) texture.colorSpace = this.baseTexture.colorSpace;
-      texture.flipY = this.baseTexture.flipY;
-      texture.wrapS = this.baseTexture.wrapS;
-      texture.wrapT = this.baseTexture.wrapT;
-      texture.magFilter = this.baseTexture.magFilter;
-      texture.minFilter = this.baseTexture.minFilter;
-      texture.anisotropy = this.baseTexture.anisotropy;
-    }
-    // Always apply renderer-aware quality settings (anisotropy, mipmap filtering)
-    // regardless of whether baseTexture exists. Keeps the composite sharp at angles.
-    window.applyTexQuality?.(texture);
-    texture.needsUpdate = true;
-
-    this.liveCanvasTexture = texture;
-
     if (this.activeMesh.material) {
-      this.activeMesh.material.map = texture;
+      if (this._uvCheckActive) this._savedMaterialMap = texture;
+      else this.activeMesh.material.map = texture;
 
       // Sticker PBR: override metalness/roughness where decals are
       this._applyStickerPBRMaps(this.activeMesh.material);
@@ -1176,21 +1392,13 @@ export class UVEditor {
       this.liveCanvasTexture.needsUpdate = true;
     }
 
-    // Generate the maps
-    this._renderStickerPBRMaps();
-
     // Dispose previous live PBR textures
     if (this._liveMetalnessTexture)  this._liveMetalnessTexture.dispose();
     if (this._liveRoughnessTexture)  this._liveRoughnessTexture.dispose();
     if (this._liveTransmissionTexture) this._liveTransmissionTexture.dispose();
 
-    this._liveMetalnessTexture = new THREE.CanvasTexture(this._metalnessCanvas);
-    this._liveMetalnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
-    this._liveMetalnessTexture.needsUpdate = true;
-
-    this._liveRoughnessTexture = new THREE.CanvasTexture(this._roughnessCanvas);
-    this._liveRoughnessTexture.colorSpace = THREE.LinearSRGBColorSpace;
-    this._liveRoughnessTexture.needsUpdate = true;
+    this._liveMetalnessTexture = this._makeStickerTexture(this._metalnessCanvas);
+    this._liveRoughnessTexture = this._makeStickerTexture(this._roughnessCanvas);
 
     material.metalnessMap = this._liveMetalnessTexture;
     material.roughnessMap = this._liveRoughnessTexture;
@@ -1200,12 +1408,18 @@ export class UVEditor {
 
     // Transmission map: opaque where decals are, original transparency elsewhere
     if (this._origTransmission > 0) {
-      this._liveTransmissionTexture = new THREE.CanvasTexture(this._transmissionCanvas);
-      this._liveTransmissionTexture.colorSpace = THREE.LinearSRGBColorSpace;
-      this._liveTransmissionTexture.needsUpdate = true;
+      this._ensureCanvas('_transmissionCanvas', '_transmissionCtx');
+      this._liveTransmissionTexture = this._makeStickerTexture(this._transmissionCanvas);
       material.transmissionMap = this._liveTransmissionTexture;
       material.transmission = 1.0;
+    } else if (this._liveTransmissionTexture) {
+      this._liveTransmissionTexture = null;
+      material.transmissionMap = this._origTransmissionMap ?? null;
+      material.transmission = this._origTransmission;
     }
+
+    // Generate the maps
+    this._renderStickerPBRMaps();
 
     // Set color to white — the base color is baked into the composite texture
     // so Three.js doesn't multiply/tint the decals
@@ -1214,32 +1428,107 @@ export class UVEditor {
 
   // ─── Remove sticker PBR maps and restore originals ───────────
   _removeStickerPBRMaps() {
-    if (!this.activeMesh?.material) return;
-    const m = this.activeMesh.material;
+    const m = this.activeMesh?.material;
 
     if (this._liveMetalnessTexture) {
       this._liveMetalnessTexture.dispose();
       this._liveMetalnessTexture = null;
-      m.metalnessMap = this._origMetalnessMap ?? null;
-      this._origMetalnessMap = undefined;
+      if (m) m.metalnessMap = this._origMetalnessMap ?? null;
     }
     if (this._liveRoughnessTexture) {
       this._liveRoughnessTexture.dispose();
       this._liveRoughnessTexture = null;
-      m.roughnessMap = this._origRoughnessMap ?? null;
-      this._origRoughnessMap = undefined;
+      if (m) m.roughnessMap = this._origRoughnessMap ?? null;
     }
     if (this._liveTransmissionTexture) {
       this._liveTransmissionTexture.dispose();
       this._liveTransmissionTexture = null;
-      m.transmissionMap = this._origTransmissionMap ?? null;
-      this._origTransmissionMap = undefined;
+      if (m) m.transmissionMap = this._origTransmissionMap ?? null;
     }
-    if (this._origMetalness !== null) { m.metalness = this._origMetalness; this._origMetalness = null; }
-    if (this._origRoughness !== null) { m.roughness = this._origRoughness; this._origRoughness = null; }
-    if (this._origTransmission !== null) { m.transmission = this._origTransmission; this._origTransmission = null; }
-    if (this._origColor !== null && m.color) { m.color.set(this._origColor); this._origColor = null; }
-    m.needsUpdate = true;
+    this._origMetalnessMap = undefined;
+    this._origRoughnessMap = undefined;
+    this._origTransmissionMap = undefined;
+    if (this._origMetalness !== null) { if (m) m.metalness = this._origMetalness; this._origMetalness = null; }
+    if (this._origRoughness !== null) { if (m) m.roughness = this._origRoughness; this._origRoughness = null; }
+    if (this._origTransmission !== null) { if (m) m.transmission = this._origTransmission; this._origTransmission = null; }
+    if (this._origColor !== null) { if (m?.color) m.color.set(this._origColor); this._origColor = null; }
+    if (m) m.needsUpdate = true;
+  }
+
+  // Swap a part's material for a new instance, active or not. A logo stays on the part
+  // and is composited over the new material's map.
+  replacePartMaterial(mesh, material, disposeOld) {
+    const swap = () => {
+      this.prepareMaterialSwap();
+      const old = mesh.material;
+      mesh.material = material;
+      disposeOld?.(old);
+      this.onMaterialPresetApplied(mesh);
+    };
+    if (mesh === this.activeMesh) {
+      swap();
+    } else if (this._partStates.has(mesh)) {
+      this._withPartState(mesh, swap);
+    } else {
+      disposeOld?.(mesh.material);
+      mesh.material = material;
+    }
+    window.markNeedsRender?.(4);
+  }
+
+  // What a material slot holds underneath any design on the part.
+  getPartCleanChannel(mesh, channel) {
+    const state = mesh === this.activeMesh ? this : this._partStates.get(mesh);
+    if (!state?.liveCanvasTexture) return mesh.material?.[channel] ?? null;
+    if (channel === 'map') return state.baseTexture ?? null;
+    const orig = { metalnessMap: state._origMetalnessMap, roughnessMap: state._origRoughnessMap, transmissionMap: state._origTransmissionMap }[channel];
+    return orig !== undefined ? orig : (mesh.material?.[channel] ?? null);
+  }
+
+  // Apply a whole definition's values to a part, with one re-composite for parts with a
+  // logo. applySaved(material, params) writes values onto the material.
+  applyPartDefinition(mesh, params, applySaved) {
+    const material = mesh?.material;
+    if (!material) return;
+    const apply = () => {
+      if (this._origMetalness === null) {
+        applySaved(material, params);
+        if (params.color) this._materialBaseColor = params.color;
+        return;
+      }
+      const { color, metalness, roughness, transmission, ...rest } = params;
+      applySaved(material, rest);
+      if (color !== undefined) { this._origColor = color; this._materialBaseColor = color; }
+      if (metalness !== undefined) this._origMetalness = metalness;
+      if (roughness !== undefined) this._origRoughness = roughness;
+      if (transmission !== undefined) this._origTransmission = transmission;
+      if (this._origTransmission > 0 && !this._liveTransmissionTexture) this._applyStickerPBRMaps(material);
+      this._renderComposite();
+      this._updateStickerPBRIfActive();
+    };
+    if (mesh === this.activeMesh) {
+      apply();
+      this._renderPreview();
+    } else if (this._partStates.has(mesh)) {
+      this._withPartState(mesh, apply);
+    } else {
+      applySaved(material, params);
+    }
+    material.needsUpdate = true;
+    window.markNeedsRender?.(4);
+  }
+
+  // Called by main.js right before the active part's material is replaced, so the old
+  // material holds its clean maps when it is disposed. The composite stays alive for
+  // onMaterialPresetApplied.
+  prepareMaterialSwap() {
+    this._resumeCheckUV = this._uvCheckActive;
+    this._deactivateCheckUV();
+    clearTimeout(this._dragRestoreTimer);
+    this._clearDragImageCache();
+    this._removeStickerPBRMaps();
+    if (this.liveCanvasTexture && this.activeMesh?.material) this.activeMesh.material.map = this.baseTexture;
+    this.baseTexture = null;
   }
 
 
@@ -1247,17 +1536,7 @@ export class UVEditor {
     if (this.overlayImages.length === 0) return;
     this.overlayImages = [];
     this.selectedImageId = null;
-    this._removeStickerPBRMaps();
-
-    // Restore original texture on the model
-    if (this.activeMesh?.material) {
-      if (this.liveCanvasTexture) {
-        this.liveCanvasTexture.dispose();
-        this.liveCanvasTexture = null;
-      }
-      this.activeMesh.material.map = this.baseTexture || null;
-      this.activeMesh.material.needsUpdate = true;
-    }
+    this._clearActiveDesign();
 
     this._updateLayersList();
     this._renderPreview();
@@ -1319,6 +1598,7 @@ export class UVEditor {
       this._renderPreview();
       if (hasDecals) {
         this._renderCompositeDrag();
+        this._scheduleDragRestore();
       } else {
         this._renderComposite();
       }
@@ -1333,7 +1613,7 @@ export class UVEditor {
     const hasDecals = this.overlayImages && this.overlayImages.length > 0;
     if (property === 'metalness' && this._origMetalness !== null) {
       this._origMetalness = value;
-      if (hasDecals) { this._renderStickerPBRMapsDrag(); } else {
+      if (hasDecals) { this._renderStickerPBRMapsDrag(); this._scheduleDragRestore(); } else {
         this._renderStickerPBRMaps();
         if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
       }
@@ -1341,7 +1621,7 @@ export class UVEditor {
     }
     if (property === 'roughness' && this._origRoughness !== null) {
       this._origRoughness = value;
-      if (hasDecals) { this._renderStickerPBRMapsDrag(); } else {
+      if (hasDecals) { this._renderStickerPBRMapsDrag(); this._scheduleDragRestore(); } else {
         this._renderStickerPBRMaps();
         if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
       }
@@ -1359,6 +1639,7 @@ export class UVEditor {
         }
       } else if (hasDecals) {
         this._renderStickerPBRMapsDrag();
+        this._scheduleDragRestore();
       } else {
         this._renderStickerPBRMaps();
         this._liveTransmissionTexture.needsUpdate = true;
@@ -1375,9 +1656,14 @@ export class UVEditor {
   }
 
   reapplyDecalState() {
+    this._reapplyPartDecalState();
+    this._forEachStoredPart(() => this._reapplyPartDecalState());
+  }
+
+  _reapplyPartDecalState() {
     if (!this.activeMesh?.material || !this.overlayImages?.length) return;
     const mat = this.activeMesh.material;
-    if (this.liveCanvasTexture) mat.map = this.liveCanvasTexture;
+    if (this.liveCanvasTexture && !this._uvCheckActive) mat.map = this.liveCanvasTexture;
     if (this._origColor !== null && mat.color) mat.color.set(0xffffff);
     if (this._liveMetalnessTexture) { mat.metalnessMap = this._liveMetalnessTexture; mat.metalness = 1.0; }
     if (this._liveRoughnessTexture) { mat.roughnessMap = this._liveRoughnessTexture; mat.roughness = 1.0; }
@@ -1386,12 +1672,18 @@ export class UVEditor {
   }
 
   onMaterialPresetApplied(mesh) {
+    if (mesh !== this.activeMesh) return;
+    this.baseTexture = this._cleanMapOf(mesh.material);
     this._materialBaseColor = '#' + mesh.material.color.getHexString();
     if (this.overlayImages.length > 0 && this.liveCanvasTexture) {
       this._renderComposite();
       mesh.material.map = this.liveCanvasTexture;
       this._applyStickerPBRMaps(mesh.material);
       mesh.material.needsUpdate = true;
+    }
+    if (this._resumeCheckUV) {
+      this._resumeCheckUV = false;
+      this._toggleCheckUV();
     }
   }
 
@@ -1476,48 +1768,20 @@ export class UVEditor {
         aspectRatio: img.aspectRatio,
         flipH:       img.flipH,
         flipV:       img.flipV,
-        imageData:   c.toDataURL('image/png')
+        imageData:   this.encodeLayerImage(img)
       };
     }));
-
-    const presetName = this.currentMaterialPreset;
-    const isCustom = this.materialManager
-      ? this.materialManager.isUserPreset(presetName)
-      : false;
 
     await this.modelManager.saveCustomModel(this.customModelName, {
       basedOn: this.activeModelName,
       customName: this.customModelName,
       overlayImages: serializedImages,
       materialProperties,
-      materialPreset: presetName,
-      materialPresetId: this.materialManager?.getPresetId?.(presetName) || null,
-      channelMaps: this.getChannelMaps?.() || null,
-      isCustomMaterial: isCustom,
+      materialId: this.currentMaterialPreset,
       sceneState: this.sceneState || null,
     });
 
-    this._renderComposite();
-    const texture = new THREE.CanvasTexture(this.textureCanvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    if (this.baseTexture) {
-      texture.flipY = this.baseTexture.flipY;
-      texture.wrapS = this.baseTexture.wrapS;
-      texture.wrapT = this.baseTexture.wrapT;
-      texture.magFilter = this.baseTexture.magFilter;
-      texture.minFilter = this.baseTexture.minFilter;
-      texture.anisotropy = this.baseTexture.anisotropy;
-    }
-    window.applyTexQuality?.(texture);
-    texture.needsUpdate = true;
-    if (this.activeMesh?.material) {
-      if (this.activeMesh.material.map && this.activeMesh.material.map !== this.baseTexture) {
-        this.activeMesh.material.map.dispose();
-      }
-      this.activeMesh.material.map = texture;
-      this._applyStickerPBRMaps(this.activeMesh.material);
-      this.activeMesh.material.needsUpdate = true;
-    }
+    if (this.overlayImages.length > 0) this.applyTextureToModel();
 
     this.log(`✓ Saved: ${this.customModelName}`);
     if (window.updateModelSelect) await window.updateModelSelect();
@@ -1795,7 +2059,7 @@ export class UVEditor {
   async _onTextCreate() {
     const g = id => document.getElementById(id);
     const content = g('text-tool-content')?.value ?? '';
-    if (!content.trim()) { alert('Please enter some text.'); return; }
+    if (!content.trim()) { console.log('Please enter some text.'); return; }
 
     const textData = {
       content,
@@ -1872,6 +2136,8 @@ export class UVEditor {
         existing.textData    = { ...textData };
         existing.aspectRatio = aspectRatio;
         existing.size.h      = existing.size.w / aspectRatio;
+        delete existing._originalDataURL; // a restored layer's copy still shows the old text
+        this._notifyLayersSaved();
       }
       this.log('Text layer updated');
       this.onCommit?.('Edited text layer');
@@ -1909,7 +2175,7 @@ export class UVEditor {
       this._uvCheckerTexture = null;
     }
     if (this.activeMesh?.material) {
-      this.activeMesh.material.map = this._savedMaterialMap;
+      this.activeMesh.material.map = this.liveCanvasTexture || this._savedMaterialMap;
       this.activeMesh.material.needsUpdate = true;
     }
     this._savedMaterialMap = null;
@@ -1923,9 +2189,12 @@ export class UVEditor {
     if (!this.activeMesh?.material) { this.log('No model loaded'); return; }
     const btn = document.getElementById('check-uv-btn');
     if (!this._uvCheckActive) {
-      this._savedMaterialMap = this.activeMesh.material.map;
+      const mesh = this.activeMesh;
       const loader = new THREE.TextureLoader();
       loader.load('./assets/standard/images/maps/UVChecker.png', (texture) => {
+        // The part may have changed, or Check UV turned on, while this was loading
+        if (mesh !== this.activeMesh || !mesh.material || this._uvCheckActive) { texture.dispose(); return; }
+        this._savedMaterialMap = mesh.material.map;
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.flipY = this._savedMaterialMap?.flipY ?? false;
         this._uvCheckerTexture = texture;
@@ -1950,6 +2219,11 @@ export class UVEditor {
     if (btn) btn.classList.toggle('button-selected', this._wrapImages);
     this._renderPreview();
     this._renderComposite();
+    this._updateStickerPBRIfActive();
+    this._forEachStoredPart(() => {
+      this._renderComposite();
+      this._updateStickerPBRIfActive();
+    });
     this.onPrefsChanged?.();
     this.log(`Wrap: ${this._wrapImages ? 'on' : 'off'}`);
   }
@@ -2019,48 +2293,68 @@ export class UVEditor {
   }
 
   // ─── History restore (called by main.js on undo/redo) ────────
-  // state = { overlayImages, selectedImageId } — no re-encoding, uses live image refs
+  // state comes from snapshotOverlays — no re-encoding, uses live image refs.
+  // A part the snapshot doesn't list hadn't been opened yet, so it goes back to the
+  // layers it was first opened with. Undo never wipes layers that were loaded later.
   restoreHistoryState(state) {
     if (!state) return;
-    this.overlayImages = state.overlayImages.map(s => ({
-      ...s,
-      position: { ...s.position },
-      size:     { ...s.size },
-      textData: s.textData ? { ...s.textData } : null,
-    }));
-    this.selectedImageId = state.selectedImageId ?? null;
+    const layersFor = mesh => (mesh === state.mesh ? state.overlayImages : null)
+      ?? state.parts?.get(mesh)
+      ?? this._partBaselines.get(mesh)
+      ?? [];
+
+    for (const mesh of this._partBaselines.keys()) {
+      if (mesh === this.activeMesh || !mesh.material) continue;
+      const layers = layersFor(mesh);
+      if (this._sameLayers(this._partStates.get(mesh)?.overlayImages ?? [], layers)) continue;
+      this._withPartState(mesh, () => {
+        this.overlayImages = this._copyLayers(layers);
+        this.selectedImageId = null;
+        this._syncDesignToLayers();
+      });
+      this.onPartLayersRestored?.(mesh, this._copyLayers(layers));
+    }
+
+    this.overlayImages = this._copyLayers(layersFor(this.activeMesh));
+    this.nextImageId = this._nextLayerId(this.overlayImages);
+    const selectedId = this.activeMesh === state.mesh ? state.selectedImageId : this.selectedImageId;
+    this.selectedImageId = this.overlayImages.some(i => i.id === selectedId) ? selectedId : null;
     this._notifyLayersSaved();
     this._updateLayersList();
     const sel = this.overlayImages.find(i => i.id === this.selectedImageId);
     if (sel) this._syncSlidersFromImage(sel);
     this._renderPreview();
-    this._renderComposite();
-    if (this._origMetalness !== null) {
-      this._renderStickerPBRMaps();
-      if (this._liveMetalnessTexture) this._liveMetalnessTexture.needsUpdate = true;
-      if (this._liveRoughnessTexture) this._liveRoughnessTexture.needsUpdate = true;
-    }
+    this._syncDesignToLayers();
     window.markNeedsRender?.(4);
+  }
+
+  _copyLayers(layers) {
+    return layers.map(layer => ({
+      ...layer,
+      position: { ...layer.position },
+      size:     { ...layer.size },
+      textData: layer.textData ? { ...layer.textData } : null,
+    }));
+  }
+
+  _sameLayers(a, b) {
+    const key = l => [l.id, l.position.x, l.position.y, l.size.w, l.size.h, l.rotation, !!l.flipH, !!l.flipV].join();
+    return a.length === b.length && a.every((layer, i) => layer.image === b[i].image && key(layer) === key(b[i]));
   }
 
   // ─── Snapshot the current overlay state for history ──────────
   // Returns a plain object — no dataURL encoding, keeps HTMLImageElement refs.
+  // Covers every part opened so far, because undo restores all of them together.
   snapshotOverlays() {
+    const parts = new Map();
+    for (const mesh of this._partBaselines.keys()) {
+      if (mesh !== this.activeMesh) parts.set(mesh, this._copyLayers(this._partStates.get(mesh)?.overlayImages ?? []));
+    }
     return {
-      overlayImages: this.overlayImages.map(img => ({
-        id:          img.id,
-        name:        img.name,
-        type:        img.type     || 'image',
-        textData:    img.textData ? { ...img.textData } : null,
-        position:    { ...img.position },
-        size:        { ...img.size },
-        rotation:    img.rotation,
-        aspectRatio: img.aspectRatio,
-        flipH:       img.flipH,
-        flipV:       img.flipV,
-        image:       img.image, // live HTMLImageElement — no re-encoding needed
-      })),
+      mesh: this.activeMesh,
+      overlayImages: this._copyLayers(this.overlayImages),
       selectedImageId: this.selectedImageId,
+      parts,
     };
   }
 
@@ -2111,32 +2405,21 @@ export class UVEditor {
     this._materialBaseColor = state.materialBaseColor || this._materialBaseColor;
     this.nextImageId = Number.isFinite(state.nextImageId) ? state.nextImageId : this.nextImageId;
 
+    const mesh = this.activeMesh;
     const loaded = [];
     const overlays = Array.isArray(state.overlayImages) ? state.overlayImages : [];
-    await Promise.all(overlays.map(saved => new Promise((resolve) => {
-      if (!saved?.imageData) { resolve(); return; }
-      const img = new Image();
-      img.onload = () => {
-        img._originalDataURL = saved.imageData;
-        loaded.push({
-          id:          Number.isFinite(saved.id) ? saved.id : this.nextImageId++,
-          image:       img,
-          name:        saved.name || 'Design',
-          type:        saved.type     || 'image',
-          textData:    saved.textData ? { ...saved.textData } : null,
-          position:    saved.position ? { ...saved.position } : { x: 50, y: 50 },
-          size:        saved.size     ? { ...saved.size }     : { w: 30, h: 30 },
-          rotation:    Number.isFinite(saved.rotation) ? saved.rotation : 0,
-          aspectRatio: saved.aspectRatio || (img.width / img.height),
-          flipH:       !!saved.flipH,
-          flipV:       !!saved.flipV,
-          _originalDataURL: saved.imageData,
-        });
-        resolve();
-      };
-      img.onerror = () => resolve();
-      img.src = saved.imageData;
-    })));
+    const decoded = await Promise.all(overlays.map(async saved => {
+      if (!saved?.imageData) return null;
+      try {
+        const image = await loadDesignImage(saved.imageData);
+        return { ...saved, id: saved.id ?? this.nextImageId++, image,
+          name: saved.name || 'Design', type: saved.type || 'image',
+          aspectRatio: saved.aspectRatio || image.width / image.height,
+          _originalDataURL: saved.imageData };
+      } catch (err) { this.log(`Could not restore design: ${err.message}`, true); return null; }
+    }));
+    loaded.push(...decoded.filter(Boolean));
+    if (mesh !== this.activeMesh) return; // these layers belong to a part we've since left
 
     // Only replace overlays if the session has unsaved ones — otherwise keep
     // the decals that openWithPreloadedData restored from the saved custom model.
@@ -2145,6 +2428,8 @@ export class UVEditor {
       this.selectedImageId = loaded.some(i => i.id === state.selectedImageId)
         ? state.selectedImageId
         : (loaded[0]?.id ?? null);
+      this.nextImageId = this._nextLayerId(loaded);
+      if (mesh) this._partBaselines.set(mesh, this._copyLayers(loaded));
     }
 
     const wrapBtn = document.getElementById('wrap-uv-btn');
@@ -2158,10 +2443,7 @@ export class UVEditor {
       if (sel) this._syncSlidersFromImage(sel);
     }
     this._renderPreview();
-    if (this.overlayImages.length > 0) {
-      this._renderComposite();
-      this.applyTextureToModel();
-    }
+    if (this.overlayImages.length > 0) this.applyTextureToModel();
   }
 
   // ─── Design layer persistence hooks ──────────────────────────
@@ -2195,18 +2477,33 @@ export class UVEditor {
     return entry._originalDataURL ?? this._imageToDataURL(entry.image);
   }
 
+  // A copy of a part's material for export, with or without its design. A part with a
+  // design keeps it in its composite textures. Caller is responsible for disposing it.
+  getExportMaterial(mesh, includeDesign) {
+    if (!includeDesign) return this.getCleanMaterialForThumbnail(mesh);
+    const material = mesh.material.clone();
+    if (mesh === this.activeMesh && this._uvCheckActive) material.map = this._savedMaterialMap ?? null;
+    return material;
+  }
+
   // ─── Build a clean material for thumbnail rendering ───────────
   // Returns a cloned material with the channel map texture (not the composite)
   // and original PBR scalars/maps restored (not sticker-mode overrides).
   // Caller is responsible for disposing the returned material.
-  getCleanMaterialForThumbnail() {
-    if (!this.activeMesh?.material) return null;
-    const m = this.activeMesh.material.clone();
+  getCleanMaterialForThumbnail(mesh = this.activeMesh) {
+    if (!mesh?.material) return null;
+    if (mesh !== this.activeMesh) {
+      if (!this._partStates.has(mesh)) return mesh.material.clone();
+      return this._withPartState(mesh, () => this.getCleanMaterialForThumbnail());
+    }
+    const m = mesh.material.clone();
     // When decals are active, liveCanvasTexture is the composite. Replace it with
     // the raw channel map (baseTexture) so the thumbnail shows no decal overlay.
     // When no decals are active, material.map is already the correct channel map.
     if (this.liveCanvasTexture) {
       m.map = this.baseTexture ?? null;
+    } else if (this._uvCheckActive) {
+      m.map = this._savedMaterialMap ?? null;
     }
     // Restore original PBR scalars if sticker PBR is active
     if (this._origRoughness !== null) m.roughness = this._origRoughness;

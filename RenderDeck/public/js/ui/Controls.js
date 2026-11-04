@@ -1,10 +1,13 @@
+import * as IDBStorage from '../storage/indexedDBStorage.js';
+import { EXTRACTOR_IMAGE_KEY } from '../storage/storageKeys.js';
+import { fileDataURL, loadDesignImage } from '../utils/imageAssets.js';
 // CONTROLS.JS - UI Controls Management
 // Handles both original controls and new MeshPhysicalMaterial controls from Setting 3
 
 import { log } from '../utils/logger.js';
 import { STANDARD_ENVIRONMENTS } from '../config.js';
 import { generateEnvPreview } from '../core/SceneLoader.js';
-import { scheduleAppSetting } from '../storage/SettingsStorage.js';
+import { scheduleAppSetting, setAppBlobSetting, getAppSetting } from '../storage/SettingsStorage.js';
 
 const COLOR_CANVAS_SIZE = 168;
 const COLOR_SLIDER_HEIGHT = 16;
@@ -196,6 +199,35 @@ function generateSwatchColors(anchors, count = 64) {
 
 export class CompactColorPicker {
   static active = null;
+  static _extractorPickers = new Set();
+  static _extractorBlob = null;
+  static _extractorPreferences = { count: 24, noise: 0 };
+  static _activeFolderTab = 'color-picker-panel';
+  static setActiveFolderTab(target) {
+    this._activeFolderTab = target;
+    for (const picker of this._extractorPickers) {
+      picker.titleEl.querySelectorAll('.folder-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.target === target));
+      [picker.colorPickerPanel, picker.extractorPanel].forEach(panel => {
+        panel.style.display = panel.id === target ? '' : 'none';
+      });
+    }
+  }
+  static getExtractorPreferences() { return { ...this._extractorPreferences }; }
+  static setExtractorPreferences(preferences) {
+    this._extractorPreferences = { ...this._extractorPreferences, ...preferences };
+    for (const picker of this._extractorPickers) {
+      picker.extractorCountSlider.value = picker.extractorCountField.value = this._extractorPreferences.count;
+      picker.extractorNoiseSlider.value = picker.extractorNoiseField.value = this._extractorPreferences.noise;
+    }
+  }
+  static async restoreExtractorImage() {
+    const blob = await IDBStorage.get('blobs', EXTRACTOR_IMAGE_KEY);
+    if (blob) {
+      this._extractorBlob = new File([blob], getAppSetting('colorExtractorFileName') || blob.name || 'Image', { type: blob.type });
+      await Promise.all([...this._extractorPickers].map(picker => picker._loadExtractorImage(this._extractorBlob, false)));
+    }
+  }
+
 
   // Swatch collections are shared by every picker instance and stored in
   // settings/app.swatchCollections. Nothing is written until the stored value
@@ -496,6 +528,16 @@ export class CompactColorPicker {
     noiseRow.append(noiseName, this.extractorNoiseSlider, this.extractorNoiseField);
 
     this.extractorSlidersEl.append(countRow, noiseRow);
+    CompactColorPicker._extractorPickers.add(this);
+    if (CompactColorPicker._extractorBlob) void this._loadExtractorImage(CompactColorPicker._extractorBlob, false);
+    CompactColorPicker.setExtractorPreferences(CompactColorPicker.getExtractorPreferences());
+    for (const input of [this.extractorCountSlider, this.extractorCountField, this.extractorNoiseSlider, this.extractorNoiseField]) {
+      input.addEventListener('input', () => {
+        CompactColorPicker.setExtractorPreferences({ count: Number(this.extractorCountSlider.value), noise: Number(this.extractorNoiseSlider.value) });
+        document.dispatchEvent(new CustomEvent('extractor-preferences-changed'));
+      });
+    }
+
 
     this.extractorActionsEl = document.createElement('div');
     this.extractorActionsEl.className = 'compact-color-picker__extractor-actions';
@@ -541,14 +583,10 @@ export class CompactColorPicker {
 
     this.titleEl.querySelectorAll('.folder-tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        this.titleEl.querySelectorAll('.folder-tab').forEach(btn => btn.classList.remove('active'));
-        tab.classList.add('active');
-        const targetId = tab.dataset.target;
-        [this.colorPickerPanel, this.extractorPanel].forEach(panel => {
-          panel.style.display = panel.id === targetId ? '' : 'none';
-        });
+        CompactColorPicker.setActiveFolderTab(tab.dataset.target);
       });
     });
+    CompactColorPicker.setActiveFolderTab(CompactColorPicker._activeFolderTab);
   }
 
   _buildPresetSwatches() {
@@ -2125,7 +2163,7 @@ export class CompactColorPicker {
       dragCounter = 0;
       preview.classList.remove('drag-over');
       const file = evt.dataTransfer.files?.[0];
-      if (file && file.type.startsWith('image/')) this._loadExtractorImage(file);
+      if (file && /\.(png|jpe?g|svg|webp|gif)$/i.test(file.name)) this._loadExtractorImage(file);
     });
 
     this.extractorActionsEl.querySelectorAll('[data-algo]').forEach(btn => {
@@ -2136,49 +2174,37 @@ export class CompactColorPicker {
     });
   }
 
-  _loadExtractorImage(file) {
-    this._extractorFilename = file.name.replace(/\.[^.]+$/, '');
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      this.extractorPreviewImgEl.src = url;
+  async _loadExtractorImage(file, persist = true) {
+    try {
+      const original = await fileDataURL(file);
+      const image = await loadDesignImage(original);
+      const scale = Math.min(1, 300 / Math.max(image.width, image.height));
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0, width, height);
+      const data = context.getImageData(0, 0, width, height).data;
+      if (persist) {
+        await setAppBlobSetting('colorExtractorFileName', file.name || 'Image', EXTRACTOR_IMAGE_KEY, file);
+        CompactColorPicker._extractorBlob = file;
+        for (const picker of CompactColorPicker._extractorPickers) if (picker !== this) void picker._loadExtractorImage(file, false);
+      }
+      this._extractorFilename = (file.name || 'Image').replace(/\.[^.]+$/, '');
+      this.extractorPreviewImgEl.src = image.src;
       this.extractorPreviewImgEl.style.display = '';
       this.extractorPreviewTextEl.style.display = 'none';
-
-      const MAX_DIM = 300;
-      const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-      const w = Math.max(1, Math.round(img.width * scale));
-      const h = Math.max(1, Math.round(img.height * scale));
-
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      const imageData = ctx.getImageData(0, 0, w, h);
-
-      this._extractorWidth = w;
-      this._extractorHeight = h;
-      const data = imageData.data;
+      this._extractorWidth = width;
+      this._extractorHeight = height;
       this._extractorRawData = data;
-
-      const pixels = [];
+      this._extractorPixels = [];
       for (let i = 0; i < data.length; i += 4) {
-        if (data[i + 3] < 128) continue;
-        pixels.push({ r: data[i], g: data[i + 1], b: data[i + 2] });
+        if (data[i + 3] >= 128) this._extractorPixels.push({ r: data[i], g: data[i + 1], b: data[i + 2] });
       }
-      this._extractorPixels = pixels;
-
       this.extractorResultsEl.style.display = 'none';
       this.extractorResultsEl.innerHTML = '';
-      URL.revokeObjectURL(url);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      this.extractorPreviewTextEl.textContent = 'Could not load image. Try JPG or PNG.';
-      this.extractorPreviewTextEl.style.display = '';
-    };
-    img.src = url;
+    } catch (err) { log(`Could not save color extractor image: ${err.message}`, true); }
   }
 
   _runExtractor(algo) {
@@ -2584,6 +2610,7 @@ export class CustomSelect {
     this._lastEnvKey     = undefined; // env key at last render
     this._rerenderSeq    = 0;         // incremented to cancel stale batches
     this._items          = [];
+    this._labels         = new Map(); // value → display label, when the two differ
     this._build();
   }
 
@@ -2694,8 +2721,18 @@ export class CustomSelect {
     if (name === this._value) this._setTriggerThumb(name);
   }
 
+  _labelOf(value) {
+    return this._labels.get(value) ?? value;
+  }
+
+  /** Display text for a value that isn't in the list (or differs from its value). */
+  setLabel(value, label) {
+    this._labels.set(value, label);
+    if (value === this._value) this._label.textContent = label;
+  }
+
   /**
-   * @param {string[]} items
+   * @param {Array<string|{value: string, label: string}>} items
    * @param {(name: string) => string|null} [getThumbnail]
    * @param {() => string} [getEnvKey] — returns a key identifying current environment
    */
@@ -2706,6 +2743,7 @@ export class CustomSelect {
     this._getEnvKeyFn    = getEnvKey   ?? null;
     this._lastEnvKey     = getEnvKey?.();
     this._thumbMap.clear();
+    this._labels.clear();
     this._dropdown.innerHTML = '';
 
     // Support grouped items: { groups: [{ label, items }] } or flat string[]
@@ -2716,12 +2754,15 @@ export class CustomSelect {
     groups.forEach((group, gi) => {
       if (group.label && group.items.length > 0) {
         const header = document.createElement('div');
-        header.className = 'custom-select__group-label';
+        header.className = 'custom-select__group-label' + (group.isObject ? ' custom-select__group-label--object' : '');
         header.textContent = group.label;
         this._dropdown.appendChild(header);
       }
 
-      group.items.forEach(name => {
+      group.items.forEach(item => {
+        const name = typeof item === 'string' ? item : item.value;
+        const displayName = typeof item === 'string' ? item : item.label;
+        this._labels.set(name, displayName);
         const opt = document.createElement('div');
         opt.className = 'custom-select__option';
         opt.dataset.value = name;
@@ -2744,7 +2785,7 @@ export class CustomSelect {
 
         const label = document.createElement('span');
         label.className = 'custom-select__option-label';
-        label.textContent = name;
+        label.textContent = displayName;
 
         const renameBtn = document.createElement('button');
         renameBtn.type = 'button';
@@ -2754,7 +2795,7 @@ export class CustomSelect {
         renameBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5a1.414 1.414 0 012 2L4.5 9.5 2 10.5l1-2.5L8.5 1.5z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         renameBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          this._startInlineRename(opt, name);
+          this._startInlineRename(opt, name, displayName);
         });
 
         labelRow.append(label, renameBtn);
@@ -2772,11 +2813,12 @@ export class CustomSelect {
     });
 
     this._setTriggerThumb(this._value);
+    if (this._value) this._label.textContent = this._labelOf(this._value);
   }
 
   _select(value) {
     this._value = value;
-    this._label.textContent = value;
+    this._label.textContent = this._labelOf(value);
     this._setTriggerThumb(value);
     this._dropdown.querySelectorAll('.custom-select__option').forEach(o =>
       o.classList.toggle('is-active', o.dataset.value === value)
@@ -2789,7 +2831,7 @@ export class CustomSelect {
   set value(v) {
     if (!v) return;
     this._value = v;
-    this._label.textContent = v;
+    this._label.textContent = this._labelOf(v);
     this._setTriggerThumb(v);
     this._dropdown.querySelectorAll('.custom-select__option').forEach(o =>
       o.classList.toggle('is-active', o.dataset.value === v)
@@ -2799,7 +2841,7 @@ export class CustomSelect {
   // Select without closing — used by the inline rename so the dropdown stays open
   _selectNoClose(value) {
     this._value = value;
-    this._label.textContent = value;
+    this._label.textContent = this._labelOf(value);
     this._setTriggerThumb(value);
     this._dropdown.querySelectorAll('.custom-select__option').forEach(o =>
       o.classList.toggle('is-active', o.dataset.value === value)
@@ -2807,7 +2849,7 @@ export class CustomSelect {
     this._handlers.forEach(cb => cb(value));
   }
 
-  _startInlineRename(opt, name) {
+  _startInlineRename(opt, name, displayName = name) {
     if (opt.querySelector('.custom-select__option-rename-form')) return;
 
     const label     = opt.querySelector('.custom-select__option-label');
@@ -2824,7 +2866,7 @@ export class CustomSelect {
 
     const input = document.createElement('input');
     input.type = 'text';
-    input.value = name;
+    input.value = displayName;
     input.className = 'custom-select__option-rename-input';
     input.autocomplete = 'off';
     input.spellcheck = false;
@@ -2864,7 +2906,7 @@ export class CustomSelect {
       committed = true;
       const newName = input.value.trim();
       restore();
-      if (newName && newName !== name) {
+      if (newName && newName !== displayName) {
         if (this._renameHandlers) this._renameHandlers.forEach(cb => cb(name, newName));
       }
     };
@@ -2889,7 +2931,7 @@ export class CustomSelect {
   /** Register a value-change handler. */
   onChange(cb) { this._handlers.push(cb); }
 
-  /** Register a rename handler — cb(oldName, newName) fires on inline rename commit. */
+  /** Register a rename handler — cb(value, newName) fires on inline rename commit. */
   onRenameRequest(cb) {
     if (!this._renameHandlers) this._renameHandlers = [];
     this._renameHandlers.push(cb);
@@ -3045,7 +3087,7 @@ export class ControlsManager {
     };
 
     const missing = Object.entries(this.elements)
-      .filter(([, el]) => !el)
+      .filter(([name, el]) => !el && name !== 'uploadModelBtn')
       .map(([name]) => name);
     if (missing.length > 0) {
       log(`⚠️ Missing UI elements: ${missing.join(', ')}`);
@@ -3061,8 +3103,9 @@ export class ControlsManager {
     // Custom material preset dropdown (replaces native <select>)
     if (this.elements.materialSelect) {
       this._matSelect = new CustomSelect(this.elements.materialSelect);
-      this._matSelect.onChange(value => {
-        this.callbacks.onMaterialChange?.(value);
+      // Assigning can load another object's file, so the commit waits for it
+      this._matSelect.onChange(async value => {
+        await this.callbacks.onMaterialChange?.(value);
         this.callbacks.onMaterialPropertyCommit?.();
       });
     }
@@ -4021,17 +4064,14 @@ export class ControlsManager {
   }
 
   /**
-   * Populate the material preset dropdown (Setting 3).
-   * @param {{ user: string[], standard: string[] }} categories
-   * @param {(name: string) => string|null} [getThumbnail]
+   * Populate the material dropdown (Setting 3) from the library's sections.
+   * @param {Array<{ label: string, isObject?: boolean, items: Array<{value: string, label: string}> }>} sections
+   * @param {(id: string) => string|null} [getThumbnail]
    * @param {() => string} [getEnvKey]
    */
-  updateMaterialPresetSelect(categories, getThumbnail, getEnvKey) {
+  updateMaterialPresetSelect(sections, getThumbnail, getEnvKey) {
     if (!this._matSelect) return;
-    const groups = [];
-    if (categories.user?.length)     groups.push({ label: 'Custom Materials',  items: categories.user });
-    if (categories.standard?.length) groups.push({ label: 'Standard Materials', items: categories.standard });
-    this._matSelect.populate({ groups }, getThumbnail, getEnvKey);
+    this._matSelect.populate({ groups: sections.filter(section => section.items.length) }, getThumbnail, getEnvKey);
   }
 
   /**
@@ -4121,7 +4161,8 @@ export class ControlsManager {
 
     // Dispersion / Reflectivity / Sheen intensity
     set(el.dispersionSlider, el.dispersionInput, material.dispersion ?? 0);
-    set(el.reflectivitySlider, el.reflectivityInput, material.reflectivity ?? 0.5);
+    // Reflectivity is derived from IOR; hide floating-point round-trip noise.
+    set(el.reflectivitySlider, el.reflectivityInput, Number((material.reflectivity ?? 0.5).toFixed(12)));
     set(el.sheenSlider, el.sheenInput, material.sheen ?? 0);
 
     // Normal scale (Vector2 — use x component)
@@ -4212,14 +4253,16 @@ export class ControlsManager {
     }
   }
 
-  /** Sync the custom material dropdown to show a preset without firing onChange. */
-  setMaterialPresetValue(name) {
-    if (this._matSelect) this._matSelect.value = name;
+  /** Sync the material dropdown to a library id without firing onChange. */
+  setMaterialPresetValue(id, label = null) {
+    if (!this._matSelect) return;
+    if (label) this._matSelect.setLabel(id, label);
+    this._matSelect.value = id;
   }
 
-  /** Read the currently selected material preset name from the dropdown. */
+  /** Read the library id currently selected in the material dropdown. */
   getMaterialPresetValue() {
-    return this._matSelect ? this._matSelect.value : 'Default — White';
+    return this._matSelect ? this._matSelect.value : null;
   }
 
   /** Register a handler for when the user clicks the rename icon on a preset. */

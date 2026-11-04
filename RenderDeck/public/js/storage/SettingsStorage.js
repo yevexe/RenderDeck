@@ -1,7 +1,7 @@
 
 // SETTINGSSTORAGE.JS — App and project settings (IndexedDB 'settings' store)
 //
-// settings/app          → { swatchCollections, hiddenPresets, sketchfabToken }
+// settings/app          → { swatchCollections, sketchfabToken }
 //                         Shared by every project.
 // settings/${projectId} → { camera, view, renderer, preview, background, environment, ui }
 //                         Written a short time after each change (see pendingWrites.js).
@@ -80,4 +80,17 @@ export function scheduleProjectSettings(projectId, collect) {
   scheduleWrite(`settings:${projectId}`,
     () => IDBStorage.put('settings', projectSettingsKey(projectId), collect()),
     { label: 'project settings' });
+}
+
+// An app-level file and its metadata are committed together.
+export async function setAppBlobSetting(name, value, blobKey, blob) {
+  await loadAppSettings();
+  return _enqueueAppWrite(async () => {
+    const next = { ..._app, [name]: value };
+    await IDBStorage.batch([
+      { type: 'put', store: 'blobs', key: blobKey, value: blob },
+      { type: 'put', store: 'settings', key: APP_SETTINGS_KEY, value: next },
+    ]);
+    _app = next;
+  });
 }

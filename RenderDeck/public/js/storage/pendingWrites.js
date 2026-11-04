@@ -14,6 +14,7 @@ import { log } from '../utils/logger.js';
 const DEFAULT_DELAY = 300;
 const _pending = new Map(); // id → { timer, run, label }  (scheduled, not started)
 const _running = new Map(); // id → Promise of the run in progress
+const _failed = new Map();  // id → label of a write whose latest run failed
 
 // ─────────────────────────────────────────────
 // Schedule a write. A newer call with the same id replaces the older one.
@@ -37,6 +38,7 @@ export function cancelWrite(id) {
   if (!existing) return;
   if (existing.timer) clearTimeout(existing.timer);
   _pending.delete(id);
+  _failed.delete(id);
 }
 
 // Cancel every pending write (e.g. before the database is deleted)
@@ -60,6 +62,11 @@ export function flushWrites() {
   return Promise.all([...ids].map(id => _settle(id)));
 }
 
+// Labels of the writes whose latest run failed (their changes aren't stored)
+export function getFailedWrites() {
+  return [..._failed.values()];
+}
+
 export function hasPendingWrites() {
   return _pending.size > 0 || _running.size > 0;
 }
@@ -76,7 +83,9 @@ function _start(id) {
   const run = (async () => {
     try {
       await entry.run();
+      _failed.delete(id);
     } catch (err) {
+      _failed.set(id, entry.label);
       console.error(`[pendingWrites] ${entry.label} failed:`, err);
       log(`Save failed (${entry.label}): ${err.message}`, true);
     }

@@ -355,7 +355,7 @@
 
               <!-- Upload / manage models -->
               <label for="model-file-input" class="button">&#128194; Upload 3D Model (.obj or .glb)</label>
-              <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg,.glb" multiple style="display:none;">
+              <input type="file" id="model-file-input" accept=".obj,.mtl,.png,.jpg,.jpeg,.svg,.webp,.bmp,.gif,.glb" multiple style="display:none;">
               <p class="hint">.glb (standalone), or .obj + optional .mtl and textures — drag &amp; drop onto preview</p>
               <input type="file" id="file-input" accept=".json,.renderdeck.json" style="display:none;">
               <!-- hidden legacy select for JS compat -->
@@ -1388,23 +1388,24 @@
 
             <h5>Render Options</h5>
             <div class="toggle-list">
-              <label class="toggle-row">
+              <label class="toggle-row" title="Applies to .png, .webp and .exr. JPG files can't be transparent, so .jpg ignores this.">
                 <input type="checkbox" id="export-transparent-bg">
                 <span>Transparent Background</span>
               </label>
-              <label class="toggle-row">
+              <label class="toggle-row" title="Applies to .jpg, .png and .webp. Transparent images and .exr files are saved without post-processing.">
                 <input type="checkbox" id="export-include-postfx" checked>
                 <span>Include Post-Processing</span>
               </label>
-              <label class="toggle-row">
+              <label class="toggle-row" title="Uses the size chosen under Output Resolution in the Rendering tab. Unchecked: uses the size of the preview.">
                 <input type="checkbox" id="export-use-preview-res" checked>
                 <span>Use Selected Resolution</span>
               </label>
-              <label class="toggle-row">
+              <label class="toggle-row" title="When the size comes from the preview, renders it at the full pixel density of your screen. A selected resolution is always exact.">
                 <input type="checkbox" id="export-full-quality">
                 <span>Force Full Quality (Ignore Preview Scale)</span>
               </label>
             </div>
+            <p class="hint">Transparent images skip post-processing. .exr saves raw HDR values, without tone mapping or post-processing.</p>
 
             <hr>
 
@@ -1419,34 +1420,36 @@
 
             <h5>Package Options</h5>
             <div class="toggle-list">
-              <label class="toggle-row">
+              <label class="toggle-row" title="Applies to .gltf. Unchecked: the .gltf and its textures download together as a zip.">
                 <input type="checkbox" id="export-embed-textures" checked>
                 <span>Embed Textures</span>
               </label>
-              <label class="toggle-row">
+              <label class="toggle-row" title="Applies to packages that download as a zip: .obj + .mtl, .zip, and .gltf without embedded textures.">
                 <input type="checkbox" id="export-include-env">
                 <span>Include Environment HDR</span>
               </label>
-              <label class="toggle-row">
+              <label class="toggle-row" title="Applies to packages that download as a zip: .obj + .mtl, .zip, and .gltf without embedded textures.">
                 <input type="checkbox" id="export-include-material-json" checked>
                 <span>Include Material Presets (.json)</span>
               </label>
-              <label class="toggle-row">
+              <label class="toggle-row" title="Checked: textures include your designs, as shown in the preview. Unchecked: the part's own textures without designs.">
                 <input type="checkbox" id="export-include-decals" checked>
                 <span>Include Design Textures</span>
               </label>
             </div>
+            <p class="hint">Point at a format to see which options it uses. A single .glb or .gltf file can't hold the HDR or .json: use .zip for those.</p>
 
             <hr>
 
             <h4>Project</h4>
             <div class="button-row">
-              <button class="button" id="save-project-btn">Save Project</button>
-              <button class="button" id="download-project-btn">Download Project</button>
-              <button class="button" id="load-project-btn">Load Project</button>
+              <button class="button" id="save-project-btn" title="Your project saves automatically. This makes sure nothing is still waiting to be written.">Save Project</button>
+              <button class="button" id="download-project-btn" title="Downloads a .rdo backup file of this whole project.">Download Project</button>
+              <button class="button" id="load-project-btn" title="Opens a .rdo file as a new project. Your current project isn't changed.">Load Project</button>
             </div>
+            <input type="file" id="project-file-input" accept=".rdo,.renderdeck" style="display:none;">
             <div class="toggle-list" style="margin-top:8px;">
-              <label class="toggle-row">
+              <label class="toggle-row" title="Unchecked: leaves out design images and images added to materials. Text layers, models, props and environments stay.">
                 <input type="checkbox" id="project-include-images" checked>
                 <span>Include Uploaded Images in Project File</span>
               </label>
@@ -1650,9 +1653,6 @@
 
   <script type="module" src="js/main.js"></script>
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-    }
     // Hold a shared Web Lock to discourage the browser from discarding this tab
     if (navigator.locks) {
       navigator.locks.request('renderdeck-alive', { mode: 'shared' }, () => new Promise(() => {}));

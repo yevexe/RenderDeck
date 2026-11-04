@@ -1,3 +1,7 @@
+import * as IDBStorage from '../storage/indexedDBStorage.js';
+import { getActiveProjectId } from '../storage/ProjectStorage.js';
+import { uploadedPropKey, uploadedPropBlobKey } from '../storage/storageKeys.js';
+import { assertSelfContainedGLTF } from '../utils/modelAssets.js';
 // PROPMANAGER.JS - Manages scene props (GLB models)
 
 import * as THREE from 'three';
@@ -20,6 +24,7 @@ export class PropManager {
     this.gltfLoader = new GLTFLoader();
     this.objLoader = new OBJLoader();
     this.props = [];
+    this._unresolvedProps = [];
     this.nextPropId = 1;
     this.selectedProp = null;
     this.transformControls = null;
@@ -80,6 +85,8 @@ export class PropManager {
         }
         this._updatePropTransform(this.selectedProp);
       }
+      this.onMainModelTransform?.();
+      this.onChange?.();
       this._outlineDirty = true;
       window.markNeedsRender?.(4);
     });
@@ -189,8 +196,8 @@ export class PropManager {
       }
     });
 
-    this.customProps.forEach((_url, name) => {
-      props.push({ id: `custom_${name}`, name, category: 'Custom', type: 'custom' });
+    this.customProps.forEach((entry, name) => {
+      props.push({ id: `custom_${name}`, name: entry.displayName || name, category: entry.sketchfabUid ? 'Sketchfab' : 'Custom', type: 'custom' });
     });
 
     return props;
@@ -266,7 +273,7 @@ export class PropManager {
 
       const onError = (error) => {
         this.log(`Failed to load prop: ${error.message}`, true);
-        reject(error);
+        resolve(null);
       };
 
       if (format === 'obj') {
@@ -567,6 +574,11 @@ export class PropManager {
     return !!(this.selectedProp?._outlineHelper || this._mainModelHelper);
   }
 
+  /** Editing aids in the scene that don't belong in an exported image */
+  getOverlayObjects() {
+    return [this._tcHelper, this._mainModelHelper, this.selectedProp?._outlineHelper].filter(Boolean);
+  }
+
   setShowLabels(visible) {
     this._showLabels = visible;
     if (!visible) this._clearSizeLabels();
@@ -740,21 +752,72 @@ export class PropManager {
     return `custom_${name}`;
   }
 
-  async uploadCustomProp(file) {
-    const ext = file.name.match(/\.(glb|gltf|obj)$/i);
-    if (!ext) {
-      this.log('Only GLB/GLTF/OBJ files are supported for props', true);
+  async loadStoredProps() {
+    const pid = await getActiveProjectId();
+    for (const key of await IDBStorage.getAllKeys('uploaded-props', `${pid}:`)) {
+      const meta = await IDBStorage.get('uploaded-props', key);
+      const blob = await IDBStorage.get('blobs', uploadedPropBlobKey(pid, meta.name));
+      if (!blob) { this.log(`Stored prop file is missing: ${meta.displayName || meta.name}`, true); continue; }
+      this.registerBlobProp(meta.name, URL.createObjectURL(blob), meta.format, meta.sketchfabUid, meta.displayName);
+      this.customProps.get(meta.name).fileName = meta.fileName;
+    }
+  }
+
+  async saveBlobProp(name, url, sketchfabUid, displayName) {
+    if (this.customProps.has(name)) return `custom_${name}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Prop download failed: ${response.status}`);
+    const blob = await response.blob();
+    const magic = new DataView(await blob.slice(0, 4).arrayBuffer()).getUint32(0, true);
+    const ext = magic === 0x46546c67 ? 'glb' : 'gltf';
+    return await this.uploadCustomProp(new File([blob], `${name}.${ext}`, { type: blob.type }), { name, sketchfabUid, displayName });
+  }
+
+  async uploadCustomProp(file, options = {}) {
+    let url;
+    try {
+      const ext = file.name.match(/\.(glb|gltf|obj)$/i)?.[1].toLowerCase();
+      if (!ext) throw new Error('Only GLB/GLTF/OBJ files are supported for props');
+      let name = options.name || file.name.replace(/\.(glb|gltf|obj)$/i, '');
+      const existing = this.customProps.get(name);
+      if (existing && !options.name && existing.fileName !== file.name) name = `${name} (${ext.toUpperCase()})`;
+      if (this.customProps.has(name)) throw new Error(`A prop named "${name}" already exists.`);
+      if (ext === 'glb' || ext === 'gltf') await assertSelfContainedGLTF(file);
+      if (ext === 'obj' && /^\s*mtllib\s+/mi.test(await file.text())) throw new Error('A standalone OBJ prop cannot reference an external MTL file.');
+      url = URL.createObjectURL(file);
+      const object = ext === 'obj' ? await new OBJLoader().loadAsync(url) : (await this.gltfLoader.loadAsync(url)).scene;
+      let meshes = 0;
+      const resources = new Set();
+      object.traverse(child => {
+        if (child.isMesh) meshes++;
+        if (child.geometry) resources.add(child.geometry);
+        for (const material of [child.material].flat().filter(Boolean)) {
+          resources.add(material);
+          Object.values(material).forEach(value => { if (value?.isTexture) resources.add(value); });
+        }
+      });
+      resources.forEach(resource => resource.dispose());
+      if (!meshes) throw new Error('The prop contains no drawable meshes.');
+      const pid = await getActiveProjectId();
+      const format = ext === 'obj' ? 'obj' : 'gltf';
+      const meta = { name, format, fileName: file.name, uploadDate: new Date().toISOString(), sketchfabUid: options.sketchfabUid || null, displayName: options.displayName || name };
+      await IDBStorage.batch([
+        { type: 'put', store: 'blobs', key: uploadedPropBlobKey(pid, name), value: file },
+        { type: 'put', store: 'uploaded-props', key: uploadedPropKey(pid, name), value: meta },
+      ]);
+      this.registerBlobProp(name, url, format, meta.sketchfabUid, meta.displayName);
+      this.customProps.get(name).fileName = file.name;
+      this.log(`Custom prop saved: ${meta.displayName}`);
+      return `custom_${name}`;
+    } catch (err) {
+      if (url) URL.revokeObjectURL(url);
+      this.log(`Could not save prop: ${err.message}`, true);
       return null;
     }
-    const name = file.name.replace(/\.(glb|gltf|obj)$/i, '');
-    const url = URL.createObjectURL(file);
-    const format = ext[1].toLowerCase() === 'obj' ? 'obj' : 'gltf';
-    this.customProps.set(name, { url, format });
-    this.log(`Custom prop uploaded: ${name}`);
-    return `custom_${name}`;
   }
 
   clearAllProps() {
+    this._unresolvedProps = [];
     while (this.props.length > 0) {
       this.removeProp(this.props[0].id);
     }
@@ -767,9 +830,16 @@ export class PropManager {
     if (!list) return;
 
     list.innerHTML = '';
-    if (this.props.length === 0) {
+    if (this.props.length === 0 && !this._unresolvedProps.length) {
       list.innerHTML = '<p class="empty-message">No props added</p>';
       return;
+    }
+
+    for (const prop of this._unresolvedProps) {
+      const item = document.createElement('div');
+      item.className = 'prop-item';
+      item.textContent = `Unavailable: ${prop.displayName || prop.type} (saved entry retained)`;
+      list.appendChild(item);
     }
 
     this.props.forEach(prop => {
@@ -793,7 +863,7 @@ export class PropManager {
   }
 
   getSceneData() {
-    return this.props.map(prop => {
+    return [...this._unresolvedProps.map(prop => structuredClone(prop)), ...this.props.map(prop => {
       const entry = prop.type.startsWith('custom_')
         ? this.customProps.get(prop.type.replace('custom_', ''))
         : null;
@@ -805,7 +875,7 @@ export class PropManager {
         scale: { ...prop.scale },
         ...(entry?.sketchfabUid ? { sketchfabUid: entry.sketchfabUid } : {}),
       };
-    });
+    })];
   }
 
   getMainModelTransform() {
@@ -834,19 +904,24 @@ export class PropManager {
 
   async loadSceneData(propsData) {
     this.clearAllProps();
-    for (const data of propsData) {
-      const prop = await this.addProp(data.type, data.position);
-      if (prop) {
+    for (const data of propsData || []) {
+      try {
+        const prop = await this.addProp(data.type, data.position);
+        if (!prop) throw new Error('Prop file unavailable');
         prop.object3D.rotation.set(
-          THREE.MathUtils.degToRad(data.rotation.x),
-          THREE.MathUtils.degToRad(data.rotation.y),
-          THREE.MathUtils.degToRad(data.rotation.z)
+          THREE.MathUtils.degToRad(data.rotation?.x || 0),
+          THREE.MathUtils.degToRad(data.rotation?.y || 0),
+          THREE.MathUtils.degToRad(data.rotation?.z || 0)
         );
-        prop.object3D.scale.set(data.scale.x, data.scale.y, data.scale.z);
+        if (data.scale) prop.object3D.scale.set(data.scale.x, data.scale.y, data.scale.z);
         this._updatePropTransform(prop);
         window.markNeedsRender?.(4);
+      } catch (err) {
+        this._unresolvedProps.push(structuredClone(data));
+        this.log(`Could not restore prop "${data.displayName || data.type}": ${err.message}. Its saved entry is retained.`, true);
       }
     }
+    this._updatePropsList();
     this.deselectProp();
   }
 
@@ -854,7 +929,7 @@ export class PropManager {
     this.clearAllProps();
     this.transformControls.dispose();
     this.scene.remove(this._tcHelper);
-    this.customProps.forEach(url => URL.revokeObjectURL(url));
+    this.customProps.forEach(entry => URL.revokeObjectURL(typeof entry === 'string' ? entry : entry.url));
     this.customProps.clear();
   }
 }

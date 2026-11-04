@@ -1,3 +1,5 @@
+import { startPersistentStorageRequests } from './storage/indexedDBStorage.js';
+startPersistentStorageRequests();
 // PROJECTS.JS — Projects page logic
 // Renders project cards and handles create/rename/delete actions.
 
@@ -10,7 +12,6 @@ import {
   setActiveProjectId,
   ensureActiveProject,
 } from './storage/ProjectStorage.js';
-import { log } from './utils/logger.js';
 
 const grid        = document.getElementById('projects-grid');
 const emptyMsg    = document.getElementById('projects-empty');
@@ -144,9 +145,7 @@ async function confirmDelete() {
   try {
     await deleteProject(_deleteId);
   } catch (err) {
-    // This page has no log panel — show the error as well as logging it
-    log(`Could not delete project: ${err.message}`, true);
-    alert(`Could not delete project: ${err.message}`);
+    console.log(`Could not delete project: ${err.message}`);
     closeDeleteModal();
     return;
   }

@@ -23,13 +23,9 @@ export class Logger {
       this.logs.shift(); // Remove oldest
     }
 
-    // Console logging
-    if (FEATURES.ENABLE_DEBUG_LOGGING) {
-      if (isError) {
-        console.error(`[${timestamp}]`, message);
-      } else {
-        console.log(`[${timestamp}]`, message);
-      }
+    // Console logging: errors and warnings always print
+    if (FEATURES.ENABLE_DEBUG_LOGGING || isError || String(message).startsWith('⚠️')) {
+      console.log(`[${timestamp}]`, message);
     }
 
     // UI logging

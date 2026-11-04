@@ -1,3 +1,5 @@
+import { loadDesignImage, fileDataURL } from '../utils/imageAssets.js';
+import { logError } from '../utils/logger.js';
 // NodeEditorManager.js — HTML node graph editor
 // Nodes are plain HTML divs; only connection curves use SVG.
 import { CompactColorPicker } from './Controls.js';
@@ -272,6 +274,25 @@ export class NodeEditorManager {
     this._bindDrag();
     this._bindResize();
     this._bindMenu();
+    // Capture listeners run before the node's own handlers. Read the graph in
+    // the next task, after those handlers have updated values and connections.
+    const changed = () => {
+      const key = this._currentKey;
+      setTimeout(() => {
+        if (key === null) return;
+        if (key === this._currentKey) this._saveGraph();
+        const graph = this.getGraphData().graphs[key];
+        if (graph) this.onGraphChanged?.(key, graph);
+      }, 0);
+    };
+    for (const event of ['input', 'change', 'click', 'wheel', 'contextmenu']) this._overlay.addEventListener(event, changed, true);
+    document.addEventListener('keydown', event => {
+      if (this._overlay.style.display !== 'none' && ['Delete', 'Backspace'].includes(event.key)) changed();
+    });
+    document.addEventListener('mouseup', () => {
+      if (this._overlay.style.display !== 'none') changed();
+    });
+
   }
 
   // ─── Public ───────────────────────────────────────────────────────────────
@@ -280,6 +301,7 @@ export class NodeEditorManager {
     if (!this._didPosition) { this._centre(); this._didPosition = true; }
     if (!this._nodes.find(n => n.type === 'material-output')) this._placeMaterialOutputNode();
     this._overlay.style.display = 'flex';
+    this._changed();
   }
   close() {
     this._overlay.style.display = 'none';
@@ -287,8 +309,27 @@ export class NodeEditorManager {
     this._closeRenameForm();
   }
 
+  // Node graphs stay per part: what a part's graph sets goes to the part's material,
+  // and so reaches every other part linked to that material.
   setMaterialOutputHandler(fn) {
-    this._onMatOutput = fn;
+    this._onMatOutput = (prop, value) => { if (!this._quietOutput) fn(prop, value); };
+  }
+
+  // Show a material's current values on the output node (after a part switch, undo or reset).
+  syncMaterialProps(params) {
+    for (const [prop, value] of Object.entries(params || {})) this.syncMaterialProp(prop, value);
+  }
+
+  _changed() {
+    if (this._currentKey === null) return;
+    this._saveGraph();
+    const graph = this.getGraphData().graphs[this._currentKey];
+    this.onGraphChanged?.(this._currentKey, graph);
+  }
+
+  setCollections(collections) {
+    if (Array.isArray(collections)) this._collections = structuredClone(collections);
+    this._renderCollections();
   }
 
   /** Serialize all graphs for persistence. Strip non-serializable DOM values. */
@@ -315,8 +356,11 @@ export class NodeEditorManager {
     // Recreate Image elements for any Image nodes that have a saved dataUrl
     this._graphs.forEach(graphData => {
       graphData.nodes.forEach(n => {
-        if (n.type === 'image' && n.values?.imageDataUrl) {
+        if (n.type === 'image' && n.values?.imageDataUrl && !n.values._imageEl) {
           const img = new Image();
+          img.onload = () => {
+            if (this._graphs.get(this._currentKey) === graphData) this._loadGraph(this._currentKey);
+          };
           img.src = n.values.imageDataUrl;
           n.values._imageEl = img;
         }
@@ -419,9 +463,13 @@ export class NodeEditorManager {
       this._nodes.forEach(n => this._renderNode(n));
       this._redrawConns();
       // Re-evaluate source nodes so connected values propagate to Material Output
+      // Opening a graph only shows it. The output goes to a material other parts may
+      // share, whose saved definition already holds the result, so nothing is sent.
       const sinks = new Set(this._conns.map(c => c.toNode));
+      this._quietOutput = true;
       this._nodes.filter(n => n.type !== 'material-output' && !sinks.has(n.id))
                  .forEach(n => this._evaluateFrom(n.id));
+      this._quietOutput = false;
     } else {
       this._nodes      = [];
       this._conns      = [];
@@ -636,8 +684,10 @@ export class NodeEditorManager {
       const chevron = document.createElement('span');
       chevron.className = 'ne-collection-chevron';
       toggle.append(titleSpan, chevron);
-      toggle.addEventListener('click', () => {
-        col.open = !col.open;
+      toggle.addEventListener('click', async () => {
+        const next = this._collections.map(item => item.id === col.id ? { ...item, open: !item.open } : item);
+        try { await this.onCollectionsChanged?.(next); } catch (err) { logError(err.message); return; }
+        this._collections = next;
         this._selectedColId = col.id;
         this._closeRenameForm();
         this._renderCollections();
@@ -765,8 +815,8 @@ export class NodeEditorManager {
         const ccp = new CompactColorPicker({
           pickerEl: picker,
           hexEl: hexInput,
-          onLiveChange: (hex) => { node.values[ctrl.key] = hex; this._evaluateFrom(node.id); },
-          onCommitChange: (hex) => { node.values[ctrl.key] = hex; this._evaluateFrom(node.id); },
+          onLiveChange: (hex) => { node.values[ctrl.key] = hex; this._evaluateFrom(node.id); this._changed(); },
+          onCommitChange: (hex) => { node.values[ctrl.key] = hex; this._evaluateFrom(node.id); this._changed(); },
         });
 
         hexInput.addEventListener('change', () => {
@@ -822,20 +872,26 @@ export class NodeEditorManager {
         fileInput.accept = 'image/*';
         fileInput.style.display = 'none';
 
-        const _loadFile = (file) => {
-          if (!file?.type.startsWith('image/')) return;
-          const reader = new FileReader();
-          reader.onload = evt => {
-            const img = new Image();
-            img.onload = () => {
-              node.values.imageDataUrl = evt.target.result;
-              node.values._imageEl = img;
-              dropZone.classList.add('has-image');
-              this._evaluateFrom(node.id);
-            };
-            img.src = evt.target.result;
-          };
-          reader.readAsDataURL(file);
+        const _loadFile = async (file) => {
+          if (!file || !/\.(png|jpe?g|svg|webp|gif)$/i.test(file.name)) { logError('Unsupported node image.'); return; }
+          try {
+            const dataURL = await fileDataURL(file);
+            const image = await loadDesignImage(dataURL);
+            const key = this._currentKey;
+            const graph = this.getGraphData().graphs[key];
+            const candidate = structuredClone({ ...graph, nodes: graph.nodes.map(item => ({ ...item, values: Object.fromEntries(Object.entries(item.values || {}).filter(([name]) => name !== '_imageEl')) })) });
+            const values = candidate.nodes.find(item => item.id === node.id).values;
+            values.imageDataUrl = dataURL;
+            values._imageBlob = file;
+            await this.onImageUpload?.(key, candidate);
+            if (key !== this._currentKey) return;
+            node.values.imageDataUrl = dataURL;
+            node.values._imageBlob = file;
+            node.values._imageEl = image;
+            dropZone.classList.add('has-image');
+            this._evaluateFrom(node.id);
+            this._changed();
+          } catch (err) { logError(`Could not save node image: ${err.message}`); }
         };
 
         dropZone.addEventListener('click', () => fileInput.click());
@@ -994,21 +1050,21 @@ export class NodeEditorManager {
             const slider = document.createElement('input');
             slider.type = 'range';
             slider.className = 'slider';
-            slider.min = c.min; slider.max = c.max; slider.step = c.step; slider.value = c.def;
+            slider.min = c.min; slider.max = c.max; slider.step = c.step; slider.value = node.values[port.matProp] ?? c.def;
             const numInput = document.createElement('input');
             numInput.type = 'number';
             numInput.className = 'value-input';
             numInput.inputMode = 'decimal';
             numInput.min = c.min; numInput.max = c.max; numInput.step = c.step;
-            numInput.value = c.def;
+            numInput.value = node.values[port.matProp] ?? c.def;
             slider.addEventListener('input', () => {
               numInput.value = slider.value;
-              if (port.matProp) this._onMatOutput?.(port.matProp, parseFloat(slider.value));
+              if (port.matProp) { node.values[port.matProp] = parseFloat(slider.value); this._onMatOutput?.(port.matProp, parseFloat(slider.value)); }
             });
             numInput.addEventListener('input', () => {
               const v = Math.min(c.max, Math.max(c.min, parseFloat(numInput.value) || 0));
               slider.value = v;
-              if (port.matProp) this._onMatOutput?.(port.matProp, v);
+              if (port.matProp) { node.values[port.matProp] = v; this._onMatOutput?.(port.matProp, v); }
             });
             ctrlRow.append(slider, numInput);
             ctrlRefs.slider = slider; ctrlRefs.numInput = numInput;
@@ -1016,23 +1072,23 @@ export class NodeEditorManager {
             const picker = document.createElement('input');
             picker.type = 'color';
             picker.className = 'colorPicker';
-            picker.value = port.colorDef || '#ffffff';
+            picker.value = node.values[port.matProp] || port.colorDef || '#ffffff';
             const field = document.createElement('div');
             field.className = 'color-field';
             const hex = document.createElement('input');
             hex.type = 'text';
             hex.className = 'value-input value-input-hex';
-            hex.value = port.colorDef || '#ffffff';
+            hex.value = node.values[port.matProp] || port.colorDef || '#ffffff';
             hex.maxLength = 7;
             hex.spellcheck = false;
             picker.addEventListener('input', () => {
               hex.value = picker.value;
-              if (port.matProp) this._onMatOutput?.(port.matProp, picker.value);
+              if (port.matProp) { node.values[port.matProp] = picker.value; this._onMatOutput?.(port.matProp, picker.value); }
             });
             hex.addEventListener('change', () => {
               if (/^#[0-9a-fA-F]{6}$/.test(hex.value)) {
                 picker.value = hex.value;
-                if (port.matProp) this._onMatOutput?.(port.matProp, hex.value);
+                if (port.matProp) { node.values[port.matProp] = hex.value; this._onMatOutput?.(port.matProp, hex.value); }
               }
             });
             field.appendChild(hex);
@@ -1499,19 +1555,23 @@ export class NodeEditorManager {
 
   // ─── Collection CRUD ──────────────────────────────────────────────────────
 
-  _addCollection() {
+  async _addCollection() {
     const id = `col_${Date.now()}`;
-    this._collections.push({ id, title:'New Collection', open:true, items:[] });
+    const next = [...this._collections, { id, title:'New Collection', open:true, items:[] }];
+    try { await this.onCollectionsChanged?.(next); } catch (err) { logError(`Could not save collection: ${err.message}`); return; }
+    this._collections = next;
     this._selectedColId = id;
     this._renderCollections();
     this._openRenameForm(id);
   }
   _renameSelected() { if (this._selectedColId) this._openRenameForm(this._selectedColId); }
-  _deleteSelected() {
+  async _deleteSelected() {
     if (!this._selectedColId) return;
     const idx = this._collections.findIndex(c => c.id === this._selectedColId);
     if (idx < 0) return;
-    this._collections.splice(idx, 1);
+    const next = this._collections.filter((_, index) => index !== idx);
+    try { await this.onCollectionsChanged?.(next); } catch (err) { logError(`Could not delete collection: ${err.message}`); return; }
+    this._collections = next;
     this._selectedColId = this._collections[Math.max(0,idx-1)]?.id ?? null;
     this._closeRenameForm(); this._renderCollections();
   }
@@ -1537,8 +1597,13 @@ export class NodeEditorManager {
     const confirmBtn = document.createElement('button');
     confirmBtn.type = 'button'; confirmBtn.className = 'ne-rename-confirm';
     confirmBtn.innerHTML = '<svg width="12" height="9" viewBox="0 0 13 10"><polyline points="1,5 5,9 12,1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
-    const commit = () => {
-      const val = input.value.trim(); if (val) col.title = val;
+    const commit = async () => {
+      const val = input.value.trim();
+      if (val) {
+        const next = this._collections.map(item => item.id === col.id ? { ...item, title: val } : item);
+        try { await this.onCollectionsChanged?.(next); } catch (err) { logError(`Could not rename collection: ${err.message}`); return; }
+        this._collections = next;
+      }
       this._closeRenameForm(); this._renderCollections();
     };
     confirmBtn.addEventListener('click', commit);

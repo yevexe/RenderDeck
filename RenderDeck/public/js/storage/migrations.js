@@ -1,3 +1,4 @@
+import { graphWriteOps } from './NodeGraphStorage.js';
 
 // MIGRATIONS.JS — One-time moves into the DB v8 layout
 //
@@ -22,7 +23,9 @@ import * as IDBStorage from './indexedDBStorage.js';
 import {
   partMaterialKey, designMetaKey, designBlobKey, designThumbKey,
   sessionKey, projectSettingsKey, APP_SETTINGS_KEY, envPreviewKey,
+  partMaterialProjectPrefix, materialOverrideKey,
 } from './storageKeys.js';
+import { MaterialLibrary } from '../materials/MaterialLibrary.js';
 
 const KEYS_FLAG = 'migrated:v8:keys';
 const ORPHAN_PRESETS_FLAG = 'migrated:v8:orphan-presets';
@@ -40,6 +43,7 @@ export async function runMigrations(activeProjectId) {
     await _migrateOldKeys(activeProjectId);
   }
   await _migrateLocalStorage(activeProjectId);
+  await migrateSessionGraphs();
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -318,4 +322,118 @@ async function _migrateLocalStorage(activeProjectId) {
   for (const key of toRemove) {
     try { localStorage.removeItem(key); } catch (_) {}
   }
+}
+
+// Sessions used to embed all graphs (and image data URLs). Move each project
+// atomically; absence of the old field is the migration's done marker.
+async function migrateSessionGraphs() {
+  for (const key of await IDBStorage.getAllKeys('metadata', 'session:')) {
+    const session = await IDBStorage.get('metadata', key);
+    if (!session?.nodeGraph) continue;
+    const pid = key.slice('session:'.length);
+    const ops = [];
+    for (const [graphKey, graph] of Object.entries(session.nodeGraph.graphs || {})) {
+      const [model, part] = [graphKey.slice(0, graphKey.lastIndexOf('|')), graphKey.slice(graphKey.lastIndexOf('|') + 1)];
+      const destination = `${pid}:${encodeURIComponent(model)}:${encodeURIComponent(part)}`;
+      if (!await IDBStorage.get('node-graphs', destination)) ops.push(...await graphWriteOps(pid, graphKey, graph));
+    }
+    const { nodeGraph, ...rest } = session;
+    ops.push({ type: 'put', store: 'metadata', key, value: rest });
+    await IDBStorage.batch(ops);
+  }
+}
+
+// ─────────────────────────────────────────────
+// 3. Per-part materials → one material library per project
+//
+// A part that used a preset points at its library entry. If its saved values differ,
+// each distinct version becomes one custom material in that project, so nothing changes
+// appearance. Parts that used their file's material can only be compared once the file
+// is loaded, so migrateLegacyPart() finishes those when the object first loads; until
+// then the old record stays as it is.
+//
+// Each project commits in one transaction with its done-flag, so a failure leaves that
+// project's old data in place and it is retried next start. settings/app.hiddenPresets
+// and the shared thumbnails are removed only once every project has its copy.
+// ─────────────────────────────────────────────
+const LIBRARY_FLAG = (pid) => `migrated:material-library:${pid}`;
+
+export async function migrateMaterialLibrary(materialManager) {
+  const app = (await IDBStorage.get('settings', APP_SETTINGS_KEY)) || {};
+  const hidden = Array.isArray(app.hiddenPresets) ? app.hiddenPresets : [];
+  const projects = await IDBStorage.getAll('projects');
+  const failures = [];
+
+  for (const project of projects) {
+    if (await IDBStorage.get('metadata', LIBRARY_FLAG(project.id))) continue;
+    try {
+      await _migrateProjectLibrary(project.id, materialManager, hidden);
+    } catch (err) {
+      failures.push(`${project.name}: ${err.message}`);
+    }
+  }
+  if (failures.length) throw new Error(failures.join('; '));
+
+  if ('hiddenPresets' in app || (await IDBStorage.getAllKeys('blobs', 'thumb:')).length) {
+    const { hiddenPresets, ...rest } = app;
+    await IDBStorage.batch([
+      { type: 'put', store: 'settings', key: APP_SETTINGS_KEY, value: rest },
+      { type: 'delPrefix', store: 'blobs', prefix: 'thumb:' },
+      { type: 'delPrefix', store: 'blobs', prefix: 'mat-thumb:' },
+    ]);
+  }
+}
+
+async function _migrateProjectLibrary(pid, materialManager, hidden) {
+  const library = new MaterialLibrary(materialManager);
+  await library.loadProject(pid);
+  const ops = [];
+
+  for (const label of hidden) {
+    const shipped = materialManager.shippedDefinitions.find(definition => definition.label === label);
+    if (shipped) ops.push({ type: 'put', store: 'metadata', key: materialOverrideKey(pid, shipped.id), value: { id: shipped.id, deleted: true } });
+  }
+
+  const prefix = partMaterialProjectPrefix(pid);
+  for (const key of await IDBStorage.getAllKeys('metadata', prefix)) {
+    const record = await IDBStorage.get('metadata', key);
+    if (!record || record.materialId !== undefined || !record.presetExplicit) continue;
+    const base = library.findByLegacyName(record.presetName);
+    if (!base) continue;
+    const part = decodeURIComponent(key.slice(prefix.length).split(':')[1] || 'edited');
+    const materialId = library.legacyToId(base.id, record, part, ops);
+    ops.push({ type: 'put', store: 'metadata', key, value: { version: 2, materialId, fromFile: false } });
+  }
+
+  const modelPrefix = `${pid}:`;
+  for (const key of await IDBStorage.getAllKeys('models', modelPrefix)) {
+    const model = await IDBStorage.get('models', key);
+    if (!model) continue;
+    const toId = (presetName, presetId, materialData, part) => {
+      const { channelMaps, ...props } = materialData || {};
+      const base = (presetId && library.get(presetId)) || library.findByLegacyName(presetName)
+        || library.legacyEmbeddedCustom(presetName || 'Default — White', props, channelMaps, ops);
+      return library.legacyToId(base.id, { props, channelMaps }, part, ops);
+    };
+    if (model.parts) {
+      const parts = Object.fromEntries(Object.entries(model.parts).map(([part, data]) => {
+        if (data.materialId !== undefined || data.useOriginalMaterial) return [part, data];
+        return [part, { ...data, materialId: toId(data.materialPreset, data.materialPresetId, data.materialData, part) }];
+      }));
+      ops.push({ type: 'put', store: 'models', key, value: { ...model, parts } });
+    } else if (model.materialId === undefined) {
+      const materialData = { ...(model.materialProperties || {}), channelMaps: model.channelMaps || undefined };
+      ops.push({ type: 'put', store: 'models', key, value: { ...model, materialId: toId(model.materialPreset, model.materialPresetId, materialData, 'custom model') } });
+    }
+  }
+
+  ops.push({ type: 'put', store: 'metadata', key: LIBRARY_FLAG(pid), value: Date.now() });
+  await IDBStorage.batch(ops);
+}
+
+// A part saved before the library that used its file's material: called when the
+// object loads, with the file's real values registered. Returns the id to use; ops holds
+// any new custom material, for the caller to commit with the part's new record.
+export function migrateLegacyPart(library, baseId, record, part, ops) {
+  return library.legacyToId(baseId, record, part, ops);
 }

@@ -10,8 +10,7 @@
 //   id, projectId, basedOn, customName, sourceType, version, sceneState,
 //   parts: {
 //     [partName]: {
-//       materialPreset, materialPresetId, isCustomMaterial,
-//       materialData: { color, roughness, ..., channelMaps: { ch: dataUrl } },
+//       materialId,                  // library entry; its definition lives in the library
 //       overlayKeys: [...],          // blob store keys (not in export)
 //       overlayMetadata: [...]       // position/size/rotation etc (no imageData)
 //     }
@@ -23,12 +22,15 @@
 //   id, basedOn, customName, sourceType, version, sceneState,
 //   parts: {
 //     [partName]: {
-//       materialPreset, materialPresetId, isCustomMaterial,
-//       materialData: { ..., channelMaps: {...} },
+//       materialId,
 //       decals: [{ name, imageData, position, size, rotation, flipH, flipV, type, textData, aspectRatio }]
 //     }
-//   }
+//   },
+//   materials: { [materialId]: definition }  // export only, see MaterialLibrary.exportDefinitions
 // }
+//
+// Records saved before the material library also hold materialPreset, materialPresetId,
+// isCustomMaterial and materialData; migrations.js gives them a materialId.
 //
 // Backend mapping:
 //   models row   : source_type, source_ref (=basedOn), name, material_data: null
@@ -70,7 +72,7 @@ export class CustomModelStorage {
   // ─────────────────────────────────────────────
   // Save a custom model (v3 parts schema)
   // modelData: { basedOn, customName, sourceType, sceneState, parts }
-  // parts: { [partName]: { materialPreset, materialPresetId, isCustomMaterial, materialData, decals } }
+  // parts: { [partName]: { materialId, decals } }
   // decals: [{ name, imageData, position, size, rotation, flipH, flipV, type, textData, aspectRatio }]
   //
   // One transaction: the previous decal blobs are deleted, the new ones and the
@@ -117,10 +119,10 @@ export class CustomModelStorage {
           }
         }
         partsMetadata[partName] = {
-          materialPreset:   partData.materialPreset   || 'Default — White',
-          materialPresetId: partData.materialPresetId || null,
-          isCustomMaterial: partData.isCustomMaterial || false,
-          materialData:     partData.materialData     || {},
+          materialId: partData.materialId,
+          // Exported before the library: finished when the model first loads
+          ...(partData.materialId === undefined && partData.materialData
+            ? { useOriginalMaterial: true, materialData: partData.materialData } : {}),
           overlayKeys,
           overlayMetadata,
         };
@@ -186,10 +188,11 @@ export class CustomModelStorage {
           }
         }
         parts[partName] = {
-          materialPreset:   partMeta.materialPreset,
-          materialPresetId: partMeta.materialPresetId || null,
-          isCustomMaterial: partMeta.isCustomMaterial || false,
-          materialData:     partMeta.materialData     || {},
+          materialId:          partMeta.materialId,
+          // Only present before the library; used if the part hasn't been migrated yet
+          useOriginalMaterial: partMeta.useOriginalMaterial || false,
+          materialPreset:      partMeta.materialPreset,
+          materialData:        partMeta.materialData,
           decals,
         };
       }
@@ -231,6 +234,7 @@ export class CustomModelStorage {
       lastModified: metadata.lastModified,
       // v2 compat fields — loadCustomModel in main.js checks for these
       _v2compat: true,
+      materialId:        metadata.materialId,
       materialPreset:    metadata.materialPreset,
       materialPresetId:  metadata.materialPresetId || null,
       isCustomMaterial:  metadata.isCustomMaterial || false,
@@ -291,6 +295,7 @@ export class CustomModelStorage {
   async exportCustomModels() {
     try {
       const models = await this.loadAllCustomModels();
+      for (const name of Object.keys(models)) models[name] = this._withMaterials(models[name]);
       const exportData = { version: 3, exportDate: new Date().toISOString(), models };
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -307,6 +312,14 @@ export class CustomModelStorage {
     }
   }
 
+  // An export carries the definitions its parts use, so another project can rebuild them.
+  _withMaterials(model) {
+    const ids = model.parts
+      ? Object.values(model.parts).map(part => part.materialId).filter(Boolean)
+      : [model.materialId].filter(Boolean);
+    return { ...model, materials: this.materialLibrary?.exportDefinitions(ids) || {} };
+  }
+
   // ─────────────────────────────────────────────
   // Export a single custom model
   // ─────────────────────────────────────────────
@@ -314,7 +327,7 @@ export class CustomModelStorage {
     try {
       const model = await this.loadCustomModel(name);
       if (!model) { this.log(`Model not found: ${name}`, true); return false; }
-      const exportData = { version: 3, exportDate: new Date().toISOString(), models: { [name]: model } };
+      const exportData = { version: 3, exportDate: new Date().toISOString(), models: { [name]: this._withMaterials(model) } };
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -328,6 +341,17 @@ export class CustomModelStorage {
       this.log(`Failed to export model: ${error.message}`, true);
       return false;
     }
+  }
+
+  // Record the ids of parts migrated when the custom model first loaded.
+  async setPartMaterialIds(name, ids) {
+    const projectId = await getActiveProjectId();
+    const key = modelKey(projectId, name);
+    const stored = await IDBStorage.get('models', key);
+    if (!stored?.parts) return;
+    const parts = Object.fromEntries(Object.entries(stored.parts).map(([part, data]) =>
+      [part, part in ids ? { ...data, materialId: ids[part] } : data]));
+    await IDBStorage.put('models', key, { ...stored, parts });
   }
 
   // ─────────────────────────────────────────────
@@ -354,7 +378,7 @@ export class CustomModelStorage {
         // Normalise v2 flat format to v3 parts format before saving.
         // Overwriting replaces the record, its decals and the old model's
         // working state in one transaction.
-        const normalised = this._normaliseImport(modelData);
+        const normalised = await this.materialLibrary.importModelMaterials(this._normaliseImport(modelData));
         const success = await this.saveCustomModel(name, normalised, { replaceWorkingState: existing });
         if (success) {
           importedCount++;
@@ -384,11 +408,11 @@ export class CustomModelStorage {
       customName: modelData.customName,
       sourceType: 'standard',
       sceneState: modelData.sceneState || null,
+      materials:  modelData.materials,
       parts: {
         '__default__': {
+          materialId:       modelData.materialId,
           materialPreset:   modelData.materialPreset   || 'Default — White',
-          materialPresetId: modelData.materialPresetId || null,
-          isCustomMaterial: modelData.isCustomMaterial || false,
           materialData,
           decals: modelData.overlayImages || [],
         },

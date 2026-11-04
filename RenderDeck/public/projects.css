@@ -128,7 +128,7 @@ body.projects-page {
 
 .project-card-thumb {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 1 / 1;
   background: #1a1a1a;
   display: flex;
   align-items: center;

@@ -108,10 +108,16 @@ export const STANDARD_OBJECTS = [
     mtlPath: null
   },
   {
-    id: 'simple_pen',
-    label: 'Simple Pen',
-    objPath: './assets/standard/objects/RDO_Standard_Pen.obj',
-    mtlPath: './assets/standard/materials/RDM_Standard_Pen.mtl'
+    id: 't_shirt',
+    label: 'T-Shirt',
+    objPath: './assets/standard/objects/RDO_Standard_tShirt.glb',
+    mtlPath: null
+  },
+  {
+    id: 'long_sleeve_shirt',
+    label: 'Long-Sleeve Shirt',
+    objPath: './assets/standard/objects/RDO_Standard_LongSleeve.glb',
+    mtlPath: null
   },
 ];
 

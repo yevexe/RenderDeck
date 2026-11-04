@@ -1,3 +1,6 @@
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { rewriteMTL } from './MTLUtils.js';
+import { uploadedModelMtlKey } from '../storage/storageKeys.js';
 
 // MODELMANAGER.JS - Model Management System for RenderDeck
 // Handles adding, loading, and managing 3D models dynamically
@@ -7,7 +10,8 @@ import { CustomModelStorage } from '../storage/CustomModelStorage.js';
 import * as IDBStorage from '../storage/indexedDBStorage.js';
 import { ensureActiveProject, getActiveProjectId } from '../storage/ProjectStorage.js';
 import { modelDeleteOps, sessionWithoutModels } from '../storage/cascade.js';
-import { sessionKey } from '../storage/storageKeys.js';
+import { sessionKey, uploadedCatalogKey, standardModelBlobKey, standardModelInfoKey } from '../storage/storageKeys.js';
+import { catalogFromGltf, catalogFromMtl, readGltfJsonFromBlob } from '../materials/nativeCatalog.js';
 
 export class ModelManager {
   constructor(log) {
@@ -16,6 +20,7 @@ export class ModelManager {
     this.storage = new CustomModelStorage(log);
     this.log = log;
     this.nextModelId = 1;
+    this._standardModelURLs = new Map(); // name → blob URL of the copy stored in IndexedDB
     this.ready = this._init();
   }
 
@@ -35,13 +40,18 @@ export class ModelManager {
   async _persistUploadedModel(projectId, name, type, verificationFiles) {
     const prefix = `uploaded:${projectId}:${name}`;
     const ops = [];
+    let catalog = null;
     if (type === 'uploaded-glb') {
       ops.push({ type: 'put', store: 'blobs', key: `${prefix}:glb`, value: verificationFiles.glb });
       ops.push({ type: 'put', store: 'uploaded-models', key: `${projectId}:${name}`, value: {
         name, type, uploadDate: new Date().toISOString()
       } });
+      catalog = catalogFromGltf(name, await readGltfJsonFromBlob(verificationFiles.glb));
     } else {
       ops.push({ type: 'put', store: 'blobs', key: `${prefix}:obj`, value: verificationFiles.obj });
+      for (const file of verificationFiles.mtls || []) {
+        ops.push({ type: 'put', store: 'blobs', key: uploadedModelMtlKey(projectId, name, file.name), value: file });
+      }
       if (verificationFiles.mtl) {
         ops.push({ type: 'put', store: 'blobs', key: `${prefix}:mtl`, value: verificationFiles.mtl });
       }
@@ -53,11 +63,41 @@ export class ModelManager {
         type,
         uploadDate:   new Date().toISOString(),
         hasMtl:       !!verificationFiles.mtl,
+        mtlNames: (verificationFiles.mtls || []).map(file => file.name),
+        selectedMtlNames: verificationFiles.selectedMtlNames || [],
         textureNames: (verificationFiles.textures || []).map(t => t.name),
         metadata:     verificationFiles.metadata || {},
       } });
+      if (verificationFiles.mtl) {
+        const selected = (verificationFiles.mtls || []).filter(file => (verificationFiles.selectedMtlNames || []).includes(file.name));
+        const text = selected.length
+          ? (await Promise.all(selected.map(file => file.text()))).join('\n')
+          : await verificationFiles.mtl.text();
+        catalog = catalogFromMtl(name, text);
+      }
     }
+    if (catalog) ops.push({ type: 'put', store: 'metadata', key: uploadedCatalogKey(projectId, name), value: catalog });
     await IDBStorage.batch(ops);
+    if (catalog) this.onCatalogAdded?.(catalog);
+  }
+
+  // Native material list of an upload that was stored before lists were kept.
+  // Resolves null if it has none (an OBJ without an MTL).
+  async readUploadedCatalog(name) {
+    const projectId = await getActiveProjectId();
+    const prefix = `uploaded:${projectId}:${name}`;
+    const meta = await IDBStorage.get('uploaded-models', `${projectId}:${name}`);
+    if (!meta) return null;
+    if (meta.type === 'uploaded-glb') {
+      const blob = await IDBStorage.get('blobs', `${prefix}:glb`);
+      return blob ? catalogFromGltf(name, await readGltfJsonFromBlob(blob)) : null;
+    }
+    if (!meta.hasMtl) return null;
+    const selected = await Promise.all((meta.selectedMtlNames || []).map(file => IDBStorage.get('blobs', uploadedModelMtlKey(projectId, name, file))));
+    const files = selected.filter(Boolean);
+    if (!files.length) files.push(await IDBStorage.get('blobs', `${prefix}:mtl`));
+    if (!files[0]) return null;
+    return catalogFromMtl(name, (await Promise.all(files.map(file => file.text()))).join('\n'));
   }
 
   // Turn a failed write into a user-facing error message
@@ -102,7 +142,11 @@ export class ModelManager {
             let mtlURL = null;
             if (meta.hasMtl) {
               const mtlBlob = await IDBStorage.get('blobs', `${blobPrefix}:mtl`);
-              if (mtlBlob) mtlURL = await this.createMTLWithBlobURLs(mtlBlob, textureURLs);
+              if (mtlBlob) {
+          const selected = await Promise.all((meta.selectedMtlNames || []).map(file => IDBStorage.get('blobs', uploadedModelMtlKey(projectId, name, file))));
+          const text = selected.length ? (await Promise.all(selected.filter(Boolean).map(file => file.text()))).join('\n') : await mtlBlob.text();
+          mtlURL = await this.createMTLWithBlobURLs(new Blob([text]), textureURLs);
+        }
             }
             this.models.set(name, {
               type: 'uploaded',
@@ -138,6 +182,53 @@ export class ModelManager {
   }
 
   // ─────────────────────────────────────────────
+  // Store each standard object's file in IndexedDB, one at a time, skipping any whose
+  // stored copy still matches the server. Runs in the background; a failure leaves that
+  // model loading from the network as before, and the next start tries again.
+  // ─────────────────────────────────────────────
+  async storeStandardModels() {
+    for (const [name, model] of [...this.models.entries()]) {
+      if (model.type !== 'registry' || !model.objPath) continue;
+      const head = await fetch(model.objPath, { method: 'HEAD', cache: 'no-cache' });
+      if (!head.ok) throw new Error(`${name}: HTTP ${head.status}`);
+      const info = {
+        size: head.headers.get('content-length'),
+        lastModified: head.headers.get('last-modified'),
+        etag: head.headers.get('etag'),
+      };
+      const stored = await IDBStorage.get('metadata', standardModelInfoKey(name));
+      if (stored && stored.size === info.size && stored.lastModified === info.lastModified && stored.etag === info.etag) continue;
+
+      const response = await fetch(model.objPath, { cache: 'no-cache', priority: 'low' });
+      if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
+      const blob = await response.blob();
+      await IDBStorage.batch([
+        { type: 'put', store: 'blobs', key: standardModelBlobKey(name), value: blob },
+        { type: 'put', store: 'metadata', key: standardModelInfoKey(name), value: info },
+      ]);
+      // A URL made from an older copy would keep serving that copy
+      const previousURL = this._standardModelURLs.get(name);
+      if (previousURL) URL.revokeObjectURL(previousURL);
+      this._standardModelURLs.delete(name);
+    }
+  }
+
+  // Blob URL of a standard object's stored copy, or its normal path if there is none yet.
+  async _standardModelURL(name, objPath) {
+    if (this._standardModelURLs.has(name)) return this._standardModelURLs.get(name);
+    try {
+      const blob = await IDBStorage.get('blobs', standardModelBlobKey(name));
+      if (!blob) return objPath;
+      // Another call may have made it while this one read the blob
+      if (!this._standardModelURLs.has(name)) this._standardModelURLs.set(name, URL.createObjectURL(blob));
+      return this._standardModelURLs.get(name);
+    } catch (err) {
+      console.warn(`Could not read stored copy of ${name}:`, err);
+      return objPath;
+    }
+  }
+
+  // ─────────────────────────────────────────────
   // Add a model from uploaded files (drag & drop or file input)
   // Returns: { success: boolean, name: string, errors: [], warnings: [] }
   // ─────────────────────────────────────────────
@@ -166,6 +257,24 @@ export class ModelManager {
       const modelName = customName || this.generateModelName(glbFile.name);
       if (this.models.has(modelName)) {
         result.errors.push(`A model named "${modelName}" already exists. Please rename.`);
+        return result;
+      }
+      try {
+        const gltf = await new GLTFLoader().parseAsync(await glbFile.arrayBuffer(), '');
+        const resources = new Set();
+        let meshes = 0;
+        gltf.scene.traverse(child => {
+          if (child.isMesh) meshes++;
+          if (child.geometry) resources.add(child.geometry);
+          for (const material of [child.material].flat().filter(Boolean)) {
+            resources.add(material);
+            Object.values(material).forEach(value => { if (value?.isTexture) resources.add(value); });
+          }
+        });
+        resources.forEach(resource => resource.dispose());
+        if (!meshes) throw new Error('Model contains no drawable meshes');
+      } catch (err) {
+        result.errors.push(`Invalid GLB: ${err.message}`);
         return result;
       }
       // Save first — the model only appears once it is stored
@@ -233,8 +342,10 @@ export class ModelManager {
       modelData.objectURLs.textures[textureFile.name] = URL.createObjectURL(textureFile);
     });
     if (verification.files.mtl) {
+      const selected = verification.files.mtls.filter(file => verification.files.selectedMtlNames.includes(file.name));
+      const text = (await Promise.all(selected.map(file => file.text()))).join('\n');
       modelData.objectURLs.mtl = await this.createMTLWithBlobURLs(
-        verification.files.mtl,
+        new Blob([text]),
         modelData.objectURLs.textures
       );
     }
@@ -256,19 +367,7 @@ export class ModelManager {
   async createMTLWithBlobURLs(mtlFile, textureMap) {
     const mtlContent = await this.readFileAsText(mtlFile);
 
-    // Replace texture filenames with blob URLs
-    let modifiedContent = mtlContent;
-    const textureMapTypes = ['map_Kd', 'map_Ka', 'map_Ks', 'map_Bump', 'map_d', 'map_Ns'];
-    
-    textureMapTypes.forEach(mapType => {
-      const regex = new RegExp(`^(${mapType}\\s+)(.+)$`, 'gm');
-      modifiedContent = modifiedContent.replace(regex, (match, prefix, texturePath) => {
-        // Extract just the filename from the path
-        const filename = texturePath.trim().split(/[/\\]/).pop();
-        const blobURL = textureMap[filename];
-        return blobURL ? `${prefix}${blobURL}` : match;
-      });
-    });
+    const modifiedContent = rewriteMTL(mtlContent, textureMap, warning => this.log(`⚠️ ${warning}`));
 
     // Create a new blob for the modified MTL
     const blob = new Blob([modifiedContent], { type: 'text/plain' });
@@ -323,9 +422,10 @@ export class ModelManager {
   // session entries — in one transaction. Blob URLs are revoked only after the
   // write committed. Throws on failure (nothing is deleted then).
   // ─────────────────────────────────────────────
-  async deleteModels(names) {
+  // extraOps join the same transaction (what the material library needs to change).
+  async deleteModels(names, extraOps = []) {
     const projectId = await getActiveProjectId();
-    const ops = [];
+    const ops = [...extraOps];
     for (const name of names) ops.push(...await modelDeleteOps(projectId, name));
     const session = sessionWithoutModels(await IDBStorage.get('metadata', sessionKey(projectId)), names);
     if (session) ops.push({ type: 'put', store: 'metadata', key: sessionKey(projectId), value: session });
@@ -413,21 +513,11 @@ export class ModelManager {
   // ─────────────────────────────────────────────
 
   // ─────────────────────────────────────────────
-  // Generate a unique model name
+  // Normalize the upload name; duplicate names are rejected by the caller.
   // ─────────────────────────────────────────────
   generateModelName(objFilename) {
     // Remove extension and clean up
-    let baseName = objFilename.replace(/\.(obj|glb|gltf)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
-    
-    // Ensure uniqueness
-    let name = baseName;
-    let counter = 1;
-    while (this.models.has(name)) {
-      name = `${baseName}_${counter}`;
-      counter++;
-    }
-
-    return name;
+    return objFilename.replace(/\.(obj|glb|gltf)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
   }
 
   // ─────────────────────────────────────────────
@@ -458,10 +548,12 @@ export class ModelManager {
     if (!model) return null;
 
     if (model.type === 'registry') {
+      // sourcePath identifies the model; obj is where its bytes are read from
+      const obj = await this._standardModelURL(name, model.objPath);
       if (model.objPath?.endsWith('.glb')) {
-        return { type: 'glb-path', obj: model.objPath };
+        return { type: 'glb-path', obj, sourcePath: model.objPath };
       }
-      return { type: 'path', obj: model.objPath, mtl: model.mtlPath };
+      return { type: 'path', obj, sourcePath: model.objPath, mtl: model.mtlPath };
     } else if (model.type === 'uploaded-glb') {
       return { type: 'glb-blob', obj: model.objectURLs.glb };
     } else {

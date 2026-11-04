@@ -11,15 +11,15 @@ import { envPreviewKey } from '../storage/storageKeys.js';
  * Load the first configured environment on startup.
  * @param {Function} onLoad - (label, texture) => void
  */
+let environmentRequest = 0;
+
 export function initScenes(onLoad) {
   if (STANDARD_ENVIRONMENTS.length === 0) {
     console.warn('No environments configured in STANDARD_ENVIRONMENTS');
     return;
   }
   const first = STANDARD_ENVIRONMENTS[0];
-  _loadHDR(first.path, (texture) => {
-    if (onLoad) onLoad(first.label, texture);
-  });
+  loadScene(first.label, onLoad);
 }
 
 /**
@@ -33,7 +33,9 @@ export function loadScene(label, onLoad) {
     console.error(`Environment not found: ${label}`);
     return;
   }
+  const request = ++environmentRequest;
   _loadHDR(env.path, (texture) => {
+    if (request !== environmentRequest) { texture.dispose(); return; }
     if (onLoad) onLoad(label, texture);
   });
 }

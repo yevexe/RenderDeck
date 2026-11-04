@@ -7,7 +7,8 @@
 import * as IDBStorage from './indexedDBStorage.js';
 import {
   partMaterialPrefix, designMetaPrefix, designBlobPrefix, designThumbKey,
-  matThumbPrefix, nodeGraphPrefix, nodeImagePrefix,
+  matThumbPrefix, nodeGraphPrefix, nodeImagePrefix, modelTransformKey, uploadedModelMtlKey,
+  uploadedCatalogKey, objectOverridePrefix, nativeIdPrefix,
 } from './storageKeys.js';
 
 // ─────────────────────────────────────────────
@@ -21,6 +22,7 @@ export function uploadedModelBlobKeys(pid, name, meta) {
   return [
     `${prefix}:obj`,
     ...(meta.hasMtl ? [`${prefix}:mtl`] : []),
+    ...(meta.mtlNames || []).map(file => uploadedModelMtlKey(pid, name, file)),
     ...(meta.textureNames || []).map(t => `${prefix}:tex:${t}`),
   ];
 }
@@ -39,6 +41,7 @@ export function customModelBlobKeys(record) {
 // ─────────────────────────────────────────────
 export function modelWorkingStateOps(pid, name) {
   return [
+    { type: 'del', store: 'metadata', key: modelTransformKey(pid, name) },
     { type: 'delPrefix', store: 'metadata',    prefix: partMaterialPrefix(pid, name) },
     { type: 'delPrefix', store: 'metadata',    prefix: designMetaPrefix(pid, name) },
     { type: 'delPrefix', store: 'blobs',       prefix: designBlobPrefix(pid, name) },
@@ -60,6 +63,10 @@ export async function modelDeleteOps(pid, name) {
   if (uploaded) {
     ops.push({ type: 'del', store: 'uploaded-models', key: `${pid}:${name}` });
     for (const key of uploadedModelBlobKeys(pid, name, uploaded)) ops.push({ type: 'del', store: 'blobs', key });
+    // Its section in the material list goes with it (MaterialLibrary.prepareObjectDeletion
+    // turns anything other objects still use into custom materials first).
+    ops.push({ type: 'del', store: 'metadata', key: uploadedCatalogKey(pid, name) });
+    ops.push({ type: 'delPrefix', store: 'metadata', prefix: objectOverridePrefix(pid, nativeIdPrefix(name)) });
   }
 
   const custom = await IDBStorage.get('models', `${pid}:${name}`);
@@ -98,13 +105,21 @@ export function sessionWithoutModels(session, names) {
 // Every record keyed by a project id, in every store.
 // A key belongs to the project when the id is one of its ':'-separated
 // segments (`${pid}:…`, `prefix:${pid}:…`, or exactly `${pid}`).
+// That covers the whole material library: custom materials (materials/${pid}:…), standard
+// and native changes and deletions (material-override:${pid}:…), part assignments
+// (part-material:${pid}:…), uploaded catalogs (native-catalog:${pid}:…) and every
+// material thumbnail (preset-thumb:${pid}:…). The shared native-catalog:standard:… and
+// the shipped definitions are not keyed by a project and stay.
 // ─────────────────────────────────────────────
+export function isProjectKey(key, pid) {
+  return typeof key === 'string' && key.split(':').includes(pid);
+}
+
 export async function projectDeleteOps(pid) {
   const ops = [];
-  const isProjectKey = (key) => typeof key === 'string' && key.split(':').includes(pid);
   for (const store of await IDBStorage.storeNames()) {
     for (const key of await IDBStorage.getAllKeys(store)) {
-      if (isProjectKey(key)) ops.push({ type: 'del', store, key });
+      if (isProjectKey(key, pid)) ops.push({ type: 'del', store, key });
     }
   }
   if ((await IDBStorage.get('metadata', 'activeProjectId')) === pid) {

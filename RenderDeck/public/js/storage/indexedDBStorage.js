@@ -3,7 +3,8 @@
 // Provides Promise-based interface for storing models and blobs
 
 const DB_NAME = 'renderdeck_db';
-const DB_VERSION = 8;
+// Raise this whenever a store is added: a database already at this version won't get it.
+const DB_VERSION = 9;
 
 let dbInstance = null;
 let dbDeleted = false; // set by deleteDatabase() — no further opens this page
@@ -43,9 +44,10 @@ export function openDB() {
       if (!db.objectStoreNames.contains('scenes')) {
         db.createObjectStore('scenes'); // key: `${projectId}:${sceneName}`
       }
-      // Material preset library — mirrors the backend `materials` table.
+      // Custom materials of the material library — mirrors the backend `materials` table.
       // key: `${projectId}:${presetUuid}`
-      // value: { id, projectId, name, order, params, materialData: { channelMaps: { ch: dataUrl } } }
+      // value: { id, projectId, name, order, params, textureSource,
+      //          materialData: { channelMaps: { ch: dataUrl }, clearedChannels } }
       // thumbnail stored in 'blobs' under `preset-thumb:${projectId}:${presetUuid}`
       if (!db.objectStoreNames.contains('materials')) {
         db.createObjectStore('materials');
@@ -58,9 +60,9 @@ export function openDB() {
         db.createObjectStore('uploaded-models');
       }
       // Uploaded prop files (GLB/GLTF/OBJ) — the prop library.
-      // key: `${projectId}:${propName}`
-      // value: { name, format, fileName, uploadDate }
-      // file stored in 'blobs' under `uploaded-prop:${projectId}:${propName}`
+      // key: `${projectId}:${enc(propName)}`
+      // value: { name, format, fileName, uploadDate, sketchfabUid, displayName }
+      // file stored in 'blobs' under `uploaded-prop:${projectId}:${enc(propName)}`
       if (!db.objectStoreNames.contains('uploaded-props')) {
         db.createObjectStore('uploaded-props');
       }
@@ -73,7 +75,7 @@ export function openDB() {
         db.createObjectStore('uploaded-hdrs');
       }
       // Settings records.
-      // key: 'app'         → { swatchCollections, hiddenPresets, sketchfabToken }
+      // key: 'app'         → { swatchCollections, sketchfabToken }
       // key: `${projectId}` → { camera, view, renderer, preview, background, environment, ui }
       if (!db.objectStoreNames.contains('settings')) {
         db.createObjectStore('settings');
@@ -213,7 +215,10 @@ export function batch(ops) {
       const db = await _requireDB(storeNames);
       const transaction = db.transaction(storeNames, 'readwrite');
 
-      transaction.oncomplete = () => resolve();
+      transaction.oncomplete = () => {
+        if (ops.some(op => op.type === 'put' && (op.value instanceof Blob || op.store === 'uploaded-models' || op.store === 'uploaded-props'))) void requestPersistentStorage();
+        resolve();
+      };
       transaction.onerror = () => reject(_wrapError(`Transaction on ${storeNames.join(', ')} failed`, transaction.error));
       // Quota errors abort the transaction without a request error
       transaction.onabort = () => reject(_wrapError(`Transaction on ${storeNames.join(', ')} aborted`, transaction.error || 'aborted'));
@@ -351,4 +356,37 @@ export function isIndexedDBAvailable() {
   } catch (err) {
     return false;
   }
+}
+
+// Best effort only: denial never prevents using IndexedDB.
+let persistentStorageState = { status: 'not requested', granted: false };
+let persistenceRequest = null;
+export function getPersistentStorageState() { return { ...persistentStorageState }; }
+export function requestPersistentStorage() {
+  if (persistenceRequest) return persistenceRequest;
+  persistenceRequest = (async () => {
+    try {
+      const storage = navigator.storage;
+      const granted = storage?.persisted ? (await storage.persisted() || await storage.persist?.()) : false;
+      persistentStorageState = { granted: !!granted, status: !storage?.persist ? 'unavailable' : granted ? 'persistent' : 'best effort' };
+      console.info('[Storage] Persistence:', persistentStorageState.status);
+      document.dispatchEvent(new CustomEvent('storage-persistence-changed'));
+      return !!granted;
+    } catch (err) {
+      persistentStorageState = { granted: false, status: 'unavailable', error: err.message };
+      console.warn('[Storage] Persistence request failed:', err);
+      return false;
+    } finally { persistenceRequest = null; }
+  })();
+  return persistenceRequest;
+}
+export function startPersistentStorageRequests() {
+  void requestPersistentStorage();
+  const retry = () => {
+    document.removeEventListener('pointerdown', retry, true);
+    document.removeEventListener('keydown', retry, true);
+    void requestPersistentStorage();
+  };
+  document.addEventListener('pointerdown', retry, true);
+  document.addEventListener('keydown', retry, true);
 }

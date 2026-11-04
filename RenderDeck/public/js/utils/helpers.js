@@ -105,6 +105,31 @@ export function downloadFile(filename, content, mimeType = 'text/plain') {
 }
 
 /**
+ * Download a Blob as a file
+ * @param {string} filename
+ * @param {Blob} blob
+ */
+export function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/**
+ * Replace the characters file systems don't allow in a name
+ * @param {string} name
+ * @returns {string}
+ */
+export function safeFileName(name) {
+  return name.replace(/[\\/:*?"<>|]/g, '-').trim();
+}
+
+/**
  * Generate unique ID
  * @returns {string}
  */

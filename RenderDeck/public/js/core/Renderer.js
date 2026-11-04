@@ -121,6 +121,25 @@ export class RendererManager {
     this.resize();
   }
 
+  // ─── Run fn at an exact pixel size, then restore the viewport ─
+  withRenderSize(w, h, fn) {
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const pixelRatio = this.renderer.getPixelRatio();
+    const composerPixelRatio = this.composer?._pixelRatio;
+    try {
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(w, h, false);
+      this.composer?.setPixelRatio(1);
+      this.resizeComposer(w, h);
+      return fn();
+    } finally {
+      this.renderer.setPixelRatio(pixelRatio);
+      this.renderer.setSize(size.x, size.y, false);
+      this.composer?.setPixelRatio(composerPixelRatio);
+      this.resizeComposer(size.x, size.y);
+    }
+  }
+
   // ─── Half-res mode during orbit drag ─────────────────────────
   enterOrbitPerfMode() {
     if (this._inOrbitPerf || this._customResolution) return;

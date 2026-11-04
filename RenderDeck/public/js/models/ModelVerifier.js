@@ -1,3 +1,7 @@
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { fileDataURL, loadDesignImage } from '../utils/imageAssets.js';
+import { fileName, mapLine, parseMap } from './MTLUtils.js';
+import { assertSelfContainedGLTF } from '../utils/modelAssets.js';
 
 // VERIFIER.JS - Universal File Validation System
 // Standalone module for validating 3D model files (OBJ/MTL/textures)
@@ -53,9 +57,33 @@ export class ModelVerifier {
       return results;
     }
 
+    const supported = new Set(['.obj', '.mtl', '.glb', ...this.config.allowedExtensions.texture]);
+    const unsupported = fileArray.filter(file => !supported.has(this.getFileExtension(file.name)));
+    if (unsupported.length) {
+      results.valid = false;
+      results.errors.push(`Unsupported model files: ${unsupported.map(file => file.name).join(', ')}`);
+      return results;
+    }
+
+    const seenNames = new Set();
+    for (const file of fileArray) {
+      const key = fileName(file.name).toLowerCase();
+      if (seenNames.has(key)) {
+        results.valid = false;
+        results.errors.push(`Duplicate file name: ${file.name}`);
+      }
+      seenNames.add(key);
+    }
+    if (!results.valid) return results;
+
     // ── GLB path: single self-contained file ──────────────────────
     const glbFiles = fileArray.filter(f => this.getFileExtension(f.name) === '.glb');
     if (glbFiles.length > 0) {
+      if (fileArray.length !== 1) {
+        results.valid = false;
+        results.errors.push('GLB models must be uploaded as one self-contained file.');
+        return results;
+      }
       if (glbFiles.length > 1) {
         results.valid = false;
         results.errors.push(`Multiple GLB files found (${glbFiles.length}). Please provide only one.`);
@@ -108,19 +136,36 @@ export class ModelVerifier {
       results.warnings.push(...objValidation.warnings);
     }
 
-    // Validate MTL (optional)
-    if (mtlFiles.length > 1) {
-      results.warnings.push(`Multiple MTL files found (${mtlFiles.length}). Using: ${mtlFiles[0].name}`);
+    // Resolve mtllib by file name, including references containing spaces.
+    const references = results.metadata.objInfo?.mtlFiles || [];
+    const selected = mtlFiles.filter(file => references.some(reference => {
+      const target = fileName(file.name).toLowerCase();
+      const ref = reference.replace(/\\/g, '/').replace(/['"]/g, '').toLowerCase();
+      return fileName(ref) === target || (` ${ref.replaceAll('/', ' ')} `).includes(` ${target} `);
+    }));
+    if (!selected.length && mtlFiles.length === 1) {
+      selected.push(mtlFiles[0]);
+      if (references.length) results.warnings.push(`mtllib names ${references.join(', ')}; using the only supplied material file "${mtlFiles[0].name}".`);
+    } else if (!selected.length && mtlFiles.length > 1) {
+      results.valid = false;
+      results.errors.push(`None of the supplied MTL files matches mtllib: ${references.join(', ') || '(not specified)'}`);
     }
-    if (mtlFiles.length > 0) {
-      const mtlValidation = await this.validateMTLFile(mtlFiles[0]);
-      if (mtlValidation.valid) {
-        results.files.mtl = mtlFiles[0];
-        results.metadata.mtlInfo = mtlValidation.metadata;
-      } else {
-        results.warnings.push(...mtlValidation.errors); // MTL errors are warnings
-      }
-      results.warnings.push(...mtlValidation.warnings);
+    results.files.mtls = mtlFiles;
+    results.files.selectedMtlNames = selected.map(file => file.name);
+    const materialNames = [];
+    const referencedTextures = [];
+    for (const file of selected) {
+      const validation = await this.validateMTLFile(file);
+      results.warnings.push(...validation.errors, ...validation.warnings);
+      materialNames.push(...(validation.metadata.materialNames || []));
+      referencedTextures.push(...(validation.metadata.referencedTextures || []));
+    }
+    if (selected.length) {
+      results.files.mtl = selected[0];
+      results.metadata.mtlInfo = { materialNames, materialCount: materialNames.length, referencedTextures };
+    }
+    for (const name of results.metadata.objInfo?.usedMaterials || []) {
+      if (!materialNames.includes(name)) results.warnings.push(`Unmatched material "${name}": no matching newmtl; using the default material.`);
     }
 
     // Validate textures (optional)
@@ -129,7 +174,8 @@ export class ModelVerifier {
       if (textureValidation.valid) {
         results.files.textures.push(textureFile);
       } else {
-        results.warnings.push(...textureValidation.errors.map(e => `Texture ${textureFile.name}: ${e}`));
+        results.valid = false;
+        results.errors.push(...textureValidation.errors.map(e => `Texture ${textureFile.name}: ${e}`));
       }
       results.warnings.push(...textureValidation.warnings.map(w => `Texture ${textureFile.name}: ${w}`));
     }
@@ -138,7 +184,7 @@ export class ModelVerifier {
     if (results.files.mtl && results.metadata.mtlInfo?.referencedTextures) {
       const providedTextureNames = results.files.textures.map(f => f.name);
       results.metadata.mtlInfo.referencedTextures.forEach(refTexture => {
-        if (!providedTextureNames.includes(refTexture)) {
+        if (!providedTextureNames.some(name => name.toLowerCase() === fileName(refTexture).toLowerCase())) {
           results.warnings.push(`MTL references texture "${refTexture}" which was not provided`);
         }
       });
@@ -180,6 +226,7 @@ export class ModelVerifier {
         result.warnings.push(`GLB version ${version} detected — only version 2 is supported`);
       }
       result.metadata = { version, size: file.size };
+      await assertSelfContainedGLTF(file);
     } catch (error) {
       result.valid = false;
       result.errors.push(`Failed to read GLB header: ${error.message}`);
@@ -226,7 +273,9 @@ export class ModelVerifier {
       result.metadata = {
         vertexCount,
         faceCount,
-        mtlFile: mtlReference ? mtlReference[1].trim() : null
+        mtlFile: mtlReference ? mtlReference[1].trim() : null,
+        mtlFiles: [...content.matchAll(/^\s*mtllib\s+(.+)$/gmi)].map(match => match[1].trim()),
+        usedMaterials: [...new Set([...content.matchAll(/^\s*usemtl\s+(.+)$/gmi)].map(match => match[1].trim()))]
       };
 
       // Validate has geometry
@@ -239,6 +288,18 @@ export class ModelVerifier {
         result.valid = false;
         result.errors.push('OBJ file contains no faces');
       }
+
+      const object = new OBJLoader().parse(content);
+      let drawable = false;
+      object.traverse(child => {
+        if (!child.isMesh) return;
+        const position = child.geometry.attributes.position;
+        if (position?.count >= 3 && position.array.every(Number.isFinite)) drawable = true;
+        else { result.valid = false; result.errors.push('OBJ contains invalid geometry'); }
+        child.geometry.dispose();
+        for (const material of [child.material].flat()) material?.dispose();
+      });
+      if (!drawable) { result.valid = false; result.errors.push('OBJ contains no drawable meshes'); }
 
       // Warnings
       if (vertexCount > 1000000) {
@@ -293,22 +354,14 @@ export class ModelVerifier {
 
       // Extract referenced textures
       const textureReferences = [];
-      const textureMapTypes = ['map_Kd', 'map_Ka', 'map_Ks', 'map_Bump', 'map_d', 'map_Ns', 'bump'];
-      
-      textureMapTypes.forEach(mapType => {
-        const regex = new RegExp(`^${mapType}\\s+(.+)$`, 'gm');
-        let match;
-        while ((match = regex.exec(content)) !== null) {
-          const texturePath = match[1].trim();
-          const filename = texturePath.split(/[/\\]/).pop();
-          if (!textureReferences.includes(filename)) {
-            textureReferences.push(filename);
-          }
-        }
-      });
+      for (const line of content.split(/\r?\n/)) {
+        const match = line.match(mapLine);
+        if (match) textureReferences.push(fileName(parseMap(match[2]).path));
+      }
 
       result.metadata = {
         materialCount,
+        materialNames: [...content.matchAll(/^\s*newmtl\s+(.+)$/gmi)].map(match => match[1].trim()),
         referencedTextures: textureReferences
       };
 
@@ -471,18 +524,8 @@ export class ModelVerifier {
   // ─────────────────────────────────────────────
   // Helper: Load image from file
   // ─────────────────────────────────────────────
-  loadImageFromFile(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('Invalid image data'));
-        img.src = e.target.result;
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
+  async loadImageFromFile(file) {
+    return await loadDesignImage(await fileDataURL(file));
   }
 
   // ─────────────────────────────────────────────
