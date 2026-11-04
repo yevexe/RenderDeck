@@ -1,8 +1,6 @@
-import * as IDBStorage from '../../storage/indexedDBStorage.js';
-import { EXTRACTOR_IMAGE_KEY } from '../../storage/storageKeys.js';
 import { fileDataURL, loadDesignImage } from '../../utils/imageAssets.js';
 import { log } from '../../utils/logger.js';
-import { scheduleAppSetting, setAppBlobSetting, getAppSetting } from '../../storage/SettingsStorage.js';
+import { loadColorExtractorImage, saveColorExtractorImage, scheduleSwatchCollectionsSave } from '../../domain/settings/appSettings.js';
 import {
   COLOR_CANVAS_SIZE, COLOR_SLIDER_HEIGHT, TWO_PI, COLOR_SWATCH_GROUPS, clamp,
   rgbToHex, hexToRgb, rgbToHsv, hsvToRgb, rgbToCmyk, cmykToRgb,
@@ -33,11 +31,10 @@ export class CompactColorPicker {
     }
   }
   static async restoreExtractorImage() {
-    const blob = await IDBStorage.get('blobs', EXTRACTOR_IMAGE_KEY);
-    if (blob) {
-      this._extractorBlob = new File([blob], getAppSetting('colorExtractorFileName') || blob.name || 'Image', { type: blob.type });
-      await Promise.all([...this._extractorPickers].map(picker => picker._loadExtractorImage(this._extractorBlob, false)));
-    }
+    const savedImage = await loadColorExtractorImage();
+    if (!savedImage) return;
+    this._extractorBlob = new File([savedImage.blob], savedImage.fileName, { type: savedImage.blob.type });
+    await Promise.all([...this._extractorPickers].map(picker => picker._loadExtractorImage(this._extractorBlob, false)));
   }
 
 
@@ -1197,7 +1194,7 @@ export class CompactColorPicker {
     CompactColorPicker._savedJSON = json;
     CompactColorPicker._swatchVersion++;
     this._renderedSwatchVersion = CompactColorPicker._swatchVersion;
-    scheduleAppSetting('swatchCollections', JSON.parse(json));
+    scheduleSwatchCollectionsSave(JSON.parse(json));
   }
 
   _clearCollectionDropIndicators() {
@@ -1999,7 +1996,7 @@ export class CompactColorPicker {
       context.drawImage(image, 0, 0, width, height);
       const data = context.getImageData(0, 0, width, height).data;
       if (persist) {
-        await setAppBlobSetting('colorExtractorFileName', file.name || 'Image', EXTRACTOR_IMAGE_KEY, file);
+        await saveColorExtractorImage(file);
         CompactColorPicker._extractorBlob = file;
         for (const picker of CompactColorPicker._extractorPickers) if (picker !== this) void picker._loadExtractorImage(file, false);
       }
@@ -2408,4 +2405,3 @@ export class CompactColorPicker {
     return this._deduplicateColors(centroids.map(lab => rgbToHex(labToRgb(lab))), count);
   }
 }
-

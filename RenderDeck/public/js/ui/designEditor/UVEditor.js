@@ -6,6 +6,8 @@ import { applyTexQuality } from '../../engine/textureQuality.js';
 
 import * as THREE from 'three';
 import { ModelVerifier } from '../../domain/models/ModelVerifier.js';
+import { renderPBRMap } from './stickerMaps.js';
+import { buildTextImage } from './textLayers.js';
 
 const DESIGN_CANVAS_SIZE = 2048;
 // Drag-frame resolutions: 1/4 of the full-res upload for color, less for the PBR masks
@@ -1181,65 +1183,20 @@ export class UVEditor {
   // Three.js applying material.roughness=1.0 yields the same effective roughness
   // as the original material.roughness * rawPixel.
   _renderPBRMap(ctx, w, h, bgValue, fgValue, bgImage = null, bgScale = 1) {
-    ctx.clearRect(0, 0, w, h);
-
-    const wrapOffsets = this._wrapImages
-      ? [[-w,-h],[-w,0],[-w,h],[0,-h],[0,0],[0,h],[w,-h],[w,0],[w,h]]
-      : [[0, 0]];
-
-    // Step 1: Draw background (bgImage scaled by bgScale, or flat bgValue).
-    // We use a canvas 'multiply' blend instead of ctx.filter (more reliable).
-    if (bgImage?.image) {
-      this._drawTextureImage(ctx, bgImage, w, h);
-      if (bgScale !== 1) {
-        const v = Math.round(Math.max(0, Math.min(1, bgScale)) * 255);
-        ctx.globalCompositeOperation = 'multiply';
-        ctx.fillStyle = `rgb(${v},${v},${v})`;
-        ctx.fillRect(0, 0, w, h);
-        ctx.globalCompositeOperation = 'source-over';
-      }
-    } else {
-      const bg = Math.round(bgValue);
-      ctx.fillStyle = `rgb(${bg},${bg},${bg})`;
-      ctx.fillRect(0, 0, w, h);
-    }
-
-    // Step 2: Build overlay mask on temp canvas (shapes → source-in fill with fgValue).
-    if (this.overlayImages.length > 0) {
-      const mask = this._pbrMaskCanvas;
-      const mCtx = this._pbrMaskCtx;
-      if (mask.width !== w || mask.height !== h) {
-        mask.width = w;
-        mask.height = h;
-      } else {
-        mCtx.clearRect(0, 0, w, h);
-      }
-
-      [...this.overlayImages].reverse().forEach(img => {
-        const x = (img.position.x / 100) * w;
-        const y = (img.position.y / 100) * h;
-        const iw = (img.size.w / 100) * w;
-        const ih = (img.size.h / 100) * h;
-        wrapOffsets.forEach(([dx, dy]) => {
-          mCtx.save();
-          mCtx.translate(x + dx, y + dy);
-          mCtx.rotate((img.rotation * Math.PI) / 180);
-          if (img.flipH) mCtx.scale(-1, 1);
-          if (img.flipV) mCtx.scale(1, -1);
-          mCtx.drawImage(img.image, -iw / 2, -ih / 2, iw, ih);
-          mCtx.restore();
-        });
-      });
-
-      const fg = Math.round(fgValue);
-      mCtx.globalCompositeOperation = 'source-in';
-      mCtx.fillStyle = `rgb(${fg},${fg},${fg})`;
-      mCtx.fillRect(0, 0, w, h);
-      mCtx.globalCompositeOperation = 'source-over';
-
-      // Step 3: Composite overlay mask on top of background.
-      ctx.drawImage(mask, 0, 0);
-    }
+    renderPBRMap({
+      ctx,
+      width: w,
+      height: h,
+      bgValue,
+      fgValue,
+      bgImage,
+      bgScale,
+      wrapImages: this._wrapImages,
+      overlayImages: this.overlayImages,
+      maskCanvas: this._pbrMaskCanvas,
+      maskContext: this._pbrMaskCtx,
+      drawTextureImage: (context, texture, width, height) => this._drawTextureImage(context, texture, width, height),
+    });
   }
 
   _updateStickerPBRIfActive() {
@@ -2086,50 +2043,7 @@ export class UVEditor {
 
   // Render text to a high-res canvas and return a loaded HTMLImageElement.
   async _buildTextImage(textData) {
-    const { content, fontFamily, fontSize, color, bold, italic } = textData;
-    const weight = bold   ? 'bold'   : 'normal';
-    const style  = italic ? 'italic' : 'normal';
-    const scale  = 3; // 3× oversample for crisp texture quality
-    const scaledSize = fontSize * scale;
-    const fontStr = `${style} ${weight} ${scaledSize}px "${fontFamily}"`;
-
-    // Ensure the font is available before drawing
-    try { await document.fonts.load(fontStr); } catch (_) { /* fallback to whatever is cached */ }
-
-    const lines      = content.split('\n');
-    const lineHeight = scaledSize * 1.25;
-    const padH       = scaledSize * 0.4;
-    const padV       = scaledSize * 0.3;
-
-    // Measure maximum line width
-    const mCvs = document.createElement('canvas');
-    mCvs.width = 4; mCvs.height = 4;
-    const mCtx = mCvs.getContext('2d');
-    mCtx.font = fontStr;
-    let maxW = 0;
-    for (const line of lines) {
-      const w = mCtx.measureText(line || ' ').width;
-      if (w > maxW) maxW = w;
-    }
-
-    const cvs = document.createElement('canvas');
-    cvs.width  = Math.max(Math.ceil(maxW + padH * 2), 4);
-    cvs.height = Math.max(Math.ceil(lineHeight * lines.length + padV * 2), 4);
-
-    const ctx = cvs.getContext('2d');
-    ctx.font         = fontStr;
-    ctx.fillStyle    = color;
-    ctx.textBaseline = 'top';
-    for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], padH, padV + i * lineHeight);
-    }
-
-    const dataUrl = cvs.toDataURL('image/png');
-    return new Promise(resolve => {
-      const img = new Image();
-      img.onload = () => resolve({ image: img, aspectRatio: cvs.width / cvs.height });
-      img.src = dataUrl;
-    });
+    return buildTextImage(textData);
   }
 
   // Create a new text overlay or regenerate an existing one.

@@ -1,0 +1,472 @@
+/* DOT: STATUS INDICATOR */
+.dot {
+  width: 10px;
+  height: 10px;          /* radius = 2px */
+  border-radius: 100%;
+  background-color: currentColor;
+
+  display: inline-block;
+  vertical-align: middle;   /* centers relative to text line */
+}
+
+.dot-positive {
+  background-color: rgb(0, 255, 4);
+  box-shadow: 0 0 6px rgb(72, 255, 0);
+}
+
+.dot-negative {
+  background-color: #ff0000;
+  box-shadow: 0 0 6px rgb(255, 0, 0);
+}
+
+.dot-neutral {
+  background-color: rgb(163, 163, 163);
+  box-shadow: 0 0 6px rgb(255, 255, 255);
+  z-index: 1;
+}
+
+/* DROPDOWN MENU STYLES */
+.dropdown {
+  width: 100%;
+  margin-bottom: 5px;
+  padding: 2.5px 5px;
+
+  background:
+    linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.14) 0%,
+      rgba(0, 0, 0, 0.15) 120%
+    ),
+    #1a1a1a;
+
+  background-color: #1a1a1a;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 4px;
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.dropdown:hover {
+  border-color: #666;
+}
+
+.dropdown:focus {
+  outline: none;
+  border-color: #888;
+}
+
+.dropdown option {
+  background-color: #888;
+  color: white;
+  padding: 8px;
+}
+
+.dropdown option:disabled {
+  color: #666;
+  background-color: #2a2a2a;
+}
+
+/* make optgroup labels appear as grey dividers */
+.dropdown optgroup {
+  color: #666;
+  font-style: italic;
+}
+
+
+/* RADIO BUTTONS STYLE ------------------------------------ */
+/* TOGGLE LIST LAYOUT (stacked like original) ------------------- */
+.toggle-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+  gap: 2.5px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* BASE CHECKBOX ------------------------------------------------ */
+.toggle-row input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+
+  width: 14px;
+  height: 14px;
+  margin: 0;
+
+  background: #1a1a1a;      /* unchecked fill */
+  border: 1px solid #444;   /* unchecked border */
+  border-radius: 3px;
+  box-sizing: border-box;
+
+  position: relative;        /* needed for ::after centering */
+  display: inline-block;     /* stable box across browsers */
+  cursor: pointer;
+  vertical-align: middle;
+  transition:
+    border-color 0.12s ease,
+    transform 0.08s ease;
+}
+
+/* INNER ENABLED INDICATOR — Firefox-safe centering via top/left + translate */
+.toggle-row input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+
+  width: 8px;
+  height: 4px;
+
+  top: 50%;
+  left: 50%;
+
+  border-left: 3px solid #e9e9e9;
+  border-bottom: 3px solid #e9e9e9;
+
+  transform: translate(-40%, -70%) rotate(-45deg) scale(0);
+  transform-origin: center;
+
+  will-change: transform;
+  transition: transform 0.12s ease;
+}
+
+/* CHECKED STATE */
+.toggle-row input[type="checkbox"]:checked {
+  border-color: #888;
+}
+
+.toggle-row input[type="checkbox"]:checked::after {
+  transform: translate(-37%, -75%) rotate(-45deg) scale(1);
+}
+
+/* HOVER / FOCUS */
+.toggle-row input[type="checkbox"]:hover {
+  border-color: #666;
+}
+
+.toggle-row input[type="checkbox"]:focus {
+  outline: none;
+  border-color: #888;
+}
+
+/* PRESSED */
+.toggle-row input[type="checkbox"]:active {
+  transform: scale(0.95);
+}
+
+/* DISABLED */
+.toggle-row input[type="checkbox"]:disabled {
+  background: #000000;
+  cursor: not-allowed;
+}
+
+.toggle-row input[type="checkbox"]:disabled::after {
+  background: #444;
+}
+
+.toggle-row input[type="checkbox"]:disabled:hover {
+  border-color: #444;
+}
+
+.toggle-row input[type="radio"] {
+  -webkit-appearance: none;
+  appearance: none;
+
+  width: 14px;
+  height: 14px;
+  margin: 0;
+
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 50%;
+
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+
+  transition:
+    border-color 0.12s ease,
+    transform 0.08s ease;
+}
+
+.toggle-row input[type="radio"]::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+
+  background: #e9e9e9;
+  border-radius: 50%;
+
+  transform: scale(0);
+  transition: transform 0.12s ease;
+}
+
+.toggle-row input[type="radio"]:checked {
+  border-color: #888;
+}
+
+.toggle-row input[type="radio"]:checked::after {
+  transform: scale(1);
+}
+
+.toggle-row input[type="radio"]:hover {
+  border-color: #666;
+}
+
+.toggle-row input[type="radio"]:focus {
+  outline: none;
+  border-color: #888;
+}
+
+.toggle-row input[type="radio"]:active {
+  transform: scale(0.95);
+}
+
+.toggle-row input[type="radio"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+
+.control-row{
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 0;
+  padding-bottom: 0;
+
+  justify-content: space-between;
+}
+
+.control-label{
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: #d4d4d4;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* make the right side stay tight */
+.control-row > :not(.control-label){
+  flex: 0 0 auto;
+}
+
+/* Small numeric entry window */
+.value-input {
+  width: 76px;
+  box-sizing: border-box;
+  padding: 2px 5px 2px 6px;
+
+  background-color: #1a1a1a;
+  color: #fff;
+
+  border: 1px solid #444;
+  border-radius: 4px;
+
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  text-align: left;
+
+  font-variant-numeric: tabular-nums;
+}
+
+.value-input-hex{
+  width: 76px;
+  box-sizing: border-box;
+}
+
+/* No native spinners (Chrome/Safari/Edge) */
+.value-input::-webkit-outer-spin-button,
+.value-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* No native spinners (Firefox) */
+.value-input[type="number"] {
+  appearance: textfield;
+}
+
+/* Custom spinner arrows wrapper */
+.value-input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.value-input-wrap .value-input {
+  padding-right: 16px;
+}
+
+.value-input-arrows {
+  position: absolute;
+  right: 3px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.value-input-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 10px;
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  pointer-events: auto;
+  user-select: none;
+  transition: color 0.1s;
+}
+
+.value-input-arrow:hover {
+  color: #fff;
+}
+
+.value-input-arrow svg {
+  width: 8px;
+  height: 6px;
+}
+
+/* Focus/hover */
+.value-input:hover {
+  border-color: #666;
+}
+
+.value-input:focus {
+  outline: none;
+  border-color: #888;
+}
+
+/* SLIDERS STYLE (Chrome WebKit) ------------------------------------------ */
+
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+
+  width: 100%;
+  box-sizing: border-box;   
+
+  height: 14px;
+  padding: 0 4px;          
+  margin: 0 0 6px 0;
+
+  background: transparent;
+  cursor: pointer;
+}
+
+/* TRACK (THE LINE) */
+.slider::-webkit-slider-runnable-track {
+  height: 3px;                 /* thinner line */
+  background: #777;            /* <-- LIGHT GREY LINE */
+  border-radius: 2px;
+  border: none;                
+}
+
+/* THUMB (THE CIRCLE) */
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+
+  background:
+    radial-gradient(circle at 35% 30%, #ffffff 0%, #e5e5e5 35%, #7a7a7a 100%);
+
+  border: none;
+
+  margin-top: -5.5px;
+
+  box-shadow:
+    0px 1px 1px rgba(0,0,0,0.6),
+    inset 0 1px 1px rgba(255,255,255,0.35),
+    inset 0 -1px 2px rgba(0,0,0,0.35);
+
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.22s ease;
+}
+
+/* Hover */
+.slider:hover::-webkit-slider-thumb {
+  background: #ffffff;
+}
+
+/* Active drag */
+.slider:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+/* Focus */
+.slider:focus {
+  outline: none;
+}
+
+/* Disabled */
+.slider:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.slider::-moz-range-track {
+  height: 3px;
+  background: #777;     /* light grey line */
+  border: none;
+  border-radius: 2px;
+}
+
+/* Firefox adds a â€œfocus outlineâ€ sometimes via this */
+.slider::-moz-focus-outer {
+  border: 0;
+}
+
+/* THUMB (THE CIRCLE) */
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+
+  background:
+    radial-gradient(circle at 35% 30%, #ffffff 0%, #e5e5e5 35%, #7a7a7a 100%);
+
+  border: none;
+
+  box-shadow:
+    0px 1px 1px rgba(0,0,0,0.6),
+    inset 0 1px 1px rgba(255,255,255,0.35),
+    inset 0 -1px 2px rgba(0,0,0,0.35);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), filter 0.22s ease;
+}
+
+/* Hover/active in Firefox (same vibe) */
+.slider:hover::-moz-range-thumb {
+  background: #ffffff;
+}
+
+.slider:active::-moz-range-thumb {
+  transform: scale(1.12);
+}
+
+.slider::-moz-range-progress {
+  height: 3px;
+  background: #777;
+  border-radius: 2px;
+}
+
+

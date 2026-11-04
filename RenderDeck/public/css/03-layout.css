@@ -1,0 +1,196 @@
+/* APP HEADER BAR */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 24px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+a.app-header-logo { text-decoration: none; cursor: pointer; }
+
+.app-header-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #fff;
+}
+
+.app-header-logo-blend {
+  position: relative;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+}
+
+.app-header-logo-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 28px;
+  width: auto;
+  transform: scale(3.5);
+  transform-origin: center center;
+  mask-image: radial-gradient(ellipse 40% 50% at center, black 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 40% 50% at center, black 30%, transparent 75%);
+}
+
+.app-header-logo-base {
+  mix-blend-mode: screen;
+}
+
+.app-header-logo-light {
+  mix-blend-mode: screen;
+  opacity: 0 !important;
+  filter: saturate(2) brightness(1.3);
+  transition: opacity 0.4s ease-out;
+}
+
+.app-header-logo-blend:hover .app-header-logo-light {
+  opacity: 1 !important;
+  transition: opacity 0.4s ease-in;
+}
+
+.project-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: #252525;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.project-btn:hover {
+  background: #333;
+  border-color: #555;
+  color: #fff;
+}
+/* -----------------------SHARED PANEL STYLES ------------------ */
+.panel {
+  background-color: #333;
+  padding: 10px;
+}
+/* Remove spacing under panel titles */
+.panel h2 {
+  margin-bottom: 0;
+}
+/* Scene view */
+.scene-view {
+  display: flex;
+  flex-direction: column;
+  flex: 2;
+}
+
+.scene-view-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.scene-view-titlebar h2 {
+  margin: 0;
+}
+
+.perf-mode-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #d4a843;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.perf-warning-tab {
+  background: #2a1f0a;
+  border: 1px solid #6b4d10;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #d4a843;
+  line-height: 1.5;
+}
+
+.editor-stage {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  flex: 1 1 auto;   /* fill remaining height in .scene-view column */
+  min-height: 0;
+}
+
+.editor-stage-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  position: relative; /* anchor for grid-settings-popup */
+}
+
+.editor-stage-toolbar-scene,
+.editor-stage-toolbar-design,
+.editor-stage-toolbar-material {}
+
+.editor-stage-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* Scene preview container must clip its contents */
+#scene-view-placeholder,
+.scene-view-placeholder {
+  position: relative;
+  overflow: hidden;     /* this is the key */
+  width: 100%;
+  height: 100%;
+}
+
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: #141414;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.35s ease;
+}
+.loading-overlay.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #333;
+  border-top-color: #888;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Ensure the WebGL canvas never exceeds container */
+#scene-view-placeholder canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+/* Scene settings */
+.scene-settings {
+  flex: 1;
+}
+/* Debug section */
+.debug-section {
+  padding: 0px 24px 24px 24px; /* match .preview padding */
+}
